@@ -30,5 +30,6 @@ void main ()
 		discard;
 	};
 
-	outColor = sampledColor;
+	//outColor = sampledColor;
+	outColor = vec4(0.f);
 }

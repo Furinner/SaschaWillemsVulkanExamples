@@ -18,6 +18,9 @@
 
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
+#include <cstdlib>
+#include <filesystem>
+#define DLF 1
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -791,6 +794,10 @@ public:
 
 	void prepare()
 	{
+#if DLF
+		std::string glslToSpvBat = getShadersPath() + "subpasses/glsltospv.bat "+ getShadersPath() + "subpasses";
+		system(glslToSpvBat.c_str());
+#endif
 		VulkanExampleBase::prepare();
 		loadAssets();
 		prepareUniformBuffers();

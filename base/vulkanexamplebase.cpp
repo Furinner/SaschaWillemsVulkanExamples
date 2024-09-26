@@ -8,6 +8,8 @@
 
 #include "vulkanexamplebase.h"
 
+#define DLF 1
+
 #if defined(VK_EXAMPLE_XCODE_GENERATED)
 #if (defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT))
 #include <Cocoa/Cocoa.h>
@@ -830,6 +832,10 @@ VulkanExampleBase::VulkanExampleBase()
 	if (commandLineParser.isSet("fullscreen")) {
 		settings.fullscreen = true;
 	}
+#if DLF
+	commandLineParser.options["shaders"].value = "glsl";
+	commandLineParser.options["shaders"].set = true;
+#endif
 	if (commandLineParser.isSet("shaders")) {
 		std::string value = commandLineParser.getValueAsString("shaders", "glsl");
 		if ((value != "glsl") && (value != "hlsl")) {
@@ -839,6 +845,7 @@ VulkanExampleBase::VulkanExampleBase()
 			shaderDir = value;
 		}
 	}
+
 	if (commandLineParser.isSet("benchmark")) {
 		benchmark.active = true;
 		vks::tools::errorModeSilent = true;

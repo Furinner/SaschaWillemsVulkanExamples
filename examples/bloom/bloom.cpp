@@ -8,12 +8,7 @@
 
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
-// draw mode
-#define DLF_SILHOUETTE 0
-#define DLF_SHADING 1
-//meshes
-#define BUILDING 1
-#define MONKEY 0
+
 // Offscreen frame buffer properties
 #define FB_DIM 1920
 #define FB_COLOR_FORMAT VK_FORMAT_R8G8B8A8_UNORM
@@ -663,11 +658,11 @@ public:
 		// UFO
 		ubos.scene.projection = camera.matrices.perspective;
 		ubos.scene.view = camera.matrices.view;
-#if !DLF_SILHOUETTE & !DLF_SHADING
-		ubos.scene.model = glm::translate(glm::mat4(1.0f), glm::vec3(sin(glm::radians(timer * 360.0f)) * 0.25f, -1.0f, cos(glm::radians(timer * 360.0f)) * 0.25f));
+
+		/*ubos.scene.model = glm::translate(glm::mat4(1.0f), glm::vec3(sin(glm::radians(timer * 360.0f)) * 0.25f, -1.0f, cos(glm::radians(timer * 360.0f)) * 0.25f));
 		ubos.scene.model = glm::rotate(ubos.scene.model, -sinf(glm::radians(timer * 360.0f)) * 0.15f, glm::vec3(1.0f, 0.0f, 0.0f));
-		ubos.scene.model = glm::rotate(ubos.scene.model, glm::radians(timer * 360.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-#endif
+		ubos.scene.model = glm::rotate(ubos.scene.model, glm::radians(timer * 360.0f), glm::vec3(0.0f, 1.0f, 0.0f));*/
+
 		memcpy(uniformBuffers.scene.mapped, &ubos.scene, sizeof(ubos.scene));
 
 		// Skybox
@@ -696,10 +691,10 @@ public:
 
 	void prepare()
 	{
-#if DLF_SILHOUETTE || DLF_SHADING
+
 		std::string glslToSpvBat = getShadersPath() + "bloom/glsltospv.bat " + getShadersPath() + "bloom";
 		system(glslToSpvBat.c_str());
-#endif
+
 		VulkanExampleBase::prepare();
 		loadAssets();
 		prepareUniformBuffers();

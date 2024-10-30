@@ -137,12 +137,18 @@ public:
 
 		}
 
-		void updateBuffer() {
+		void updateBuffer(vks::VulkanDevice* device) {
+			// Create staging buffers
+			// Vertex data
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
 			} vertexStaging, indexStaging;
-			device;
+			
+			size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
+			size_t indexBufferSize = indexBuffer.size() * sizeof(uint32_t);
+			indices.count = static_cast<uint32_t>(indexBuffer.size());
+			vertices.count = static_cast<uint32_t>(vertexBuffer.size());
 			// Create staging buffers
 			// Vertex data
 			VK_CHECK_RESULT(device->createBuffer(
@@ -177,6 +183,7 @@ public:
 				&indices.buffer,
 				&indices.memory));
 		}
+		
 	};
 
 	Mesh mesh;

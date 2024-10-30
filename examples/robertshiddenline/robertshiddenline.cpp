@@ -66,18 +66,26 @@ public:
 			this->he = he;
 		};
 	};
+
+
 	struct Mesh {
+		std::vector<uint32_t> indexBuffer;
 		std::vector<uPtr<Face>> faces{};
 		std::vector<uPtr<HalfEdge>> halfEdges{};  //get()
 		std::vector<uPtr<Vertex>> vertices{};
-		std::unordered_map<std::string, HalfEdge*> symHEs;
+		std::vector<HalfEdge*> lineSegs{};
+		
 
 		void create(std::vector<uint32_t>& indexBuffer, std::vector<vkglTF::Vertex>& vertexBuffer) {
+			std::unordered_map<std::string, HalfEdge*> symHEs;
 			for (int i = 0; i < vertexBuffer.size(); ++i) {
 				uPtr<Vertex> vert = mkU<Vertex>(i, vertexBuffer[i].pos);
 				vertices.push_back(std::move(vert));
 			}
 			for (int i = 0; i < indexBuffer.size(); i += 3) {
+				this->indexBuffer.push_back(indexBuffer[i]);
+				this->indexBuffer.push_back(indexBuffer[i + 1]);
+				this->indexBuffer.push_back(indexBuffer[i + 2]);
 				uPtr<HalfEdge> he1 = mkU<HalfEdge>(halfEdges.size());
 				he1->setVertex(vertices[indexBuffer[i + 1]].get());
 				uPtr<HalfEdge> he2 = mkU<HalfEdge>(halfEdges.size() + 1);
@@ -119,9 +127,55 @@ public:
 					}
 					else {
 						symHEs[key1] = currHe;
+						lineSegs.push_back(currHe);
 					}
 				}
 			}
+		}
+
+		void calculateVisibleLineSegs(glm::mat4 view) {
+
+		}
+
+		void updateBuffer() {
+			struct StagingBuffer {
+				VkBuffer buffer;
+				VkDeviceMemory memory;
+			} vertexStaging, indexStaging;
+			device;
+			// Create staging buffers
+			// Vertex data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				vertexBufferSize,
+				&vertexStaging.buffer,
+				&vertexStaging.memory,
+				vertexBuffer.data()));
+			// Index data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				indexBufferSize,
+				&indexStaging.buffer,
+				&indexStaging.memory,
+				indexBuffer.data()));
+
+			// Create device local buffers
+			// Vertex buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | memoryPropertyFlags,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				vertexBufferSize,
+				&vertices.buffer,
+				&vertices.memory));
+			// Index buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | memoryPropertyFlags,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				indexBufferSize,
+				&indices.buffer,
+				&indices.memory));
 		}
 	};
 
@@ -228,8 +282,8 @@ public:
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		std::vector<uint32_t> indexBuffer;
 		std::vector<vkglTF::Vertex> vertexBuffer;
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		mesh.create(indexBuffer, vertexBuffer);
 
 	}

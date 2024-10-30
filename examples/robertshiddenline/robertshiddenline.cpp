@@ -9,11 +9,123 @@
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
 #define DLF 1
+#define uPtr std::unique_ptr
+#define mkU std::make_unique
 
 class VulkanExample : public VulkanExampleBase
 {
 public:
 	vkglTF::Model model;
+
+	//self-added
+	struct Vertex;
+	struct HalfEdge;
+	struct Face;
+	struct Mesh;
+
+	struct Vertex {
+		glm::vec3 position;
+		HalfEdge* he;
+		int id;
+
+		Vertex(int id, glm::vec3 pos) : id(id), position(pos) {}
+		void setHE(HalfEdge* he) {
+			this->he = he;
+		}
+	};
+
+	struct HalfEdge {
+		HalfEdge* next;
+		HalfEdge* prev;
+		HalfEdge* sym;
+		Face* face;
+		Vertex* vertex;
+		int id;
+
+		HalfEdge(int id) :id(id) {};
+		void setSym(HalfEdge* sym) {
+			this->sym = sym;
+			sym->sym = this;
+		};
+		void setFace(Face* face) {
+			this->face = face;
+		};
+		void setVertex(Vertex* ver) {
+			this->vertex = ver;
+			ver->he = this;
+		};
+
+	};
+
+	struct Face {
+		HalfEdge* he;
+		int id;
+
+		Face(int id) :id(id) {};
+		void setHalfEdge(HalfEdge* he) {
+			this->he = he;
+		};
+	};
+	struct Mesh {
+		std::vector<uPtr<Face>> faces{};
+		std::vector<uPtr<HalfEdge>> halfEdges{};  //get()
+		std::vector<uPtr<Vertex>> vertices{};
+		std::unordered_map<std::string, HalfEdge*> symHEs;
+
+		void create(std::vector<uint32_t>& indexBuffer, std::vector<vkglTF::Vertex>& vertexBuffer) {
+			for (int i = 0; i < vertexBuffer.size(); ++i) {
+				uPtr<Vertex> vert = mkU<Vertex>(i, vertexBuffer[i].pos);
+				vertices.push_back(std::move(vert));
+			}
+			for (int i = 0; i < indexBuffer.size(); i += 3) {
+				uPtr<HalfEdge> he1 = mkU<HalfEdge>(halfEdges.size());
+				he1->setVertex(vertices[indexBuffer[i + 1]].get());
+				uPtr<HalfEdge> he2 = mkU<HalfEdge>(halfEdges.size() + 1);
+				he2->setVertex(vertices[indexBuffer[i + 2]].get());
+				uPtr<HalfEdge> he3 = mkU<HalfEdge>(halfEdges.size() + 2);
+				he3->setVertex(vertices[indexBuffer[i]].get());
+				he1->next = he2.get();
+				he1->prev = he3.get();
+				he2->next = he3.get();
+				he2->prev = he1.get();
+				he3->next = he1.get();
+				he3->prev = he2.get();
+				uPtr<Face> f = mkU<Face>(faces.size());
+				f->setHalfEdge(he1.get());
+				he1->setFace(f.get());
+				he2->setFace(f.get());
+				he3->setFace(f.get());
+				halfEdges.push_back(std::move(he1));
+				halfEdges.push_back(std::move(he2));
+				halfEdges.push_back(std::move(he3));
+				faces.push_back(std::move(f));
+
+				//set sym
+				for (int j = 0; j < 3; ++j) {
+					HalfEdge* currHe = halfEdges[halfEdges.size() - 1 - j].get();
+					Vertex* ver1 = currHe->prev->vertex;
+					Vertex* ver2 = currHe->vertex;
+					std::string key1 = std::to_string(ver1->id) + "#" + std::to_string(ver2->id);
+					std::string key2 = std::to_string(ver2->id) + "#" + std::to_string(ver1->id);
+					/*if (symHEs[key2] != 0) {
+						currHe->setSym(symHEs[key2]);
+					}
+					else {
+						symHEs[key1] = currHe;
+					}*/
+					auto it = symHEs.find(key2);
+					if (it != symHEs.end()) {
+						currHe->setSym(it->second);
+					}
+					else {
+						symHEs[key1] = currHe;
+					}
+				}
+			}
+		}
+	};
+
+	Mesh mesh;
 
 	struct UniformData {
 		glm::mat4 projection;
@@ -99,8 +211,8 @@ public:
 			model.draw(drawCmdBuffers[i]);
 
 			// Second pass renders scaled object only where stencil was not set by first pass
-			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.outline);
-			model.draw(drawCmdBuffers[i]);
+			/*vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.outline);
+			model.draw(drawCmdBuffers[i]);*/
 
 			drawUI(drawCmdBuffers[i]);
 
@@ -110,10 +222,16 @@ public:
 		}
 	}
 
+
 	void loadAssets()
 	{
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		model.loadFromFile(getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		std::vector<uint32_t> indexBuffer;
+		std::vector<vkglTF::Vertex> vertexBuffer;
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		mesh.create(indexBuffer, vertexBuffer);
+
 	}
 
 	void setupDescriptors()
@@ -149,8 +267,10 @@ public:
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
 
 		// Pipeline
-		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = vks::initializers::pipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, VK_FALSE);
+		//VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = vks::initializers::pipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, VK_FALSE);
+		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = vks::initializers::pipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, 0, VK_FALSE);
 		VkPipelineRasterizationStateCreateInfo rasterizationState = vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_FRONT_BIT, VK_FRONT_FACE_CLOCKWISE, 0);
+		rasterizationState.lineWidth = 2.f;
 		VkPipelineColorBlendAttachmentState blendAttachmentState = vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE);
 		VkPipelineColorBlendStateCreateInfo colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
 		VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL);
@@ -173,8 +293,8 @@ public:
 		pipelineCI.pVertexInputState = vkglTF::Vertex::getPipelineVertexInputState({ vkglTF::VertexComponent::Position, vkglTF::VertexComponent::Color, vkglTF::VertexComponent::Normal });
 
 		// Toon render and stencil fill pass
-		shaderStages[0] = loadShader(getShadersPath() + "stencilbuffer/toon.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "stencilbuffer/toon.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "robertshiddenline/toon.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "robertshiddenline/toon.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.stencilTestEnable = VK_TRUE;
 		depthStencilState.back.compareOp = VK_COMPARE_OP_ALWAYS;
@@ -193,8 +313,8 @@ public:
 		depthStencilState.back.passOp = VK_STENCIL_OP_REPLACE;
 		depthStencilState.front = depthStencilState.back;
 		depthStencilState.depthTestEnable = VK_FALSE;
-		shaderStages[0] = loadShader(getShadersPath() + "stencilbuffer/outline.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "stencilbuffer/outline.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "robertshiddenline/outline.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "robertshiddenline/outline.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.outline));
 	}
 
@@ -227,7 +347,7 @@ public:
 	void prepare()
 	{
 #if DLF
-		std::string glslToSpvBat = getShadersPath() + "stencilbuffer/glsltospv.bat " + getShadersPath() + "stencilbuffer";
+		std::string glslToSpvBat = getShadersPath() + "robertshiddenline/glsltospv.bat " + getShadersPath() + "robertshiddenline";
 		system(glslToSpvBat.c_str());
 #endif
 		VulkanExampleBase::prepare();

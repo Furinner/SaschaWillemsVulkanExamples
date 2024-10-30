@@ -150,6 +150,7 @@ set(EXAMPLES
 	raytracingshadows
 	raytracingtextures
 	renderheadless
+	robertshiddenline
 	screenshot
 	shaderobjects
 	shadowmapping

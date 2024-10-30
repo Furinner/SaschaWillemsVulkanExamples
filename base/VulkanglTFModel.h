@@ -312,5 +312,9 @@ namespace vkglTF
 		Node* findNode(Node* parent, uint32_t index);
 		Node* nodeFromIndex(uint32_t index);
 		void prepareNodeDescriptor(vkglTF::Node* node, VkDescriptorSetLayout descriptorSetLayout);
+
+		//self-added
+		void loadFromFileWithVertIdx(std::vector<uint32_t>& indexBuffer, std::vector<Vertex>& vertexBuffer, std::string filename, vks::VulkanDevice* device, VkQueue transferQueue, uint32_t fileLoadingFlags = vkglTF::FileLoadingFlags::None, float scale = 1.0f);
+		//
 	};
 }

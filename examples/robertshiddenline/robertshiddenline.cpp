@@ -35,6 +35,7 @@ public:
 			for (int i = 0; i < 4; ++i) {
 				for (int j = 0; j < 4; ++j) {
 					if ((this->view[i][j] - view[i][j]) > FLT_EPSILON) {
+						this->view = view;
 						return true;
 					}
 				}
@@ -172,6 +173,9 @@ public:
 		}
 
 		void intersectFace(Face* f) {
+			if (visRanges.empty()) {
+				return;
+			}
 			//case 1, line won't intersect face
 			if (f->box.zmax < box.zmin) {
 				//in 2D plane
@@ -227,15 +231,14 @@ public:
 							}
 						}
 					}
-					if (bigx != 1.f) {
-						std::pair<float, float> vis{ bigx, 1.f };
-						visVec.push_back(vis);
-					}
 					if (smallx != 0.f) {
 						std::pair<float, float> vis{ 0.f, smallx };
 						visVec.push_back(vis);
 					}
-
+					if (bigx != 1.f) {
+						std::pair<float, float> vis{ bigx, 1.f };
+						visVec.push_back(vis);
+					}
 					mergeVisRange(visVec);
 				}
 			}
@@ -245,6 +248,12 @@ public:
 			std::pair<int, float> result;
 			float m1 = slope;
 			float m2 = he->slope;
+			//handle inf
+			if (isinf(m1) || isinf(m2)) {
+				result.first = 0;
+				result.second = 0.f;
+				return result;
+			}
 			//if slope is the same, return false
 			if (m1 == m2) {
 				result.first = 0;
@@ -268,19 +277,99 @@ public:
 		}
 
 		void mergeVisRange(std::vector<std::pair<float, float>>& visVec) {
-			//vis [x, y] 
-			for (auto& newVis : visVec) {
-				for (auto& oldVis : visRanges) {
-					//first, check vis x is smaller than whose y.
-					if (newVis.first < oldVis.second) {
-						oldVis.first = newVis.first;
+			if (!visVec.empty()) {
+				visRanges = intersectionOper(visRanges, visVec);
+			}
+		}
+
+	private:
+		std::vector<int> intersectionHelper(std::pair<float, float>& vec1, std::pair<float, float>& vec2) {
+			std::vector<int> results{};
+			//case 1, no intersection
+			if (vec1.second < vec2.first) {
+				results.push_back(1);
+				results.push_back(0);
+				return results;
+			}
+			if (vec2.second < vec1.first) {
+				results.push_back(1);
+				results.push_back(1);
+				return results;
+			}
+			//case 2, fully bound
+			if ((vec2.first < vec1.first) && (vec1.second < vec2.second)) {
+				results.push_back(2);
+				results.push_back(1);
+				return results;
+			}
+			if ((vec1.first < vec2.first) && (vec2.second < vec1.second)) {
+				results.push_back(2);
+				results.push_back(0);
+				return results;
+			}
+			//case 3, intersection
+			if ((vec1.first <= vec2.first) && (vec1.second <= vec2.second)) {
+				results.push_back(3);
+				results.push_back(0);
+				return results;
+			}
+			if ((vec2.first <= vec1.first) && (vec2.second <= vec1.second)) {
+				results.push_back(3);
+				results.push_back(1);
+				return results;
+			}
+
+		}
+
+		std::vector<std::pair<float, float>> intersectionOper(std::vector<std::pair<float, float>>& vec1, std::vector<std::pair<float, float>>& vec2) {
+			int i = 0;
+			int j = 0;
+			std::vector<std::pair<float, float>> results;
+			while (true) {
+				std::vector<int> tmpResult = intersectionHelper(vec1[i], vec2[j]);
+				int cas = tmpResult[0];
+				int fir = tmpResult[1];
+				if (cas == 1) {
+					//case 1
+					if (fir == 0) {
+						++i;
 					}
-					//second, check vis y is bigger than whose x.
-					if (newVis.second < oldVis.first) {
-						oldVis.second = newVis.second;
+					else if (fir == 1) {
+						++j;
 					}
 				}
+				else if (cas == 2) {
+					//case 2
+					if (fir == 0) {
+						results.push_back(vec1[i]);
+						++i;
+
+					}
+					else if (fir == 1){
+						results.push_back(vec2[j]);
+						++j;
+					}
+				}
+				else {
+					//case 3
+					if (fir == 0) {
+						std::pair<float, float> tmpPair{vec2[j].first, vec1[i].second};
+						results.push_back(tmpPair);
+						++i;
+
+					}
+					else if (fir == 1) {
+						std::pair<float, float> tmpPair{ vec1[i].first, vec2[j].second };
+						results.push_back(tmpPair);
+						++j;
+					}
+				}
+				//ij
+				if ((i == vec1.size()) || (j == vec2.size())) {
+					break;
+				}
 			}
+			return results;
 		}
 	};
 
@@ -456,8 +545,11 @@ public:
 			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
 		}
 
-		void updateVertices(glm::vec4 view) {
-			
+		void updateVertices(glm::mat4 view) {
+			for (auto& ver : vertices) {
+				ver->position = glm::vec3(view * glm::vec4(ver->origPos, 1));
+				ver->normal = glm::mat3(view) * ver->origNor;
+			}
 		}
 
 		void calculateVisibleLineSegs(glm::mat4 view) {
@@ -486,7 +578,86 @@ public:
 		}
 
 		void updateBuffer(vks::VulkanDevice* device, VkQueue transferQueue) {
-			
+			lineIdx.clear();
+			verticesData.clear();
+			int lineIdxCnt = 0;
+			for (auto& line : lineSegs) {
+				if (!(line->visRanges.empty())) {
+					glm::vec3 v1 = line->prev->vertex->position;
+					glm::vec3 n1 = line->prev->vertex->normal;
+					glm::vec3 v2 = line->vertex->position;
+					glm::vec3 n2 = line->vertex->normal;
+					for (auto& vis : line->visRanges) {
+						verticesData.push_back(glm::mix(v1, v2, vis.first));
+						verticesData.push_back(glm::mix(n1, n2, vis.first));
+						verticesData.push_back(glm::mix(v1, v2, vis.second));
+						verticesData.push_back(glm::mix(n1, n2, vis.second));
+						lineIdx.push_back(lineIdxCnt++);
+						lineIdx.push_back(lineIdxCnt++);
+					}
+				}
+			}
+
+			// Create staging buffers
+			// Vertex data
+			struct StagingBuffer {
+				VkBuffer buffer;
+				VkDeviceMemory memory;
+			} vertexStaging, indexStaging;
+
+			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3);
+			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t);
+			// Create staging buffers
+			// Vertex data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				vertexBufferSize,
+				&vertexStaging.buffer,
+				&vertexStaging.memory,
+				verticesData.data()));
+			// Index data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				indexBufferSize,
+				&indexStaging.buffer,
+				&indexStaging.memory,
+				lineIdx.data()));
+
+			// Create device local buffers
+			// Vertex buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | 0,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				vertexBufferSize,
+				&verticesBuffer,
+				&verticesMemory));
+			// Index buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | 0,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				indexBufferSize,
+				&lineIdxBuffer,
+				&lineIdxMemory));
+
+			// Copy from staging buffers
+			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+
+			VkBufferCopy copyRegion = {};
+
+			copyRegion.size = vertexBufferSize;
+			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, verticesBuffer, 1, &copyRegion);
+
+			copyRegion.size = indexBufferSize;
+			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, lineIdxBuffer, 1, &copyRegion);
+
+			device->flushCommandBuffer(copyCmd, transferQueue, true);
+
+			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
 		}
 		
 	};
@@ -599,8 +770,9 @@ public:
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		std::vector<uint32_t> indexBuffer;
 		std::vector<vkglTF::Vertex> vertexBuffer;
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, cam.view);
 	}
 
@@ -753,11 +925,9 @@ public:
 #if ALL_LINE
 		
 #else
-		if (cam.changed(camera.matrices.view)) {
-			mesh.calculateVisibleLineSegs(cam.view);
-			mesh.updateBuffer(vulkanDevice, queue);
-			
-		}
+		mesh.updateVertices(camera.matrices.view);
+		//mesh.calculateVisibleLineSegs(cam.view);
+		mesh.updateBuffer(vulkanDevice, queue);
 #endif
 		draw();
 	}

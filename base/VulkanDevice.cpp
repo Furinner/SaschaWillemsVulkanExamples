@@ -343,6 +343,7 @@ namespace vks
 		if (data != nullptr)
 		{
 			void *mapped;
+			//device, memory, offset, size, api_specific
 			VK_CHECK_RESULT(vkMapMemory(logicalDevice, *memory, 0, size, 0, &mapped));
 			memcpy(mapped, data, size);
 			// If host coherency hasn't been requested, do a manual flush to make writes visible

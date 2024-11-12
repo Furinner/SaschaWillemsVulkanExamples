@@ -10,8 +10,8 @@
 #include "VulkanglTFModel.h"
 #define DLF 1
 
-#define ALL_LINE 0
-#define WIREFRAME 1
+#define ALL_LINE 1
+#define WIREFRAME 0
 #define HIDDEN_LINE 0
 
 #define uPtr std::unique_ptr
@@ -604,7 +604,7 @@ public:
 				VkBuffer buffer;
 				VkDeviceMemory memory;
 			} vertexStaging, indexStaging;
-
+			
 			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3);
 			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t);
 			// Create staging buffers
@@ -625,25 +625,9 @@ public:
 				&indexStaging.memory,
 				lineIdx.data()));
 
-			// Create device local buffers
-			// Vertex buffer
-			VK_CHECK_RESULT(device->createBuffer(
-				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | 0,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				vertexBufferSize,
-				&verticesBuffer,
-				&verticesMemory));
-			// Index buffer
-			VK_CHECK_RESULT(device->createBuffer(
-				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | 0,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				indexBufferSize,
-				&lineIdxBuffer,
-				&lineIdxMemory));
-
 			// Copy from staging buffers
 			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
-
+			
 			VkBufferCopy copyRegion = {};
 
 			copyRegion.size = vertexBufferSize;
@@ -659,7 +643,6 @@ public:
 			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
 		}
-		
 	};
 
 	Mesh mesh;
@@ -770,9 +753,9 @@ public:
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		std::vector<uint32_t> indexBuffer;
 		std::vector<vkglTF::Vertex> vertexBuffer;
-		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, cam.view);
 	}
 
@@ -925,9 +908,11 @@ public:
 #if ALL_LINE
 		
 #else
-		mesh.updateVertices(camera.matrices.view);
-		//mesh.calculateVisibleLineSegs(cam.view);
-		mesh.updateBuffer(vulkanDevice, queue);
+		if (cam.changed(camera.matrices.view)) {
+			mesh.updateVertices(camera.matrices.view);
+			//mesh.calculateVisibleLineSegs(cam.view);
+			//mesh.updateBuffer(vulkanDevice, queue);
+		}
 #endif
 		draw();
 	}

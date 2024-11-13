@@ -8,6 +8,8 @@
 
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #define DLF 1
 
 #define ALL_LINE 0
@@ -46,6 +48,7 @@ public:
 		glm::vec3 origPos;
 		glm::vec3 origNor;
 		glm::vec3 posProj;
+		glm::vec3 posDiv;
 		int id;
 
 		class VertexHash {
@@ -60,7 +63,7 @@ public:
 			}
 		};
 
-		Vertex(int id, glm::vec3 pos, glm::vec3 normal, glm::vec3 origPos, glm::vec3 origNor, glm::vec3 posProj) : id(id), position(pos), normal(normal), origPos(origPos), origNor(origNor), posProj(posProj) {}
+		Vertex(int id, glm::vec3 pos, glm::vec3 normal, glm::vec3 origPos, glm::vec3 origNor, glm::vec3 posProj) : id(id), position(pos), normal(normal), origPos(origPos), origNor(origNor), posProj(posProj) { posDiv = perspectiveDivide(position, true); }
 		
 		bool operator==(const Vertex& other) const {
 			return (position == other.position) && (normal == other.normal) && (he == other.he);
@@ -93,17 +96,49 @@ public:
 			return attributeDescriptions;
 		}
 
-		static bool inFace(glm::vec3 pos, glm::vec3 pos1, glm::vec3 pos2, glm::vec3 pos3) {
-			float triArea = glm::length(glm::cross((pos2 - pos1), (pos3 - pos1))) * 0.5f;
-			float s1 = glm::length(glm::cross((pos1 - pos), (pos2 - pos))) * 0.5f;
-			float s2 = glm::length(glm::cross((pos2 - pos), (pos3 - pos))) * 0.5f;
-			float s3 = glm::length(glm::cross((pos3 - pos), (pos1 - pos))) * 0.5f;
-			if ((s1 + s2 + s3) <= triArea) {
+		template<typename T>
+		static inline bool fequal(T a, T b, T epsilon = 0.0001) {
+			if (a == b) {
+				// Shortcut
 				return true;
 			}
-			else {
-				return false;
+
+			const T diff = std::abs(a - b);
+			if (a * b == 0) {
+				// a or b or both are zero; relative error is not meaningful here
+				return diff < (epsilon * epsilon);
 			}
+
+			return diff / (std::abs(a) + std::abs(b)) < epsilon;
+		}
+
+		static bool inFace(glm::vec3 pos, glm::vec3 pos1, glm::vec3 pos2, glm::vec3 pos3) {
+			float triArea = glm::length(glm::cross((pos2 - pos1), (pos3 - pos1))) * 0.5f;
+			float s1 = glm::length(glm::cross((pos1 - pos), (pos2 - pos))) * 0.5f / triArea;
+			float s2 = glm::length(glm::cross((pos2 - pos), (pos3 - pos))) * 0.5f / triArea;
+			float s3 = glm::length(glm::cross((pos3 - pos), (pos1 - pos))) * 0.5f / triArea;
+			float sum = s1 + s2 + s3;
+			if (s1 >= 0 && s1 <= 1 && s2 >= 0 && s2 <= 1 && s3 >= 0 && s3 <= 1 && fequal(sum, 1.0f)) {
+				return true;
+			}
+			return false;
+		}
+
+		static glm::vec3 inline perspectiveDivide(glm::vec3 pos, bool negZ) {
+			if (negZ) {
+				pos /= (-pos.z);
+			}
+			else {
+				pos /= pos.z;
+			}
+			return pos;
+		}
+
+		static float inline perspectiveCorrect(glm::vec3 q1, glm::vec3 q2, float x) {
+			//give me original q1 and q2, not q1 and q2 after perspective divide
+			glm::vec3 qx = glm::mix(q1, q2, x);
+			float t = x * qx.z / q2.z;
+			return t;
 		}
 	};
 
@@ -143,15 +178,14 @@ public:
 		}
 
 		void calculateSlope() {
-			glm::vec3 v1Pos = prev->vertex->posProj;
-			glm::vec3 v2Pos = vertex->posProj;
+			glm::vec3 v1Pos = prev->vertex->posDiv;
+			glm::vec3 v2Pos = vertex->posDiv;
 			slope = (v2Pos.y - v1Pos.y) / (v2Pos.x - v1Pos.x);
 		}
 
 		void calculateBox() {
-			//This is the box is in projection space!!!!!
-			glm::vec3 v1Pos = prev->vertex->posProj;
-			glm::vec3 v2Pos = vertex->posProj;
+			glm::vec3 v1Pos = prev->vertex->position;
+			glm::vec3 v2Pos = vertex->position;
 			box.xmax = std::max(v1Pos.x, v2Pos.x);
 			box.xmin = std::min(v1Pos.x, v2Pos.x);
 			box.ymax = std::max(v1Pos.y, v2Pos.y);
@@ -160,49 +194,84 @@ public:
 			box.zmin = std::min(v1Pos.z, v2Pos.z);
 		}
 
-		void intersectFace(Face* f) {
+		void calculateVisRangeWithFace(Face* f) {
 			if (visRanges.empty()) {
 				return;
 			}
-			//case 1, line won't intersect face
-			//he's zmin is stll bigger than face's zmax
-			if (box.zmin > f->box.zmax) {
+			Vertex* p1Ver = prev->vertex;
+			Vertex* p2Ver = vertex;
+			//check if p1Ver and p2Ver are behind camera
+			if ( (p1Ver->position.z > 0) || (p2Ver->position.z > 0)) {
+				//note, this may not be correct
+				//maybe allow line to intersect camera?
+				visRanges.clear();
+				return;
+			}
+			std::vector<std::pair<float, float>> visVec{};
+			//case 1, line won't intersect face.
+			//line's box is behind face's box.
+			if (f->box.zmin > box.zmax) {
 				//in 2D plane
-				glm::vec3 p1 = prev->vertex->position;
-				glm::vec3 p2 = vertex->position;
+				glm::vec3 p1 = p1Ver->posDiv;
+				glm::vec3 p2 = p2Ver->posDiv;
 				HalfEdge* lineSeg1 = f->he->prev;
 				HalfEdge* lineSeg2 = f->he;
 				HalfEdge* lineSeg3 = f->he->next;
 				std::vector<std::pair<int, float>> inters{};
 				std::vector<std::pair<int, float>> activeInters{};
-				inters.push_back(intersectLine(p1, p2, lineSeg1));
-				inters.push_back(intersectLine(p1, p2, lineSeg2));
-				inters.push_back(intersectLine(p1, p2, lineSeg3));
+				inters.push_back(intersectLine(p1Ver, p2Ver, lineSeg1));
+				inters.push_back(intersectLine(p1Ver, p2Ver, lineSeg2));
+				inters.push_back(intersectLine(p1Ver, p2Ver, lineSeg3));
+				//line 1 (p1,p2)
+				//line 2 (lineSeg)
 				for (int i = 0; i < inters.size(); ++i) {
-					if (inters[i].first) {
+					if (inters[i].first == 1) {
 						activeInters.push_back(inters[i]);
 					}
+					else {
+						if (inters[i].first == 3) {
+							//line1 parallel to line2
+							std::pair<float, float> vis{ 0.f, 1.f };
+							visVec.push_back(vis);
+							mergeVisRange(visVec);
+							return;
+						}
+					}
 				}
-				std::vector<std::pair<float, float>> visVec{};
 				//0 intersection
 				if (activeInters.size() == 0) {
-					//totally invisible
-					visRanges = visVec;
+					//check if outside face or inside face
+					if (Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv) || Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv)) {
+						// if inside face, totally invisible
+						visRanges.clear();
+						return;
+					}
+					else {
+						std::pair<float, float> vis{ 0.f, 1.f };
+						visVec.push_back(vis);
+						mergeVisRange(visVec);
+					}
 				}
 				//1 intersection 
 				else if (activeInters.size() == 1) {
 					std::pair<float, float> vis{ 0.f, 1.f };
 					//get the active inter
 					float x = 0.f;
-					
+					bool p1InFace = Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+					bool p2InFace = Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+
 					//test which endpoint is in face
-					if (Vertex::inFace(p1, lineSeg1->vertex->position, lineSeg2->vertex->position, lineSeg3->vertex->position)) {
+					if (p1InFace && (!p2InFace)) {
 						//p1 in tri
 						vis.first = activeInters[0].second;
 					}
-					else {
+					else if((!p1InFace) && p2InFace){
 						//p2 in tri
 						vis.second = activeInters[0].second;
+					}
+					else if (p1InFace && p2InFace) {
+						visRanges.clear();
+						return;
 					}
 					visVec.push_back(vis);
 					mergeVisRange(visVec);
@@ -232,36 +301,167 @@ public:
 					mergeVisRange(visVec);
 				}
 			}
+			else {
+				//case 2, can't hide line
+				if (box.zmin > f->box.zmax) {
+					return;
+				}
+				else {
+					//case 3, could intersect face
+					HalfEdge* lineSeg1 = f->he->prev;
+					HalfEdge* lineSeg2 = f->he;
+					HalfEdge* lineSeg3 = f->he->next;
+					std::pair<int, float> interFaceResult = intersectFace(p1Ver, p2Ver, lineSeg1, lineSeg2, lineSeg3);
+					
+				}
+			}
 		}
 
-		std::pair<int, float> intersectLine(glm::vec3 p1, glm::vec3 p2, HalfEdge* he) {
+		std::pair<int, float> intersectFace(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
 			std::pair<int, float> result;
+			glm::vec3 r0 = p1Ver->position;
+			glm::vec3 p2 = p2Ver->position;
+			glm::vec3 q1 = lineSeg1->vertex->position;
+			glm::vec3 q2 = lineSeg2->vertex->position;
+			glm::vec3 q3 = lineSeg3->vertex->position;
+			glm::vec3 rd = glm::normalize(p2 - r0);
+			glm::vec3 n = glm::normalize(glm::cross(q3 - q2, q1 - q2));
+
+
+			//1. Ray-plane intersection
+			float t_tmp = glm::dot(n, (q1 - r0)) / glm::dot(n, rd);
+			glm::vec3 P = r0 + t_tmp * rd;
+			float t = (P.y - r0.y) / (p2.y - r0.y);
+			if (isinf(t)) {
+				t = (P.x - r0.x) / (p2.x - r0.x);
+				if (isinf(t)) {
+					t = (P.z - r0.z) / (p2.z - r0.z);
+				}
+			}
+
+			result.second = t;
+			if ((t < 0) || (t > 1)) {
+				result.first = 0;
+				return result;
+			}
+			
+			//2. Barycentric test
+			if (Vertex::inFace(P, q1, q2, q3)) {
+				if (r0.z < p2.z) {
+					//result.first = 1, for r0 to P behind face.
+					result.first = 1;
+					return result;
+				}
+				else {
+					//result.first = 2, for P to p2 behind face.
+					result.first = 2;
+					return result;
+				}
+				return result;
+			}
+			result.first = 0;
+			return result;
+
+		}
+
+
+
+		std::pair<int, float> intersectLine(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* he) {
+			std::pair<int, float> result;
+			result.second = 0.f;
+			glm::vec3 p1 = p1Ver->posDiv;
+			glm::vec3 p2 = p2Ver->posDiv;
 			float m1 = slope;
 			float m2 = he->slope;
-			//handle inf
-			if (isinf(m1) || isinf(m2)) {
-				result.first = 0;
-				result.second = 0.f;
-				return result;
+			//if slope is the same
+			if (m1 == m2 || (isinf(m1) && isinf(m2))) {
+				return intersectLineSame(p1Ver, p2Ver, he);
 			}
-			//if slope is the same, return false
-			if (m1 == m2) {
-				result.first = 0;
-				result.second = 0.f;
-				return result;
+			//handle inf
+			if (isinf(m1) || isinf(m2)){
+				return intersectLineInf(p1Ver, p2Ver, he);
 			}
 			//line 2, other line
-			glm::vec3 q1 = he->prev->vertex->position;
-			glm::vec3 q2 = he->vertex->position;
+			Vertex* q1Ver = he->prev->vertex;
+			Vertex* q2Ver = he->vertex;
+			glm::vec3 q1 = q1Ver->posDiv;
+			glm::vec3 q2 = q2Ver->posDiv;
 			//intersection x
 			float x = (m1 * p1.x - p1.y - m2 * q1.x + q1.y) / (m1 - m2);
-			result.second = (x - q2.x) / (q1.x - q2.x);
+			//perspective correct t
+			float t1 = (x - p1.x) / (p2.x - p1.x);
+			float t2 = (x - q1.x) / (q2.x - q1.x);
 			//check if x is in the range of line 2
-			if ((result.second > 1) || (result.second) < 0) {
+			if ((t1 > 1) || (t1 < 0) || (t2 > 1) || (t2 < 0)) {
 				result.first = 0;
 			}
 			else {
 				result.first = 1;
+				float t1_correct = Vertex::perspectiveCorrect(p1Ver->position, p2Ver->position, t1);
+				result.second = t1_correct;
+			}
+			return result;
+		}
+
+		
+		std::pair<int, float> intersectLineInf(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* he) {
+			//here handle inf but not same slope
+			std::pair<int, float> result;
+			result.second = 0.f;
+			glm::vec3 p1 = p1Ver->posDiv;
+			glm::vec3 p2 = p2Ver->posDiv;
+			float m1 = slope;
+			float m2 = he->slope;
+			Vertex* q1Ver = he->prev->vertex;
+			Vertex* q2Ver = he->vertex;
+			glm::vec3 q1 = q1Ver->posDiv;
+			glm::vec3 q2 = q2Ver->posDiv;
+			if (isinf(m1)) {
+				float x = p1.x;
+				float y = m2 * x - m2 * q1.x + q1.y;
+				float t1 = (y - p1.y) / (p2.y - p1.y);
+				float t2 = (x - q1.x) / (q2.x - q1.x);
+				if ((t1 > 1) || (t1 < 0) || (t2 > 1) || (t2 < 0)) {
+					result.first = 0;
+				}
+				else {
+					float t_correct = Vertex::perspectiveCorrect(p1Ver->position, p2Ver->position, t1);
+					result.first = 1;
+					result.second = t_correct;
+				}
+			}
+			else {
+				float x = q1.x;
+				float y = m1 * x - m1 * p1.x + p1.y;
+				float t1 = (x - p1.x) / (p2.x - p1.x);
+				float t2 = (y - q1.y) / (q2.y - q1.y);
+				if ((t1 > 1) || (t1 < 0) || (t2 > 1) || (t2 < 0)) {
+					result.first = 0;
+				}
+				else {
+					result.first = 1;
+					float t_correct = Vertex::perspectiveCorrect(p1Ver->position, p2Ver->position, t1);
+					result.second = t_correct;
+				}
+			}
+			return result;
+		}
+
+		std::pair<int, float> intersectLineSame(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* he) {
+			//here handle same slope
+			std::pair<int, float> result;
+			glm::vec3 p1 = p1Ver->posDiv;
+			glm::vec3 p2 = p2Ver->posDiv;
+			float m1 = slope;
+			float m2 = he->slope;
+			glm::vec3 q1 = he->prev->vertex->posDiv;
+			float m3 = (q1.y - p1.y) / (q1.x - p1.x);
+			if (m3 == m1 || isnan(m3) || (isinf(m3) && isinf(m1))) {
+				//intersect!
+				result.first = 3;
+			}
+			else {
+				result.first = 0;
 			}
 			return result;
 		}
@@ -374,9 +574,9 @@ public:
 		};
 
 		void calculateBox() {
-			glm::vec3 v1Pos = he->prev->vertex->posProj;
-			glm::vec3 v2Pos = he->vertex->posProj;
-			glm::vec3 v3Pos = he->next->vertex->posProj;
+			glm::vec3 v1Pos = he->prev->vertex->position;
+			glm::vec3 v2Pos = he->vertex->position;
+			glm::vec3 v3Pos = he->next->vertex->position;
 			box.xmax = std::max(std::max(v1Pos.x, v2Pos.x), v3Pos.x);
 			box.xmin = std::min(std::min(v1Pos.x, v2Pos.x), v3Pos.x);
 			box.ymax = std::max(std::max(v1Pos.y, v2Pos.y), v3Pos.y);
@@ -558,6 +758,8 @@ public:
 				ver->position = glm::vec3(view * glm::vec4(ver->origPos, 1));
 				ver->normal = glm::mat3(view) * ver->origNor;
 				ver->posProj = glm::vec3(proj * glm::vec4(ver->position, 1));
+				ver->posDiv = Vertex::perspectiveDivide(ver->position, true);
+				glm::vec4 test4 = proj * glm::vec4(ver->position, 1);
 				verticesData.push_back(ver->position);
 				verticesData.push_back(ver->normal);
 			}
@@ -582,7 +784,7 @@ public:
 			for (auto& lineSeg : lineSegs) {
 				for (auto& f : faces) {
 					if (!lineSeg->inFace(f.get())) {
-						lineSeg->intersectFace(f.get());
+						lineSeg->calculateVisRangeWithFace(f.get());
 					}
 				}
 			}
@@ -593,7 +795,7 @@ public:
 		}
 
 		void updateBuffer(vks::VulkanDevice* device, VkQueue transferQueue) {
-			/*lineIdx.clear();
+			lineIdx.clear();
 			verticesData.clear();
 			int lineIdxCnt = 0;
 			for (auto& line : lineSegs) {
@@ -611,14 +813,13 @@ public:
 						lineIdx.push_back(lineIdxCnt++);
 					}
 				}
-			}*/
+			}
 #if !ALL_LINE
 			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3);
 			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t);
 			memcpy(verticesBuffer.mapped, verticesData.data(), vertexBufferSize);
 			memcpy(lineIdxBuffer.mapped, lineIdx.data(), indexBufferSize);
 #endif
-			
 		}
 	};
 
@@ -648,7 +849,8 @@ public:
 		timerSpeed *= 0.25f;
 		camera.type = Camera::CameraType::lookat;
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 512.0f);
-		camera.setRotation(glm::vec3(2.5f, -35.0f, 0.0f));
+		//camera.setRotation(glm::vec3(2.5f, -35.0f, 0.0f));
+		camera.setRotation(glm::vec3(0.f, 0.0f, 0.0f));
 		camera.setTranslation(glm::vec3(0.0f, 0.0f, -2.0f));
 		// This samples requires a format that supports depth AND stencil, which will be handled by the base class
 		requiresStencil = true;
@@ -736,7 +938,16 @@ public:
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_inter.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/12_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/four_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far3.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/3_tri.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);
 	}
 
@@ -858,12 +1069,68 @@ public:
 	void draw()
 	{
 		VulkanExampleBase::prepareFrame();
-
+#if !ALL_LINE
+		//re-record cmd buffers
+		reRecordCurrentCommandBuffer();
+#endif
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
 		VulkanExampleBase::submitFrame();
+	}
+
+	void reRecordCurrentCommandBuffer() {
+		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+
+		VkClearValue clearValues[2];
+		clearValues[0].color = defaultClearColor;
+		clearValues[1].depthStencil = { 1.0f, 0 };
+
+		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+		renderPassBeginInfo.renderPass = renderPass;
+		renderPassBeginInfo.renderArea.offset.x = 0;
+		renderPassBeginInfo.renderArea.offset.y = 0;
+		renderPassBeginInfo.renderArea.extent.width = width;
+		renderPassBeginInfo.renderArea.extent.height = height;
+		renderPassBeginInfo.clearValueCount = 2;
+		renderPassBeginInfo.pClearValues = clearValues;
+
+		renderPassBeginInfo.framebuffer = frameBuffers[currentBuffer];
+
+		VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[currentBuffer], &cmdBufInfo));
+
+		vkCmdBeginRenderPass(drawCmdBuffers[currentBuffer], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
+		vkCmdSetViewport(drawCmdBuffers[currentBuffer], 0, 1, &viewport);
+
+		VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
+		vkCmdSetScissor(drawCmdBuffers[currentBuffer], 0, 1, &scissor);
+
+		VkDeviceSize offsets[1] = { 0 };
+
+#if !ALL_LINE
+		vkCmdBindVertexBuffers(drawCmdBuffers[currentBuffer], 0, 1, &mesh.verticesBuffer.buffer, offsets);
+		vkCmdBindIndexBuffer(drawCmdBuffers[currentBuffer], mesh.lineIdxBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+#endif
+
+		vkCmdBindDescriptorSets(drawCmdBuffers[currentBuffer], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
+
+		// First pass renders object (toon shaded) and fills stencil buffer
+		vkCmdBindPipeline(drawCmdBuffers[currentBuffer], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.stencil);
+		//model.draw(drawCmdBuffers[i]);
+		vkCmdDrawIndexed(drawCmdBuffers[currentBuffer], mesh.lineIdx.size(), 1, 0, 0, 0);
+
+		// Second pass renders scaled object only where stencil was not set by first pass
+		/*vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.outline);
+		model.draw(drawCmdBuffers[i]);*/
+
+		drawUI(drawCmdBuffers[currentBuffer]);
+
+		vkCmdEndRenderPass(drawCmdBuffers[currentBuffer]);
+
+		VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[currentBuffer]));
 	}
 
 	void prepare()
@@ -887,6 +1154,10 @@ public:
 			return;
 		updateUniformBuffers();
 #if !ALL_LINE
+		glm::mat4 rot = glm::mat4(1);
+		rot = glm::rotate(rot, glm::radians(180.f), glm::vec3(0, 1, 0));
+		glm::mat4 cameraRot = camera.matrices.view;
+		glm::mat4 cameraPer = camera.matrices.perspective;
 		if (camera.updated) {
 			mesh.updateVertices(camera.matrices.view, camera.matrices.perspective);
 			mesh.calculateVisibleLineSegs(camera.matrices.view);

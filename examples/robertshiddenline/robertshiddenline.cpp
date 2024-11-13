@@ -10,8 +10,8 @@
 #include "VulkanglTFModel.h"
 #define DLF 1
 
-#define ALL_LINE 1
-#define WIREFRAME 0
+#define ALL_LINE 0
+#define WIREFRAME 1
 #define HIDDEN_LINE 0
 
 #define uPtr std::unique_ptr
@@ -28,21 +28,7 @@ public:
 	struct Face;
 	struct Mesh;
 	struct BoundingBox;
-	struct Cam {
-		glm::mat4 projection;
-		glm::mat4 view;
-		bool changed(glm::mat4 view) {
-			for (int i = 0; i < 4; ++i) {
-				for (int j = 0; j < 4; ++j) {
-					if ((this->view[i][j] - view[i][j]) > FLT_EPSILON) {
-						this->view = view;
-						return true;
-					}
-				}
-			}
-			return false;
-		}
-	}cam;
+	
 
 	struct BoundingBox {
 		float xmin = 0.0;
@@ -59,6 +45,7 @@ public:
 		HalfEdge* he;
 		glm::vec3 origPos;
 		glm::vec3 origNor;
+		glm::vec3 posProj;
 		int id;
 
 		class VertexHash {
@@ -73,7 +60,7 @@ public:
 			}
 		};
 
-		Vertex(int id, glm::vec3 pos, glm::vec3 normal, glm::vec3 origPos, glm::vec3 origNor) : id(id), position(pos), normal(normal), origPos(origPos), origNor(origNor) {}
+		Vertex(int id, glm::vec3 pos, glm::vec3 normal, glm::vec3 origPos, glm::vec3 origNor, glm::vec3 posProj) : id(id), position(pos), normal(normal), origPos(origPos), origNor(origNor), posProj(posProj) {}
 		
 		bool operator==(const Vertex& other) const {
 			return (position == other.position) && (normal == other.normal) && (he == other.he);
@@ -156,14 +143,15 @@ public:
 		}
 
 		void calculateSlope() {
-			glm::vec3 v1Pos = prev->vertex->position;
-			glm::vec3 v2Pos = vertex->position;
+			glm::vec3 v1Pos = prev->vertex->posProj;
+			glm::vec3 v2Pos = vertex->posProj;
 			slope = (v2Pos.y - v1Pos.y) / (v2Pos.x - v1Pos.x);
 		}
 
 		void calculateBox() {
-			glm::vec3 v1Pos = prev->vertex->position;
-			glm::vec3 v2Pos = vertex->position;
+			//This is the box is in projection space!!!!!
+			glm::vec3 v1Pos = prev->vertex->posProj;
+			glm::vec3 v2Pos = vertex->posProj;
 			box.xmax = std::max(v1Pos.x, v2Pos.x);
 			box.xmin = std::min(v1Pos.x, v2Pos.x);
 			box.ymax = std::max(v1Pos.y, v2Pos.y);
@@ -177,7 +165,8 @@ public:
 				return;
 			}
 			//case 1, line won't intersect face
-			if (f->box.zmax < box.zmin) {
+			//he's zmin is stll bigger than face's zmax
+			if (box.zmin > f->box.zmax) {
 				//in 2D plane
 				glm::vec3 p1 = prev->vertex->position;
 				glm::vec3 p2 = vertex->position;
@@ -197,7 +186,8 @@ public:
 				std::vector<std::pair<float, float>> visVec{};
 				//0 intersection
 				if (activeInters.size() == 0) {
-					//do nothing
+					//totally invisible
+					visRanges = visVec;
 				}
 				//1 intersection 
 				else if (activeInters.size() == 1) {
@@ -384,9 +374,9 @@ public:
 		};
 
 		void calculateBox() {
-			glm::vec3 v1Pos = he->prev->vertex->position;
-			glm::vec3 v2Pos = he->vertex->position;
-			glm::vec3 v3Pos = he->next->vertex->position;
+			glm::vec3 v1Pos = he->prev->vertex->posProj;
+			glm::vec3 v2Pos = he->vertex->posProj;
+			glm::vec3 v3Pos = he->next->vertex->posProj;
 			box.xmax = std::max(std::max(v1Pos.x, v2Pos.x), v3Pos.x);
 			box.xmin = std::min(std::min(v1Pos.x, v2Pos.x), v3Pos.x);
 			box.ymax = std::max(std::max(v1Pos.y, v2Pos.y), v3Pos.y);
@@ -403,16 +393,21 @@ public:
 		std::vector<uPtr<HalfEdge>> halfEdges{};  //get()
 		std::vector<uPtr<Vertex>> vertices{}; //record only all original vertices
 
-		std::vector<HalfEdge*> lineSegs{};
+		std::vector<HalfEdge*> lineSegs{}; //all original lineSegs (keep only 1 sym)
 		std::vector<uint32_t> lineIdx{};
 		std::vector<glm::vec3> verticesData{};
-		
+
+#if ALL_LINE
 		VkBuffer lineIdxBuffer;
 		VkDeviceMemory lineIdxMemory;
 		VkBuffer verticesBuffer;
 		VkDeviceMemory verticesMemory;
+#else
+		vks::Buffer verticesBuffer;
+		vks::Buffer lineIdxBuffer;
+#endif
 
-		void create(std::vector<uint32_t>& indexBuffer, std::vector<vkglTF::Vertex>& vertexBuffer, vks::VulkanDevice* device, VkQueue transferQueue, glm::mat4 view) {
+		void create(std::vector<uint32_t>& indexBuffer, std::vector<vkglTF::Vertex>& vertexBuffer, vks::VulkanDevice* device, VkQueue transferQueue, glm::mat4 view, glm::mat4 proj) {
 			std::unordered_map<std::string, HalfEdge*> symHEs;
 			for (int i = 0; i < vertexBuffer.size(); ++i) {
 #if ALL_LINE
@@ -421,10 +416,11 @@ public:
 #else
 				glm::vec3 pos = glm::vec3(view * glm::vec4(vertexBuffer[i].pos, 1.f));
 				glm::vec3 nor = glm::mat3(view) * vertexBuffer[i].normal;
+				glm::vec3 posProj = glm::vec3(proj * glm::vec4(pos, 1));
 #endif
 				verticesData.push_back(pos);
 				verticesData.push_back(nor);
-				uPtr<Vertex> vert = mkU<Vertex>(i, pos, nor, vertexBuffer[i].pos, vertexBuffer[i].normal);
+				uPtr<Vertex> vert = mkU<Vertex>(i, pos, nor, vertexBuffer[i].pos, vertexBuffer[i].normal, posProj);
 				vertices.push_back(std::move(vert));
 			}
 			for (int i = 0; i < indexBuffer.size(); i += 3) {
@@ -482,7 +478,7 @@ public:
 				lineIdx.push_back(line->prev->vertex->id);
 				lineIdx.push_back(line->vertex->id);
 			}
-
+#if ALL_LINE
 			// Create staging buffers
 			// Vertex data
 			struct StagingBuffer {
@@ -543,12 +539,31 @@ public:
 			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
+#else
+			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3) * 5;
+			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t) * 5;
+
+			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &verticesBuffer, vertexBufferSize);
+			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &lineIdxBuffer, indexBufferSize);
+			verticesBuffer.map();
+			lineIdxBuffer.map();
+			memcpy(verticesBuffer.mapped, verticesData.data(), verticesData.size() * sizeof(glm::vec3));
+			memcpy(lineIdxBuffer.mapped, lineIdx.data(), lineIdx.size() * sizeof(uint32_t));
+#endif
 		}
 
-		void updateVertices(glm::mat4 view) {
+		void updateVertices(glm::mat4 view, glm::mat4 proj) {
+			verticesData.clear();
 			for (auto& ver : vertices) {
 				ver->position = glm::vec3(view * glm::vec4(ver->origPos, 1));
 				ver->normal = glm::mat3(view) * ver->origNor;
+				ver->posProj = glm::vec3(proj * glm::vec4(ver->position, 1));
+				verticesData.push_back(ver->position);
+				verticesData.push_back(ver->normal);
+			}
+			for (auto& he : halfEdges) {
+				std::vector<std::pair<float, float>> tmpVisRange{ {0,1} };
+				he->visRanges = tmpVisRange;
 			}
 		}
 
@@ -578,7 +593,7 @@ public:
 		}
 
 		void updateBuffer(vks::VulkanDevice* device, VkQueue transferQueue) {
-			lineIdx.clear();
+			/*lineIdx.clear();
 			verticesData.clear();
 			int lineIdxCnt = 0;
 			for (auto& line : lineSegs) {
@@ -596,52 +611,14 @@ public:
 						lineIdx.push_back(lineIdxCnt++);
 					}
 				}
-			}
-
-			// Create staging buffers
-			// Vertex data
-			struct StagingBuffer {
-				VkBuffer buffer;
-				VkDeviceMemory memory;
-			} vertexStaging, indexStaging;
-			
+			}*/
+#if !ALL_LINE
 			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3);
 			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t);
-			// Create staging buffers
-			// Vertex data
-			VK_CHECK_RESULT(device->createBuffer(
-				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				vertexBufferSize,
-				&vertexStaging.buffer,
-				&vertexStaging.memory,
-				verticesData.data()));
-			// Index data
-			VK_CHECK_RESULT(device->createBuffer(
-				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				indexBufferSize,
-				&indexStaging.buffer,
-				&indexStaging.memory,
-				lineIdx.data()));
-
-			// Copy from staging buffers
-			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+			memcpy(verticesBuffer.mapped, verticesData.data(), vertexBufferSize);
+			memcpy(lineIdxBuffer.mapped, lineIdx.data(), indexBufferSize);
+#endif
 			
-			VkBufferCopy copyRegion = {};
-
-			copyRegion.size = vertexBufferSize;
-			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, verticesBuffer, 1, &copyRegion);
-
-			copyRegion.size = indexBufferSize;
-			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, lineIdxBuffer, 1, &copyRegion);
-
-			device->flushCommandBuffer(copyCmd, transferQueue, true);
-
-			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
-			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
-			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
-			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
 		}
 	};
 
@@ -723,8 +700,13 @@ public:
 
 			/*vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &model.vertices.buffer, offsets);
 			vkCmdBindIndexBuffer(drawCmdBuffers[i], model.indices.buffer, 0, VK_INDEX_TYPE_UINT32);*/
+#if ALL_LINE
 			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &mesh.verticesBuffer, offsets);
 			vkCmdBindIndexBuffer(drawCmdBuffers[i], mesh.lineIdxBuffer, 0, VK_INDEX_TYPE_UINT32);
+#else
+			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &mesh.verticesBuffer.buffer, offsets);
+			vkCmdBindIndexBuffer(drawCmdBuffers[i], mesh.lineIdxBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+#endif
 
 			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
 
@@ -748,15 +730,14 @@ public:
 
 	void loadAssets()
 	{
-		cam.projection = camera.matrices.perspective;
-		cam.view = camera.matrices.view;
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		std::vector<uint32_t> indexBuffer;
 		std::vector<vkglTF::Vertex> vertexBuffer;
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, cam.view);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);
 	}
 
 	void setupDescriptors()
@@ -905,13 +886,11 @@ public:
 		if (!prepared)
 			return;
 		updateUniformBuffers();
-#if ALL_LINE
-		
-#else
-		if (cam.changed(camera.matrices.view)) {
-			mesh.updateVertices(camera.matrices.view);
-			//mesh.calculateVisibleLineSegs(cam.view);
-			//mesh.updateBuffer(vulkanDevice, queue);
+#if !ALL_LINE
+		if (camera.updated) {
+			mesh.updateVertices(camera.matrices.view, camera.matrices.perspective);
+			mesh.calculateVisibleLineSegs(camera.matrices.view);
+			mesh.updateBuffer(vulkanDevice, queue);
 		}
 #endif
 		draw();

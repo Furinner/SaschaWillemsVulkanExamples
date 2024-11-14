@@ -153,7 +153,7 @@ public:
 		std::vector<std::pair<float, float>> visRanges = { {0.f, 1.f} };
 		int id;
 
-		HalfEdge(int id) :id(id) {};
+		HalfEdge(int id) :id(id) { sym = nullptr; };
 		void setSym(HalfEdge* sym) {
 			this->sym = sym;
 			sym->sym = this;
@@ -192,6 +192,24 @@ public:
 			box.ymin = std::min(v1Pos.y, v2Pos.y);
 			box.zmax = std::max(v1Pos.z, v2Pos.z);
 			box.zmin = std::min(v1Pos.z, v2Pos.z);
+		}
+
+		bool contourEdge() {
+			glm::vec3 negZ = glm::vec3(0, 0, -1);
+			glm::vec3 currP1 = vertex->position;
+			glm::vec3 currP2 = prev->vertex->position;
+			glm::vec3 currP3 = next->vertex->position;
+			glm::vec3 currFaceNor = glm::normalize(glm::cross(currP3 - currP2, currP1 - currP2));
+			glm::vec3 otherP1 = sym->vertex->position;
+			glm::vec3 otherP2 = prev->vertex->position;
+			glm::vec3 otherP3 = next->vertex->position;
+			glm::vec3 otherFaceNor = glm::normalize(glm::cross(otherP3 - otherP2, otherP1 - otherP2));
+			float currFaceDot = glm::dot(currFaceNor, negZ);
+			float otherFaceDot = glm::dot(otherFaceNor, negZ);
+			if ((currFaceDot * otherFaceDot) <= 0.f) {
+				return true;
+			}
+			return false;
 		}
 
 		void calculateVisRangeWithFace(Face* f) {
@@ -489,12 +507,12 @@ public:
 			//case 2, fully bound
 			if ((vec2.first < vec1.first) && (vec1.second < vec2.second)) {
 				results.push_back(2);
-				results.push_back(1);
+				results.push_back(0);
 				return results;
 			}
 			if ((vec1.first < vec2.first) && (vec2.second < vec1.second)) {
 				results.push_back(2);
-				results.push_back(0);
+				results.push_back(1);
 				return results;
 			}
 			//case 3, intersection
@@ -779,7 +797,7 @@ public:
 			for (auto& f : faces) {
 				f->calculateBox();
 			}
-#if WIREFRAME
+#if !ALL_LINE
 			//use current lineSegs
 			for (auto& lineSeg : lineSegs) {
 				for (auto& f : faces) {
@@ -788,13 +806,12 @@ public:
 					}
 				}
 			}
-			
-#elif HIDDEN_LINE
-			
+
 #endif
 		}
 
 		void updateBuffer(vks::VulkanDevice* device, VkQueue transferQueue) {
+#if WIREFRAME
 			lineIdx.clear();
 			verticesData.clear();
 			int lineIdxCnt = 0;
@@ -814,6 +831,32 @@ public:
 					}
 				}
 			}
+#elif HIDDEN_LINE
+			lineIdx.clear();
+			verticesData.clear();
+			int lineIdxCnt = 0;
+			for (auto& line : lineSegs) {
+				if (line->sym != nullptr) {
+					if (!line->contourEdge()) {
+						continue;
+					}
+				}
+				if (!(line->visRanges.empty())) {
+					glm::vec3 v1 = line->prev->vertex->position;
+					glm::vec3 n1 = line->prev->vertex->normal;
+					glm::vec3 v2 = line->vertex->position;
+					glm::vec3 n2 = line->vertex->normal;
+					for (auto& vis : line->visRanges) {
+						verticesData.push_back(glm::mix(v1, v2, vis.first));
+						verticesData.push_back(glm::mix(n1, n2, vis.first));
+						verticesData.push_back(glm::mix(v1, v2, vis.second));
+						verticesData.push_back(glm::mix(n1, n2, vis.second));
+						lineIdx.push_back(lineIdxCnt++);
+						lineIdx.push_back(lineIdxCnt++);
+					}
+				}
+			}
+#endif
 #if !ALL_LINE
 			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3);
 			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t);
@@ -935,7 +978,7 @@ public:
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		std::vector<uint32_t> indexBuffer;
 		std::vector<vkglTF::Vertex> vertexBuffer;
-		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
@@ -943,11 +986,12 @@ public:
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/12_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/four_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/four_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far3.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/3_tri.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/18_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);
 	}
 

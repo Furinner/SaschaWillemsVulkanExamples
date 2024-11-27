@@ -21,6 +21,22 @@
 
 class VulkanExample : public VulkanExampleBase
 {
+	template<typename T>
+	static inline bool fequal(T a, T b, T epsilon = 0.0001) {
+		if (a == b) {
+			// Shortcut
+			return true;
+		}
+
+		const T diff = std::abs(a - b);
+		if (a * b == 0) {
+			// a or b or both are zero; relative error is not meaningful here
+			return diff < (epsilon* epsilon);
+		}
+
+		return diff / (std::abs(a) + std::abs(b)) < epsilon;
+	}
+
 public:
 	vkglTF::Model model;
 
@@ -94,22 +110,6 @@ public:
 			attributeDescriptions[1].offset = offsetof(Vertex, normal);
 
 			return attributeDescriptions;
-		}
-
-		template<typename T>
-		static inline bool fequal(T a, T b, T epsilon = 0.0001) {
-			if (a == b) {
-				// Shortcut
-				return true;
-			}
-
-			const T diff = std::abs(a - b);
-			if (a * b == 0) {
-				// a or b or both are zero; relative error is not meaningful here
-				return diff < (epsilon * epsilon);
-			}
-
-			return diff / (std::abs(a) + std::abs(b)) < epsilon;
 		}
 
 		static bool inFace(glm::vec3 pos, glm::vec3 pos1, glm::vec3 pos2, glm::vec3 pos3) {
@@ -225,21 +225,30 @@ public:
 				visRanges.clear();
 				return;
 			}
+			//if area of triangle is almost 0, ignore this triangle
+			if (fequal(f->calculateArea(), 0.f)) {
+				return;
+			}
+			if (fequal(f->calculate2DArea(), 0.f)) {
+				return;
+			}
 			std::vector<std::pair<float, float>> visVec{};
 			//case 1, line won't intersect face.
 			//line's box is behind face's box.
 			if (f->box.zmin > box.zmax) {
 				//in 2D plane
-				glm::vec3 p1 = p1Ver->posDiv;
-				glm::vec3 p2 = p2Ver->posDiv;
+				glm::vec3 p1 = p1Ver->posDiv; //p1
+				glm::vec3 p1Orig = p1Ver->position;
+				glm::vec3 p2 = p2Ver->posDiv; //p2
+				glm::vec3 p2Orig = p2Ver->position;
 				HalfEdge* lineSeg1 = f->he->prev;
 				HalfEdge* lineSeg2 = f->he;
 				HalfEdge* lineSeg3 = f->he->next;
 				std::vector<std::pair<int, float>> inters{};
 				std::vector<std::pair<int, float>> activeInters{};
-				inters.push_back(intersectLine(p1Ver, p2Ver, lineSeg1));
-				inters.push_back(intersectLine(p1Ver, p2Ver, lineSeg2));
-				inters.push_back(intersectLine(p1Ver, p2Ver, lineSeg3));
+				inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg1));
+				inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
+				inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
 				//line 1 (p1,p2)
 				//line 2 (lineSeg)
 				for (int i = 0; i < inters.size(); ++i) {
@@ -319,41 +328,159 @@ public:
 					mergeVisRange(visVec);
 				}
 			}
+			//case 2 can't hide line
+			else if(box.zmin > f->box.zmax) {
+				return;
+			}
+			//case 3, could intersect face
 			else {
-				//case 2, can't hide line
-				if (box.zmin > f->box.zmax) {
-					return;
+				//in 2D plane
+				glm::vec3 p1 = p1Ver->posDiv; //p1
+				glm::vec3 p1Orig = p1Ver->position;
+				glm::vec3 p2 = p2Ver->posDiv; //p2
+				glm::vec3 p2Orig = p2Ver->position;
+				HalfEdge* lineSeg1 = f->he->prev;
+				HalfEdge* lineSeg2 = f->he;
+				HalfEdge* lineSeg3 = f->he->next;
+				std::pair<int, float> interFaceResult = intersectFace(p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
+				if (interFaceResult.first) {
+					//has intersections with face
+					std::pair<int, float> interFaceResult = intersectFace(p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
 				}
 				else {
-					//case 3, could intersect face
-					HalfEdge* lineSeg1 = f->he->prev;
-					HalfEdge* lineSeg2 = f->he;
-					HalfEdge* lineSeg3 = f->he->next;
-					std::pair<int, float> interFaceResult = intersectFace(p1Ver, p2Ver, lineSeg1, lineSeg2, lineSeg3);
-					
+					//no intersections with face
+					glm::vec3 p1Orig = p1Ver->position;
+					glm::vec3 p2Orig = p2Ver->position;
+					std::vector<std::pair<int, float>> inters{};
+					std::vector<std::pair<int, float>> activeInters{};
+					inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg1));
+					inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
+					inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
+					//line 1 (p1,p2)
+					//line 2 (lineSeg)
+					for (int i = 0; i < inters.size(); ++i) {
+						if (inters[i].first == 1) {
+							activeInters.push_back(inters[i]);
+						}
+						else {
+							if (inters[i].first == 3) {
+								//line1 parallel to line2
+								std::pair<float, float> vis{ 0.f, 1.f };
+								visVec.push_back(vis);
+								mergeVisRange(visVec);
+								return;
+							}
+						}
+					}
+					//0 intersection
+					if (activeInters.size() == 0) {
+						//check if outside face or inside face
+						if (Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv) || Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv)) {
+							// if inside face, totally invisible
+							visRanges.clear();
+							return;
+						}
+						else {
+							std::pair<float, float> vis{ 0.f, 1.f };
+							visVec.push_back(vis);
+							mergeVisRange(visVec);
+						}
+					}
+					//1 intersection 
+					else if (activeInters.size() == 1) {
+						std::pair<float, float> vis{ 0.f, 1.f };
+						//get the active inter
+						float x = 0.f;
+						bool p1InFace = Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+						bool p2InFace = Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+
+						//test which endpoint is in face
+						if (p1InFace && (!p2InFace)) {
+							//p1 in tri
+							//but, we also need to test if p1 is behind face
+							std::pair<int, float> p1FaceRes = intersectFace(glm::vec3(0,0,0), p1Orig, lineSeg1, lineSeg2, lineSeg3);
+							if (p1FaceRes.first == 0) {
+								//p1 in front of face
+							}
+							else {
+								vis.first = activeInters[0].second;
+							}
+						}
+						else if ((!p1InFace) && p2InFace) {
+							//p2 in tri
+							//but, we also need to test if p2 is behind face
+							std::pair<int, float> p2FaceRes = intersectFace(glm::vec3(0, 0, 0), p2Orig, lineSeg1, lineSeg2, lineSeg3);
+							if (p2FaceRes.first == 0) {
+								//p2 in front of face
+							}
+							else {
+								vis.second = activeInters[0].second;
+							}
+						}
+						else if (p1InFace && p2InFace) {
+							//we still need to test if p1 and p2 is behind face
+							std::pair<int, float> p1FaceRes = intersectFace(glm::vec3(0, 0, 0), p1Orig, lineSeg1, lineSeg2, lineSeg3);
+							std::pair<int, float> p2FaceRes = intersectFace(glm::vec3(0, 0, 0), p2Orig, lineSeg1, lineSeg2, lineSeg3);
+							if ((p1FaceRes.first == 0) || (p2FaceRes.first == 0)) {
+								//p1 or p2 in front of face
+							}
+							else {
+								visRanges.clear();
+								return;
+							}
+						}
+						visVec.push_back(vis);
+						mergeVisRange(visVec);
+					}
+					//2 or 3 intersections, the segment of the line between these points is visible
+					else {
+						float smallx = 1.f;
+						float bigx = 0.f;
+						for (auto& inter : activeInters) {
+							if (inter.first) {
+								if (inter.second < smallx) {
+									smallx = inter.second;
+								}
+								if (inter.second > bigx) {
+									bigx = inter.second;
+								}
+							}
+						}
+						if (smallx != 0.f) {
+							std::pair<float, float> vis{ 0.f, smallx };
+							visVec.push_back(vis);
+						}
+						if (bigx != 1.f) {
+							std::pair<float, float> vis{ bigx, 1.f };
+							visVec.push_back(vis);
+						}
+						mergeVisRange(visVec);
+					}
 				}
 			}
 		}
 
-		std::pair<int, float> intersectFace(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
+	private:
+		std::pair<int, float> intersectFace(glm::vec3 r0, glm::vec3 p2, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
 			std::pair<int, float> result;
-			glm::vec3 r0 = p1Ver->position;
-			glm::vec3 p2 = p2Ver->position;
 			glm::vec3 q1 = lineSeg1->vertex->position;
 			glm::vec3 q2 = lineSeg2->vertex->position;
 			glm::vec3 q3 = lineSeg3->vertex->position;
 			glm::vec3 rd = glm::normalize(p2 - r0);
 			glm::vec3 n = glm::normalize(glm::cross(q3 - q2, q1 - q2));
 
-
 			//1. Ray-plane intersection
 			float t_tmp = glm::dot(n, (q1 - r0)) / glm::dot(n, rd);
 			glm::vec3 P = r0 + t_tmp * rd;
+			//normalize t
 			float t = (P.y - r0.y) / (p2.y - r0.y);
 			if (isinf(t)) {
 				t = (P.x - r0.x) / (p2.x - r0.x);
 				if (isinf(t)) {
 					t = (P.z - r0.z) / (p2.z - r0.z);
+					if (isinf(t)) {
+						//TODO: handle special case that p2 and r0 is the same, in that case the denominator will always be 0.
+					}
 				}
 			}
 
@@ -370,34 +497,38 @@ public:
 					result.first = 1;
 					return result;
 				}
-				else {
+				else if (p2.z < r0.z) {
 					//result.first = 2, for P to p2 behind face.
 					result.first = 2;
+					return result;
+				}
+				else {
+					 //equal
+					//TODO:
+					result.first = 3;
 					return result;
 				}
 				return result;
 			}
 			result.first = 0;
 			return result;
-
 		}
 
 
-
-		std::pair<int, float> intersectLine(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* he) {
+		std::pair<int, float> intersectLine(glm::vec3 p1, glm::vec3 p2, glm::vec3 p1Orig, glm::vec3 p2Orig, HalfEdge* he) {
 			std::pair<int, float> result;
 			result.second = 0.f;
-			glm::vec3 p1 = p1Ver->posDiv;
-			glm::vec3 p2 = p2Ver->posDiv;
 			float m1 = slope;
 			float m2 = he->slope;
 			//if slope is the same
 			if (m1 == m2 || (isinf(m1) && isinf(m2))) {
-				return intersectLineSame(p1Ver, p2Ver, he);
+				//p1PosDiv, p2PosDiv
+				return intersectLineSame(p1, p2, he);
 			}
 			//handle inf
 			if (isinf(m1) || isinf(m2)){
-				return intersectLineInf(p1Ver, p2Ver, he);
+				//p1PosDiv, p2PosDiv
+				return intersectLineInf(p1, p2, p1Orig, p2Orig, he);
 			}
 			//line 2, other line
 			Vertex* q1Ver = he->prev->vertex;
@@ -415,19 +546,18 @@ public:
 			}
 			else {
 				result.first = 1;
-				float t1_correct = Vertex::perspectiveCorrect(p1Ver->position, p2Ver->position, t1);
+				float t1_correct = Vertex::perspectiveCorrect(p1Orig, p2Orig, t1);
 				result.second = t1_correct;
 			}
 			return result;
 		}
 
 		
-		std::pair<int, float> intersectLineInf(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* he) {
+		std::pair<int, float> intersectLineInf(glm::vec3 p1, glm::vec3 p2, glm::vec3 p1Orig, glm::vec3 p2Orig, HalfEdge* he) {
+			//p1,p2 is after perspective divide, p1Orig and p2Orig is before perspective devide
 			//here handle inf but not same slope
 			std::pair<int, float> result;
 			result.second = 0.f;
-			glm::vec3 p1 = p1Ver->posDiv;
-			glm::vec3 p2 = p2Ver->posDiv;
 			float m1 = slope;
 			float m2 = he->slope;
 			Vertex* q1Ver = he->prev->vertex;
@@ -443,7 +573,7 @@ public:
 					result.first = 0;
 				}
 				else {
-					float t_correct = Vertex::perspectiveCorrect(p1Ver->position, p2Ver->position, t1);
+					float t_correct = Vertex::perspectiveCorrect(p1Orig, p2Orig, t1);
 					result.first = 1;
 					result.second = t_correct;
 				}
@@ -458,18 +588,17 @@ public:
 				}
 				else {
 					result.first = 1;
-					float t_correct = Vertex::perspectiveCorrect(p1Ver->position, p2Ver->position, t1);
+					float t_correct = Vertex::perspectiveCorrect(p1Orig, p2Orig, t1);
 					result.second = t_correct;
 				}
 			}
 			return result;
 		}
 
-		std::pair<int, float> intersectLineSame(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* he) {
+		std::pair<int, float> intersectLineSame(glm::vec3 p1, glm::vec3 p2, HalfEdge* he) {
+			//p1,p2 are positions after perspective divide
 			//here handle same slope
 			std::pair<int, float> result;
-			glm::vec3 p1 = p1Ver->posDiv;
-			glm::vec3 p2 = p2Ver->posDiv;
 			float m1 = slope;
 			float m2 = he->slope;
 			glm::vec3 q1 = he->prev->vertex->posDiv;
@@ -477,6 +606,7 @@ public:
 			if (m3 == m1 || isnan(m3) || (isinf(m3) && isinf(m1))) {
 				//intersect!
 				result.first = 3;
+				//TODO: even if at the same line, still need to calculate the visible part of lineSeg
 			}
 			else {
 				result.first = 0;
@@ -490,7 +620,6 @@ public:
 			}
 		}
 
-	private:
 		std::vector<int> intersectionHelper(std::pair<float, float>& vec1, std::pair<float, float>& vec2) {
 			std::vector<int> results{};
 			//case 1, no intersection
@@ -601,6 +730,24 @@ public:
 			box.ymin = std::min(std::min(v1Pos.y, v2Pos.y), v3Pos.y);
 			box.zmax = std::max(std::max(v1Pos.z, v2Pos.z), v3Pos.z);
 			box.zmin = std::min(std::min(v1Pos.z, v2Pos.z), v3Pos.z);
+		}
+
+		float calculateArea() {
+			glm::vec3 pos1 = he->prev->vertex->position;
+			glm::vec3 pos2 = he->vertex->position;
+			glm::vec3 pos3 = he->next->vertex->position;
+			float area = glm::length(glm::cross((pos2 - pos1), (pos3 - pos1))) * 0.5f;
+
+			return area;
+		}
+
+		float calculate2DArea() {
+			glm::vec3 pos1 = he->prev->vertex->posDiv;
+			glm::vec3 pos2 = he->vertex->posDiv;
+			glm::vec3 pos3 = he->next->vertex->posDiv;
+			float area = glm::length(glm::cross(pos2 - pos1, pos3 - pos1)) * 0.5f;
+
+			return area;
 		}
 	};
 
@@ -978,10 +1125,11 @@ public:
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		std::vector<uint32_t> indexBuffer;
 		std::vector<vkglTF::Vertex> vertexBuffer;
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_inter.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/12_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);

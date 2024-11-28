@@ -60,6 +60,8 @@ public:
 	class VertexHash {
 	public:
 		size_t operator()(const Vertex v) const {
+			//PROBLEM: small error of vertex can lead to different seed, change to 0 for now.
+			return 0;
 			size_t seed = 5381;
 			const auto hasher = std::hash<float>{};
 			seed ^= hasher(v.position.x) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
@@ -84,7 +86,7 @@ public:
 		Vertex(int id, glm::vec3 pos, glm::vec3 normal, glm::vec3 origPos, glm::vec3 origNor, glm::vec3 posProj) : id(id), position(pos), normal(normal), origPos(origPos), origNor(origNor), posProj(posProj) { posDiv = perspectiveDivide(position, true); }
 		Vertex(glm::vec3 pos) :position(pos) {};
 		bool operator==(const Vertex other) const {
-			return (position == other.position);
+			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
 		}
 
 		void setHE(HalfEdge* he) {
@@ -148,6 +150,7 @@ public:
 		HalfEdge* next;
 		HalfEdge* prev;
 		HalfEdge* sym;
+		HalfEdge* relaxSym;
 		Face* face;
 		Vertex* vertex;
 		BoundingBox box;
@@ -160,6 +163,12 @@ public:
 			this->sym = sym;
 			sym->sym = this;
 		};
+
+		void setRelaxSym(HalfEdge* relaxSym) {
+			this->relaxSym = relaxSym;
+			relaxSym->relaxSym = this;
+		}
+
 		void setFace(Face* face) {
 			this->face = face;
 		};
@@ -183,7 +192,7 @@ public:
 			HalfEdge* origHe = f->he;
 			HalfEdge* currHe = origHe;
 			do {
-				if (currHe->sym == this) {
+				if (currHe->relaxSym == this) {
 					return true;
 				}
 				currHe = currHe->next;
@@ -231,18 +240,21 @@ public:
 		}
 
 		bool contourEdge() {
+			//OPTIMIZE: normal only need to be calculated once
+			//calculate current face's normal
 			glm::vec3 negZ = glm::vec3(0, 0, -1);
-			glm::vec3 currP1 = vertex->position;
-			glm::vec3 currP2 = prev->vertex->position;
-			glm::vec3 currP3 = next->vertex->position;
-			glm::vec3 currFaceNor = glm::normalize(glm::cross(currP3 - currP2, currP1 - currP2));
-			glm::vec3 otherP1 = sym->vertex->position;
-			glm::vec3 otherP2 = prev->vertex->position;
-			glm::vec3 otherP3 = next->vertex->position;
-			glm::vec3 otherFaceNor = glm::normalize(glm::cross(otherP3 - otherP2, otherP1 - otherP2));
+			glm::vec3 currP1 = vertex->posDiv;
+			glm::vec3 currP2 = next->vertex->posDiv;
+			glm::vec3 currP3 = prev->vertex->posDiv;
+			glm::vec3 currFaceNor = glm::normalize(glm::cross(currP2 - currP1, currP3 - currP1));
+
+			glm::vec3 otherP1 = sym->vertex->posDiv;
+			glm::vec3 otherP2 = sym->next->vertex->posDiv;
+			glm::vec3 otherP3 = sym->prev->vertex->posDiv;
+			glm::vec3 otherFaceNor = glm::normalize(glm::cross(otherP2 - otherP1, otherP3 - otherP1));
 			float currFaceDot = glm::dot(currFaceNor, negZ);
 			float otherFaceDot = glm::dot(otherFaceNor, negZ);
-			if ((currFaceDot * otherFaceDot) <= 0.f) {
+			if ((currFaceDot * otherFaceDot) < 0.f) {
 				return true;
 			}
 			return false;
@@ -295,11 +307,10 @@ public:
 				std::pair<int, float> interFaceResult = intersectFace(p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
 				if (interFaceResult.first) {
 					//has intersections with face
-					
+					//TODO:
 				}
 				else {
-					//no intersections with face
-					
+					calculateVisCloseNoInter(p1Ver, p2Ver, lineSeg1, lineSeg2, lineSeg3);
 				}
 			}
 		}
@@ -367,7 +378,7 @@ public:
 				p = p2Ver->position;
 			}
 			std::pair<int, float> result = intersectFace(glm::vec3(0, 0, 0), p, lineSeg1, lineSeg2, lineSeg3);
-			if (result.second < 1) {
+			if ((result.second < 1) && (result.second > 0)) {
 				// if p behind face plane, do calculateVisBehindFaceOneSharedVert!
 				calculateVisBehindFaceOneSharedVert(p1Ver, p2Ver, verIdx, lineSeg1, lineSeg2, lineSeg3);
 			}
@@ -396,7 +407,7 @@ public:
 			std::pair<int, float> inter = intersectLine(sharedVert->posDiv, testVert->posDiv, sharedVert->position, testVert->position, testHe);
 			if (inter.first) {
 				if (verIdx) {
-					std::vector<std::pair<float, float>> visVec{ {0, inter.second} };
+					std::vector<std::pair<float, float>> visVec{ {0, 1 - inter.second} };
 					mergeVisRange(visVec);
 				}
 				else {
@@ -415,6 +426,118 @@ public:
 			}
 		}
 
+		void calculateVisCloseNoInter(Vertex* p1Ver, Vertex* p2Ver, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
+			//in 2D plane
+			glm::vec3 p1 = p1Ver->posDiv; //p1
+			glm::vec3 p1Orig = p1Ver->position;
+			glm::vec3 p2 = p2Ver->posDiv; //p2
+			glm::vec3 p2Orig = p2Ver->position;
+			std::vector<std::pair<float, float>> visVec{};
+			std::vector<std::pair<int, float>> inters{};
+			std::vector<std::pair<int, float>> activeInters{};
+			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg1));
+			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
+			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
+			for (int i = 0; i < inters.size(); ++i) {
+				if (inters[i].first == 1) {
+					activeInters.push_back(inters[i]);
+				}
+				else {
+					if (inters[i].first == 3) {
+						//line1 parallel to line2
+						std::pair<float, float> vis{ 0.f, 1.f };
+						visVec.push_back(vis);
+						mergeVisRange(visVec);
+						return;
+					}
+				}
+			}
+			//0 intersection
+			if (activeInters.size() == 0) {
+				//check if inside face
+				if (Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv) || Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv)) {
+					//check if infront of face or in back of face
+					std::pair<int, float> zeroP1Face_t = intersectFace(glm::vec3(0, 0, 0), p1Orig, lineSeg1, lineSeg2, lineSeg3);
+					std::pair<int, float> zeroP2Face_t = intersectFace(glm::vec3(0, 0, 0), p2Orig, lineSeg1, lineSeg2, lineSeg3);
+					if ((zeroP1Face_t.second < 1) || (zeroP2Face_t.second < 1)) {
+						// behind face, invisible!
+						visRanges.clear();
+					}
+				}
+				//otherwise, it's outside face, then totally visible
+			}
+			//1 intersection 
+			else if (activeInters.size() == 1) {
+				std::pair<float, float> vis{ 0.f, 1.f };
+				//get the active inter
+				bool p1InFace = Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+				bool p2InFace = Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+
+				//test which endpoint is in face
+				if (p1InFace && (!p2InFace)) {
+					//p1 in tri
+					//check if p1 is at front of tri or at back of tri
+					std::pair<int, float> zeroP1Face_t = intersectFace(glm::vec3(0, 0, 0), p1Orig, lineSeg1, lineSeg2, lineSeg3);
+					if (zeroP1Face_t.second < 1) {
+						//p1 at back of tri
+						vis.first = activeInters[0].second;
+					}
+				}
+				else if ((!p1InFace) && p2InFace) {
+					//p2 in tri
+					//check if p2 is at front of tri or at back of tri
+					std::pair<int, float> zeroP2Face_t = intersectFace(glm::vec3(0, 0, 0), p2Orig, lineSeg1, lineSeg2, lineSeg3);
+					if (zeroP2Face_t.second < 1) {
+						//p2 at back of tri
+						vis.second = activeInters[0].second;
+					}
+				}
+				else if (p1InFace && p2InFace) {
+					//check if infront of face or in back of face
+					std::pair<int, float> zeroP1Face_t = intersectFace(glm::vec3(0, 0, 0), p1Orig, lineSeg1, lineSeg2, lineSeg3);
+					std::pair<int, float> zeroP2Face_t = intersectFace(glm::vec3(0, 0, 0), p2Orig, lineSeg1, lineSeg2, lineSeg3);
+					if ((zeroP1Face_t.second < 1) || (zeroP2Face_t.second < 1)) {
+						// behind face, invisible!
+						visRanges.clear();
+					}
+				}
+				visVec.push_back(vis);
+				mergeVisRange(visVec);
+			}
+			//2 or 3 intersections, the segment of the line between these points is visible
+			else {
+				float smallx = 1.f;
+				float bigx = 0.f;
+				for (auto& inter : activeInters) {
+					if (inter.first) {
+						if (inter.second < smallx) {
+							smallx = inter.second;
+						}
+						if (inter.second > bigx) {
+							bigx = inter.second;
+						}
+					}
+				}
+				if (smallx != 0.f) {
+					std::pair<float, float> vis{ 0.f, smallx };
+					visVec.push_back(vis);
+				}
+				if (bigx != 1.f) {
+					std::pair<float, float> vis{ bigx, 1.f };
+					visVec.push_back(vis);
+				}
+				//check if middle part is visible
+				glm::vec3 smallP = p1Orig + (p2Orig - p1Orig) * smallx;
+				glm::vec3 bigP = p1Orig + (p2Orig - p1Orig) * bigx;
+				glm::vec3 mid = glm::mix(smallP, bigP, 0.5f);
+				std::pair<int, float> zeroMidFace_t = intersectFace(glm::vec3(0, 0, 0), mid, lineSeg1, lineSeg2, lineSeg3);
+				if (zeroMidFace_t.second < 1) {
+					// behind face, invisible!
+					mergeVisRange(visVec);
+				}
+			}
+		}
+
 		void calculateVisBehindFace(glm::vec3 p1, glm::vec3 p2, glm::vec3 p1Orig, glm::vec3 p2Orig, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
 			std::vector<std::pair<float, float>> visVec{};
 			std::vector<std::pair<int, float>> inters{};
@@ -423,7 +546,7 @@ public:
 			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
 			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
 			//line 1 (p1,p2)
-				//line 2 (lineSeg)
+			//line 2 (lineSeg)
 			for (int i = 0; i < inters.size(); ++i) {
 				if (inters[i].first == 1) {
 					activeInters.push_back(inters[i]);
@@ -456,7 +579,6 @@ public:
 			else if (activeInters.size() == 1) {
 				std::pair<float, float> vis{ 0.f, 1.f };
 				//get the active inter
-				float x = 0.f;
 				bool p1InFace = Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
 				bool p2InFace = Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
 
@@ -602,7 +724,7 @@ public:
 		}
 
 		void mergeVisRange(std::vector<std::pair<float, float>>& visVec) {
-			if (!visVec.empty()) {
+			if (!visVec.empty() && !visRanges.empty()) {
 				visRanges = intersectionOper(visRanges, visVec);
 			}
 		}
@@ -746,6 +868,7 @@ public:
 		std::vector<uPtr<Vertex>> vertices{}; //record only all original vertices
 
 		std::vector<HalfEdge*> lineSegs{}; //all original lineSegs (keep only 1 sym)
+		std::vector<HalfEdge*> relaxLineSegs{}; //all original lineSegs (keep only 1 strictSym)
 		std::vector<uint32_t> lineIdx{};
 		std::vector<glm::vec3> verticesData{};
 
@@ -836,7 +959,6 @@ public:
 				}
 			}
 
-			lineIdx.clear();
 			for (auto& line : lineSegs) {
 				lineIdx.push_back(line->prev->vertex->id);
 				lineIdx.push_back(line->vertex->id);
@@ -903,8 +1025,190 @@ public:
 			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
 #else
-			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3) * 5;
-			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t) * 5;
+			//OPTIMIZE: later on when updating buffer, you directly create new vertices and add to verticesData buffer instead of reference old vertices data
+			//that's why when you render torus the buffer size of verticesData is significantly bigger than before.
+			//lineIdx.size() is the number of vertices possible, 4 is that one vertex data contains 4 glm::vec3, 6 assuming divide into 6 segments for each lineSeg
+			size_t vertexBufferSize = lineIdx.size() * sizeof(glm::vec3) * 4 * 6;
+			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t) * 6;
+
+			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &verticesBuffer, vertexBufferSize);
+			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &lineIdxBuffer, indexBufferSize);
+			verticesBuffer.map();
+			lineIdxBuffer.map();
+			memcpy(verticesBuffer.mapped, verticesData.data(), verticesData.size() * sizeof(glm::vec3));
+			memcpy(lineIdxBuffer.mapped, lineIdx.data(), lineIdx.size() * sizeof(uint32_t));
+#endif
+		}
+
+		void createWithMultipleMesh(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<vkglTF::Vertex>>& vertexBuffers, vks::VulkanDevice* device, VkQueue transferQueue, glm::mat4 view, glm::mat4 proj) {
+			std::unordered_map<std::string, HalfEdge*> symHEs;
+			std::unordered_map<std::string, HalfEdge*> relaxSyms;
+			std::unordered_map<Vertex, int, VertexHash> uniqueVers;
+			int uniqueVerId = 0;
+			int objectId = 0;
+			std::vector<int> verticesSize = {0};
+			for (auto& vertexBuffer : vertexBuffers) {
+				for (int i = 0; i < vertexBuffer.size(); ++i) {
+#if ALL_LINE
+					glm::vec3 pos = vertexBuffer[i].pos;
+					glm::vec3 nor = vertexBuffer[i].normal;
+#else
+					glm::vec3 pos = glm::vec3(view * glm::vec4(vertexBuffer[i].pos, 1.f));
+					glm::vec3 nor = glm::mat3(view) * vertexBuffer[i].normal;
+					glm::vec3 posProj = glm::vec3(proj * glm::vec4(pos, 1));
+					uPtr<Vertex> vert = mkU<Vertex>(i + verticesSize[verticesSize.size() - 1], pos, nor, vertexBuffer[i].pos, vertexBuffer[i].normal, posProj);
+					Vertex tmpVertex(pos);
+					auto it = uniqueVers.find(tmpVertex);
+					if (it != uniqueVers.end()) {
+						vert->uniqueId = it->second;
+					}
+					else {
+						uniqueVers[tmpVertex] = uniqueVerId;
+						vert->uniqueId = uniqueVerId++;
+					}
+#endif
+					verticesData.push_back(pos);
+					verticesData.push_back(nor);
+					vertices.push_back(std::move(vert));
+				}
+				verticesSize.push_back(vertices.size());
+			}
+
+			for (auto& indexBuffer : indexBuffers) {
+				for (int i = 0; i < indexBuffer.size(); i += 3) {
+					this->index.push_back(indexBuffer[i]);
+					this->index.push_back(indexBuffer[i + 1]);
+					this->index.push_back(indexBuffer[i + 2]);
+					uPtr<HalfEdge> he1 = mkU<HalfEdge>(halfEdges.size());
+					he1->setVertex(vertices[verticesSize[objectId] + indexBuffer[i + 1]].get());
+					uPtr<HalfEdge> he2 = mkU<HalfEdge>(halfEdges.size() + 1);
+					he2->setVertex(vertices[verticesSize[objectId] + indexBuffer[i + 2]].get());
+					uPtr<HalfEdge> he3 = mkU<HalfEdge>(halfEdges.size() + 2);
+					he3->setVertex(vertices[verticesSize[objectId] + indexBuffer[i]].get());
+					he1->next = he2.get();
+					he1->prev = he3.get();
+					he2->next = he3.get();
+					he2->prev = he1.get();
+					he3->next = he1.get();
+					he3->prev = he2.get();
+					uPtr<Face> f = mkU<Face>(faces.size());
+					f->setHalfEdge(he1.get());
+					he1->setFace(f.get());
+					he2->setFace(f.get());
+					he3->setFace(f.get());
+					halfEdges.push_back(std::move(he1));
+					halfEdges.push_back(std::move(he2));
+					halfEdges.push_back(std::move(he3));
+					faces.push_back(std::move(f));
+
+					//set sym
+					for (int j = 0; j < 3; ++j) {
+						HalfEdge* currHe = halfEdges[halfEdges.size() - 1 - j].get();
+						Vertex* ver1 = currHe->prev->vertex;
+						Vertex* ver2 = currHe->vertex;
+						std::string key1 = std::to_string(ver1->uniqueId) + "#" + std::to_string(ver2->uniqueId) + std::to_string(objectId);
+						std::string key2 = std::to_string(ver2->uniqueId) + "#" + std::to_string(ver1->uniqueId) + std::to_string(objectId);
+						std::string skey1 = std::to_string(ver1->uniqueId) + "#" + std::to_string(ver2->uniqueId);
+						std::string skey2 = std::to_string(ver2->uniqueId) + "#" + std::to_string(ver1->uniqueId);
+						/*if (symHEs[key2] != 0) {
+							currHe->setSym(symHEs[key2]);
+						}
+						else {
+							symHEs[key1] = currHe;
+						}*/
+						auto it = symHEs.find(key2);
+						if (it != symHEs.end()) {
+							currHe->setSym(it->second);
+						}
+						else {
+							symHEs[key1] = currHe;
+							lineSegs.push_back(currHe);
+						}
+
+						it = relaxSyms.find(skey2);
+						if (it != relaxSyms.end()) {
+							currHe->setRelaxSym(it->second);
+						}
+						else {
+							relaxSyms[skey1] = currHe;
+							relaxLineSegs.push_back(currHe);
+						}
+					}
+				}
+				++objectId;
+			}
+
+			for (auto& line : lineSegs) {
+				lineIdx.push_back(line->prev->vertex->id);
+				lineIdx.push_back(line->vertex->id);
+			}
+#if ALL_LINE
+			// Create staging buffers
+			// Vertex data
+			struct StagingBuffer {
+				VkBuffer buffer;
+				VkDeviceMemory memory;
+			} vertexStaging, indexStaging;
+
+			size_t vertexBufferSize = verticesData.size() * sizeof(glm::vec3);
+			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t);
+			// Create staging buffers
+			// Vertex data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				vertexBufferSize,
+				&vertexStaging.buffer,
+				&vertexStaging.memory,
+				verticesData.data()));
+			// Index data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				indexBufferSize,
+				&indexStaging.buffer,
+				&indexStaging.memory,
+				lineIdx.data()));
+
+			// Create device local buffers
+			// Vertex buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | 0,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				vertexBufferSize,
+				&verticesBuffer,
+				&verticesMemory));
+			// Index buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | 0,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				indexBufferSize,
+				&lineIdxBuffer,
+				&lineIdxMemory));
+
+			// Copy from staging buffers
+			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+
+			VkBufferCopy copyRegion = {};
+
+			copyRegion.size = vertexBufferSize;
+			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, verticesBuffer, 1, &copyRegion);
+
+			copyRegion.size = indexBufferSize;
+			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, lineIdxBuffer, 1, &copyRegion);
+
+			device->flushCommandBuffer(copyCmd, transferQueue, true);
+
+			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
+#else
+			//OPTIMIZE: later on when updating buffer, you directly create new vertices and add to verticesData buffer instead of reference old vertices data
+			//that's why when you render torus the buffer size of verticesData is significantly bigger than before.
+			//lineIdx.size() is the number of vertices possible, 4 is that one vertex data contains 4 glm::vec3, 6 assuming divide into 6 segments for each lineSeg
+			size_t vertexBufferSize = lineIdx.size() * sizeof(glm::vec3) * 4 * 6;
+			size_t indexBufferSize = lineIdx.size() * sizeof(uint32_t) * 6;
 
 			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &verticesBuffer, vertexBufferSize);
 			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &lineIdxBuffer, indexBufferSize);
@@ -944,7 +1248,7 @@ public:
 			}
 #if !ALL_LINE
 			//use current lineSegs
-			for (auto& lineSeg : lineSegs) {
+			for (auto& lineSeg : relaxLineSegs) {
 				for (auto& f : faces) {
 					//if area of triangle is almost 0, ignore this triangle
 					if (fequal(f->calculateArea(), 0.f)) {
@@ -965,12 +1269,14 @@ public:
 #endif
 		}
 
+
+
 		void updateBuffer(vks::VulkanDevice* device, VkQueue transferQueue) {
 #if WIREFRAME
 			lineIdx.clear();
 			verticesData.clear();
 			int lineIdxCnt = 0;
-			for (auto& line : lineSegs) {
+			for (auto& line : relaxLineSegs) {
 				if (!(line->visRanges.empty())) {
 					glm::vec3 v1 = line->prev->vertex->position;
 					glm::vec3 n1 = line->prev->vertex->normal;
@@ -990,7 +1296,7 @@ public:
 			lineIdx.clear();
 			verticesData.clear();
 			int lineIdxCnt = 0;
-			for (auto& line : lineSegs) {
+			for (auto& line : relaxLineSegs) {
 				if (line->sym != nullptr) {
 					if (!line->contourEdge()) {
 						continue;
@@ -1131,25 +1437,41 @@ public:
 	void loadAssets()
 	{
 		//model.loadFromFile(getAssetPath() + "models/venus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		std::vector<uint32_t> indexBuffer;
-		std::vector<vkglTF::Vertex> vertexBuffer;
+		std::vector<std::vector<uint32_t>> indexBuffers;
+		std::vector<std::vector<vkglTF::Vertex>> vertexBuffers;
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/torus2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cylinder.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad4.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad4.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_inter.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_near.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/12_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/four_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far3.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far3.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad_far2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/3_tri.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/18_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cylinder1_top.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/two_tri_1inter1.gltf", getAssetPath() + "models/test/two_tri_1inter2.gltf"}, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/two_tri_coedg1.gltf", getAssetPath() + "models/test/two_tri_coedg2.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cube.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cube_f1.gltf", getAssetPath() + "models/test/cube_f2.gltf", getAssetPath() + "models/test/cube_f3.gltf", getAssetPath() + "models/test/cube_f4.gltf", getAssetPath() + "models/test/cube_f5.gltf", getAssetPath() + "models/test/cube_f6.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cone.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cone_face1.gltf", getAssetPath() + "models/test/cone_face2.gltf", getAssetPath() + "models/test/cone_face3.gltf", getAssetPath() + "models/test/cone_face4.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cone1_face1.gltf", getAssetPath() + "models/test/cone1_face2.gltf", getAssetPath() + "models/test/cone1_face3.gltf", getAssetPath() + "models/test/cone1_face4.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cylinder1_side.gltf", getAssetPath() + "models/test/cylinder1_top.gltf" , getAssetPath() + "models/test/cylinder1_bottom.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cylinder2_side.gltf", getAssetPath() + "models/test/cylinder2_top.gltf" , getAssetPath() + "models/test/cylinder2_bottom.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/torus3.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);
+		mesh.createWithMultipleMesh(indexBuffers, vertexBuffers, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);
 	}
 
 	void setupDescriptors()

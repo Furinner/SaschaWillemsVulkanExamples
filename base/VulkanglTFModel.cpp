@@ -1830,3 +1830,16 @@ void vkglTF::Model::loadFromFileWithVertIdx(std::vector<uint32_t>& indexBuffer, 
 		}
 	}
 }
+
+void vkglTF::Model::loadFromFileWithVertIdxMultipleMesh(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<Vertex>>& vertexBuffers, std::vector<std::string> filenames, vks::VulkanDevice* device, VkQueue transferQueue, uint32_t fileLoadingFlags, float scale) {
+	for (auto& filename: filenames) {
+		std::vector<uint32_t> indexBuffer{};
+		std::vector<vkglTF::Vertex> vertexBuffer{};
+		loadFromFileWithVertIdx(indexBuffer, vertexBuffer, filename, device, transferQueue, fileLoadingFlags, scale);
+		indexBuffers.push_back(indexBuffer);
+		vertexBuffers.push_back(vertexBuffer);
+		linearNodes.clear();
+		nodes.clear();
+		materials.clear();
+	}
+}

@@ -261,11 +261,14 @@ public:
 				visRanges.clear();
 				return;
 			}
-			//if area of triangle is almost 0, ignore this triangle
-			if (fequal(f->calculateArea(), 0.f)) {
-				return;
-			}
-			if (fequal(f->calculate2DArea(), 0.f)) {
+			HalfEdge* lineSeg1 = f->he->prev;
+			HalfEdge* lineSeg2 = f->he;
+			HalfEdge* lineSeg3 = f->he->next;
+			//special case
+			//check if current HE share one vertex with the face.
+			std::pair<int, int> shareVer = shareVerFace(f);
+			if (shareVer.first) {
+				calculateVisWithSharedVer(p1Ver, p2Ver, shareVer.second, lineSeg1, lineSeg2, lineSeg3);
 				return;
 			}
 			//case 1, line won't intersect face.
@@ -276,9 +279,6 @@ public:
 				glm::vec3 p1Orig = p1Ver->position;
 				glm::vec3 p2 = p2Ver->posDiv; //p2
 				glm::vec3 p2Orig = p2Ver->position;
-				HalfEdge* lineSeg1 = f->he->prev;
-				HalfEdge* lineSeg2 = f->he;
-				HalfEdge* lineSeg3 = f->he->next;
 				calculateVisBehindFace(p1, p2, p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
 			}
 			//case 2 can't hide line
@@ -292,17 +292,10 @@ public:
 				glm::vec3 p1Orig = p1Ver->position;
 				glm::vec3 p2 = p2Ver->posDiv; //p2
 				glm::vec3 p2Orig = p2Ver->position;
-				HalfEdge* lineSeg1 = f->he->prev;
-				HalfEdge* lineSeg2 = f->he;
-				HalfEdge* lineSeg3 = f->he->next;
 				std::pair<int, float> interFaceResult = intersectFace(p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
 				if (interFaceResult.first) {
 					//has intersections with face
-					//check if current HE share one vertex with the face.
-					std::pair<int, int> shareVer = shareVerFace(f);
-					if (shareVer.first) {
-						calculateVisWithSharedVer(p1Ver, p2Ver, shareVer.second, lineSeg1, lineSeg2, lineSeg3);
-					}
+					
 				}
 				else {
 					//no intersections with face
@@ -374,11 +367,9 @@ public:
 				p = p2Ver->position;
 			}
 			std::pair<int, float> result = intersectFace(glm::vec3(0, 0, 0), p, lineSeg1, lineSeg2, lineSeg3);
-			if (result.first) {
-				if ((result.second < 1) && (result.second > 0)) {
-					// if p behind face plane, do calculateVisBehindFace!
-					calculateVisBehindFaceOneSharedVert(p1Ver, p2Ver, verIdx, lineSeg1, lineSeg2, lineSeg3);
-				}
+			if (result.second < 1) {
+				// if p behind face plane, do calculateVisBehindFaceOneSharedVert!
+				calculateVisBehindFaceOneSharedVert(p1Ver, p2Ver, verIdx, lineSeg1, lineSeg2, lineSeg3);
 			}
 		}
 
@@ -402,7 +393,26 @@ public:
 					break;
 				}
 			}
-			intersectLine(sharedVert->posDiv, testVert->posDiv, sharedVert->position, testVert->position, lineSeg1);
+			std::pair<int, float> inter = intersectLine(sharedVert->posDiv, testVert->posDiv, sharedVert->position, testVert->position, testHe);
+			if (inter.first) {
+				if (verIdx) {
+					std::vector<std::pair<float, float>> visVec{ {0, inter.second} };
+					mergeVisRange(visVec);
+				}
+				else {
+					std::vector<std::pair<float, float>> visVec{ {inter.second, 1} };
+					mergeVisRange(visVec);
+				}
+			}
+			else {
+				//no intersect, then we need to test if it's inside triangle or outside
+				bool inFace = Vertex::inFace(testVert->posDiv, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+				//if inFace, then it should be invisible. If outside face, then it should be visible.
+				if (inFace) {
+					visRanges.clear();
+				}
+				
+			}
 		}
 
 		void calculateVisBehindFace(glm::vec3 p1, glm::vec3 p2, glm::vec3 p1Orig, glm::vec3 p2Orig, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
@@ -413,7 +423,7 @@ public:
 			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
 			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
 			//line 1 (p1,p2)
-			//line 2 (lineSeg)
+				//line 2 (lineSeg)
 			for (int i = 0; i < inters.size(); ++i) {
 				if (inters[i].first == 1) {
 					activeInters.push_back(inters[i]);
@@ -466,39 +476,7 @@ public:
 				visVec.push_back(vis);
 				mergeVisRange(visVec);
 			}
-			//2 intersections
-			else if (activeInters.size() == 2) {
-				//first need to check if two intersections are two close together
-				//this is the singular case where line intersect with one point of triangle
-				//However, this parts doesn't always work, for adjacent triangles, using calculateVisBehindFaceOneSharedVert for better performance.
-				//that function is using topological element for accuracy
-				if (fequal(activeInters[0].second, activeInters[1].second)) {
-					//then totally invisible
-					visRanges.clear();
-				}
-				float smallx = 1.f;
-				float bigx = 0.f;
-				for (auto& inter : activeInters) {
-					if (inter.first) {
-						if (inter.second < smallx) {
-							smallx = inter.second;
-						}
-						if (inter.second > bigx) {
-							bigx = inter.second;
-						}
-					}
-				}
-				if (smallx != 0.f) {
-					std::pair<float, float> vis{ 0.f, smallx };
-					visVec.push_back(vis);
-				}
-				if (bigx != 1.f) {
-					std::pair<float, float> vis{ bigx, 1.f };
-					visVec.push_back(vis);
-				}
-				mergeVisRange(visVec);
-			}
-			//3 intersections, the segment of the line between these points is visible
+			//2 or 3 intersections, the segment of the line between these points is visible
 			else {
 				float smallx = 1.f;
 				float bigx = 0.f;
@@ -968,6 +946,13 @@ public:
 			//use current lineSegs
 			for (auto& lineSeg : lineSegs) {
 				for (auto& f : faces) {
+					//if area of triangle is almost 0, ignore this triangle
+					if (fequal(f->calculateArea(), 0.f)) {
+						continue;
+					}
+					if (fequal(f->calculate2DArea(), 0.f)) {
+						continue;
+					}
 					if (!lineSeg->inFace(f.get())) {
 						// if lineSeg is not one of the sym of current face
 						if (!lineSeg->symOfFace(f.get())) {
@@ -1152,7 +1137,8 @@ public:
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/cube.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
-		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad2.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_quad4.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_inter.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/two_tri_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdx(indexBuffer, vertexBuffer, getAssetPath() + "models/test/12_quad_far.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);

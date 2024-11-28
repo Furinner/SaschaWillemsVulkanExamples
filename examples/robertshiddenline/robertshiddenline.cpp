@@ -22,7 +22,7 @@
 class VulkanExample : public VulkanExampleBase
 {
 	template<typename T>
-	static inline bool fequal(T a, T b, T epsilon = 0.0001) {
+	static inline bool fequal(T a, T b, T epsilon = 0.001) {
 		if (a == b) {
 			// Shortcut
 			return true;
@@ -57,6 +57,19 @@ public:
 		float zmax = 0.0;
 	};
 
+	class VertexHash {
+	public:
+		size_t operator()(const Vertex v) const {
+			size_t seed = 5381;
+			const auto hasher = std::hash<float>{};
+			seed ^= hasher(v.position.x) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+			seed ^= hasher(v.position.y) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+			seed ^= hasher(v.position.z) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+			return seed;
+		}
+
+	};
+
 	struct Vertex {
 		glm::vec3 position;
 		glm::vec3 normal;
@@ -65,24 +78,13 @@ public:
 		glm::vec3 origNor;
 		glm::vec3 posProj;
 		glm::vec3 posDiv;
+		int uniqueId;
 		int id;
 
-		class VertexHash {
-		public:
-			size_t operator()(const Vertex& v) const {
-				size_t seed = 5381;
-				const auto hasher = std::hash<float>{};
-				seed ^= hasher(v.position[0]) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				seed ^= hasher(v.position[1]) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				seed ^= hasher(v.position[2]) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-				return seed;
-			}
-		};
-
 		Vertex(int id, glm::vec3 pos, glm::vec3 normal, glm::vec3 origPos, glm::vec3 origNor, glm::vec3 posProj) : id(id), position(pos), normal(normal), origPos(origPos), origNor(origNor), posProj(posProj) { posDiv = perspectiveDivide(position, true); }
-		
-		bool operator==(const Vertex& other) const {
-			return (position == other.position) && (normal == other.normal) && (he == other.he);
+		Vertex(glm::vec3 pos) :position(pos) {};
+		bool operator==(const Vertex other) const {
+			return (position == other.position);
 		}
 
 		void setHE(HalfEdge* he) {
@@ -177,6 +179,40 @@ public:
 			return false;
 		}
 
+		bool symOfFace(Face* f) {
+			HalfEdge* origHe = f->he;
+			HalfEdge* currHe = origHe;
+			do {
+				if (currHe->sym == this) {
+					return true;
+				}
+				currHe = currHe->next;
+			} while (currHe != origHe);
+			return false;
+		}
+
+		std::pair<int, int> shareVerFace(Face* f) {
+			std::pair<int, int> result{0, 0};
+			HalfEdge* origHe = f->he;
+			HalfEdge* currHe = origHe;
+			do {
+				if (currHe->vertex->uniqueId == vertex->uniqueId) {
+					//p2 is the shared vertex
+					result.first = 1;
+					result.second = 1;
+					return result;
+				}
+				else if (currHe->vertex->uniqueId == prev->vertex->uniqueId) {
+					//p1 is the shared vertex
+					result.first = 1;
+					return result;
+
+				}
+				currHe = currHe->next;
+			} while (currHe != origHe);
+			return result;
+		}
+
 		void calculateSlope() {
 			glm::vec3 v1Pos = prev->vertex->posDiv;
 			glm::vec3 v2Pos = vertex->posDiv;
@@ -232,7 +268,6 @@ public:
 			if (fequal(f->calculate2DArea(), 0.f)) {
 				return;
 			}
-			std::vector<std::pair<float, float>> visVec{};
 			//case 1, line won't intersect face.
 			//line's box is behind face's box.
 			if (f->box.zmin > box.zmax) {
@@ -244,89 +279,7 @@ public:
 				HalfEdge* lineSeg1 = f->he->prev;
 				HalfEdge* lineSeg2 = f->he;
 				HalfEdge* lineSeg3 = f->he->next;
-				std::vector<std::pair<int, float>> inters{};
-				std::vector<std::pair<int, float>> activeInters{};
-				inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg1));
-				inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
-				inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
-				//line 1 (p1,p2)
-				//line 2 (lineSeg)
-				for (int i = 0; i < inters.size(); ++i) {
-					if (inters[i].first == 1) {
-						activeInters.push_back(inters[i]);
-					}
-					else {
-						if (inters[i].first == 3) {
-							//line1 parallel to line2
-							std::pair<float, float> vis{ 0.f, 1.f };
-							visVec.push_back(vis);
-							mergeVisRange(visVec);
-							return;
-						}
-					}
-				}
-				//0 intersection
-				if (activeInters.size() == 0) {
-					//check if outside face or inside face
-					if (Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv) || Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv)) {
-						// if inside face, totally invisible
-						visRanges.clear();
-						return;
-					}
-					else {
-						std::pair<float, float> vis{ 0.f, 1.f };
-						visVec.push_back(vis);
-						mergeVisRange(visVec);
-					}
-				}
-				//1 intersection 
-				else if (activeInters.size() == 1) {
-					std::pair<float, float> vis{ 0.f, 1.f };
-					//get the active inter
-					float x = 0.f;
-					bool p1InFace = Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
-					bool p2InFace = Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
-
-					//test which endpoint is in face
-					if (p1InFace && (!p2InFace)) {
-						//p1 in tri
-						vis.first = activeInters[0].second;
-					}
-					else if((!p1InFace) && p2InFace){
-						//p2 in tri
-						vis.second = activeInters[0].second;
-					}
-					else if (p1InFace && p2InFace) {
-						visRanges.clear();
-						return;
-					}
-					visVec.push_back(vis);
-					mergeVisRange(visVec);
-				}
-				//2 or 3 intersections, the segment of the line between these points is visible
-				else {
-					float smallx = 1.f;
-					float bigx = 0.f;
-					for (auto& inter : activeInters) {
-						if (inter.first) {
-							if (inter.second < smallx) {
-								smallx = inter.second;
-							}
-							if (inter.second > bigx) {
-								bigx = inter.second;
-							}
-						}
-					}
-					if (smallx != 0.f) {
-						std::pair<float, float> vis{ 0.f, smallx };
-						visVec.push_back(vis);
-					}
-					if (bigx != 1.f) {
-						std::pair<float, float> vis{ bigx, 1.f };
-						visVec.push_back(vis);
-					}
-					mergeVisRange(visVec);
-				}
+				calculateVisBehindFace(p1, p2, p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
 			}
 			//case 2 can't hide line
 			else if(box.zmin > f->box.zmax) {
@@ -345,117 +298,15 @@ public:
 				std::pair<int, float> interFaceResult = intersectFace(p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
 				if (interFaceResult.first) {
 					//has intersections with face
-					std::pair<int, float> interFaceResult = intersectFace(p1Orig, p2Orig, lineSeg1, lineSeg2, lineSeg3);
+					//check if current HE share one vertex with the face.
+					std::pair<int, int> shareVer = shareVerFace(f);
+					if (shareVer.first) {
+						calculateVisWithSharedVer(p1Ver, p2Ver, shareVer.second, lineSeg1, lineSeg2, lineSeg3);
+					}
 				}
 				else {
 					//no intersections with face
-					glm::vec3 p1Orig = p1Ver->position;
-					glm::vec3 p2Orig = p2Ver->position;
-					std::vector<std::pair<int, float>> inters{};
-					std::vector<std::pair<int, float>> activeInters{};
-					inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg1));
-					inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
-					inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
-					//line 1 (p1,p2)
-					//line 2 (lineSeg)
-					for (int i = 0; i < inters.size(); ++i) {
-						if (inters[i].first == 1) {
-							activeInters.push_back(inters[i]);
-						}
-						else {
-							if (inters[i].first == 3) {
-								//line1 parallel to line2
-								std::pair<float, float> vis{ 0.f, 1.f };
-								visVec.push_back(vis);
-								mergeVisRange(visVec);
-								return;
-							}
-						}
-					}
-					//0 intersection
-					if (activeInters.size() == 0) {
-						//check if outside face or inside face
-						if (Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv) || Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv)) {
-							// if inside face, totally invisible
-							visRanges.clear();
-							return;
-						}
-						else {
-							std::pair<float, float> vis{ 0.f, 1.f };
-							visVec.push_back(vis);
-							mergeVisRange(visVec);
-						}
-					}
-					//1 intersection 
-					else if (activeInters.size() == 1) {
-						std::pair<float, float> vis{ 0.f, 1.f };
-						//get the active inter
-						float x = 0.f;
-						bool p1InFace = Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
-						bool p2InFace = Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
-
-						//test which endpoint is in face
-						if (p1InFace && (!p2InFace)) {
-							//p1 in tri
-							//but, we also need to test if p1 is behind face
-							std::pair<int, float> p1FaceRes = intersectFace(glm::vec3(0,0,0), p1Orig, lineSeg1, lineSeg2, lineSeg3);
-							if (p1FaceRes.first == 0) {
-								//p1 in front of face
-							}
-							else {
-								vis.first = activeInters[0].second;
-							}
-						}
-						else if ((!p1InFace) && p2InFace) {
-							//p2 in tri
-							//but, we also need to test if p2 is behind face
-							std::pair<int, float> p2FaceRes = intersectFace(glm::vec3(0, 0, 0), p2Orig, lineSeg1, lineSeg2, lineSeg3);
-							if (p2FaceRes.first == 0) {
-								//p2 in front of face
-							}
-							else {
-								vis.second = activeInters[0].second;
-							}
-						}
-						else if (p1InFace && p2InFace) {
-							//we still need to test if p1 and p2 is behind face
-							std::pair<int, float> p1FaceRes = intersectFace(glm::vec3(0, 0, 0), p1Orig, lineSeg1, lineSeg2, lineSeg3);
-							std::pair<int, float> p2FaceRes = intersectFace(glm::vec3(0, 0, 0), p2Orig, lineSeg1, lineSeg2, lineSeg3);
-							if ((p1FaceRes.first == 0) || (p2FaceRes.first == 0)) {
-								//p1 or p2 in front of face
-							}
-							else {
-								visRanges.clear();
-								return;
-							}
-						}
-						visVec.push_back(vis);
-						mergeVisRange(visVec);
-					}
-					//2 or 3 intersections, the segment of the line between these points is visible
-					else {
-						float smallx = 1.f;
-						float bigx = 0.f;
-						for (auto& inter : activeInters) {
-							if (inter.first) {
-								if (inter.second < smallx) {
-									smallx = inter.second;
-								}
-								if (inter.second > bigx) {
-									bigx = inter.second;
-								}
-							}
-						}
-						if (smallx != 0.f) {
-							std::pair<float, float> vis{ 0.f, smallx };
-							visVec.push_back(vis);
-						}
-						if (bigx != 1.f) {
-							std::pair<float, float> vis{ bigx, 1.f };
-							visVec.push_back(vis);
-						}
-						mergeVisRange(visVec);
-					}
+					
 				}
 			}
 		}
@@ -474,11 +325,11 @@ public:
 			glm::vec3 P = r0 + t_tmp * rd;
 			//normalize t
 			float t = (P.y - r0.y) / (p2.y - r0.y);
-			if (isinf(t)) {
+			if (isnan(t)) {
 				t = (P.x - r0.x) / (p2.x - r0.x);
-				if (isinf(t)) {
+				if (isnan(t)) {
 					t = (P.z - r0.z) / (p2.z - r0.z);
-					if (isinf(t)) {
+					if (isnan(t)) {
 						//TODO: handle special case that p2 and r0 is the same, in that case the denominator will always be 0.
 					}
 				}
@@ -503,7 +354,7 @@ public:
 					return result;
 				}
 				else {
-					 //equal
+					//r0.z and p2.z are equal
 					//TODO:
 					result.first = 3;
 					return result;
@@ -514,6 +365,164 @@ public:
 			return result;
 		}
 
+		void calculateVisWithSharedVer(Vertex* p1Ver, Vertex* p2Ver, int verIdx, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
+			glm::vec3 p;
+			if (verIdx) {
+				p = p1Ver->position;
+			}
+			else {
+				p = p2Ver->position;
+			}
+			std::pair<int, float> result = intersectFace(glm::vec3(0, 0, 0), p, lineSeg1, lineSeg2, lineSeg3);
+			if (result.first) {
+				if ((result.second < 1) && (result.second > 0)) {
+					// if p behind face plane, do calculateVisBehindFace!
+					calculateVisBehindFaceOneSharedVert(p1Ver, p2Ver, verIdx, lineSeg1, lineSeg2, lineSeg3);
+				}
+			}
+		}
+
+		void calculateVisBehindFaceOneSharedVert(Vertex* p1Ver, Vertex* p2Ver, int verIdx, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
+			//here we use 
+			Vertex* sharedVert;
+			Vertex* testVert;
+			if (verIdx) {
+				sharedVert = p2Ver;
+				testVert = p1Ver;
+			}
+			else {
+				sharedVert = p1Ver;
+				testVert = p2Ver;
+			}
+			HalfEdge* testHe;
+			std::vector<HalfEdge*> lineSegs = { lineSeg1, lineSeg2, lineSeg3 };
+			for (auto& lineSeg : lineSegs) {
+				if ((lineSeg->vertex->uniqueId != sharedVert->uniqueId) && (lineSeg->prev->vertex->uniqueId != sharedVert->uniqueId)) {
+					testHe = lineSeg;
+					break;
+				}
+			}
+			intersectLine(sharedVert->posDiv, testVert->posDiv, sharedVert->position, testVert->position, lineSeg1);
+		}
+
+		void calculateVisBehindFace(glm::vec3 p1, glm::vec3 p2, glm::vec3 p1Orig, glm::vec3 p2Orig, HalfEdge* lineSeg1, HalfEdge* lineSeg2, HalfEdge* lineSeg3) {
+			std::vector<std::pair<float, float>> visVec{};
+			std::vector<std::pair<int, float>> inters{};
+			std::vector<std::pair<int, float>> activeInters{};
+			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg1));
+			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg2));
+			inters.push_back(intersectLine(p1, p2, p1Orig, p2Orig, lineSeg3));
+			//line 1 (p1,p2)
+			//line 2 (lineSeg)
+			for (int i = 0; i < inters.size(); ++i) {
+				if (inters[i].first == 1) {
+					activeInters.push_back(inters[i]);
+				}
+				else {
+					if (inters[i].first == 3) {
+						//line1 parallel to line2
+						std::pair<float, float> vis{ 0.f, 1.f };
+						visVec.push_back(vis);
+						mergeVisRange(visVec);
+						return;
+					}
+				}
+			}
+			//0 intersection
+			if (activeInters.size() == 0) {
+				//check if outside face or inside face
+				if (Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv) || Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv)) {
+					// if inside face, totally invisible
+					visRanges.clear();
+					return;
+				}
+				else {
+					std::pair<float, float> vis{ 0.f, 1.f };
+					visVec.push_back(vis);
+					mergeVisRange(visVec);
+				}
+			}
+			//1 intersection 
+			else if (activeInters.size() == 1) {
+				std::pair<float, float> vis{ 0.f, 1.f };
+				//get the active inter
+				float x = 0.f;
+				bool p1InFace = Vertex::inFace(p1, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+				bool p2InFace = Vertex::inFace(p2, lineSeg1->vertex->posDiv, lineSeg2->vertex->posDiv, lineSeg3->vertex->posDiv);
+
+				//test which endpoint is in face
+				if (p1InFace && (!p2InFace)) {
+					//p1 in tri
+					vis.first = activeInters[0].second;
+				}
+				else if ((!p1InFace) && p2InFace) {
+					//p2 in tri
+					vis.second = activeInters[0].second;
+				}
+				else if (p1InFace && p2InFace) {
+					visRanges.clear();
+					return;
+				}
+				visVec.push_back(vis);
+				mergeVisRange(visVec);
+			}
+			//2 intersections
+			else if (activeInters.size() == 2) {
+				//first need to check if two intersections are two close together
+				//this is the singular case where line intersect with one point of triangle
+				//However, this parts doesn't always work, for adjacent triangles, using calculateVisBehindFaceOneSharedVert for better performance.
+				//that function is using topological element for accuracy
+				if (fequal(activeInters[0].second, activeInters[1].second)) {
+					//then totally invisible
+					visRanges.clear();
+				}
+				float smallx = 1.f;
+				float bigx = 0.f;
+				for (auto& inter : activeInters) {
+					if (inter.first) {
+						if (inter.second < smallx) {
+							smallx = inter.second;
+						}
+						if (inter.second > bigx) {
+							bigx = inter.second;
+						}
+					}
+				}
+				if (smallx != 0.f) {
+					std::pair<float, float> vis{ 0.f, smallx };
+					visVec.push_back(vis);
+				}
+				if (bigx != 1.f) {
+					std::pair<float, float> vis{ bigx, 1.f };
+					visVec.push_back(vis);
+				}
+				mergeVisRange(visVec);
+			}
+			//3 intersections, the segment of the line between these points is visible
+			else {
+				float smallx = 1.f;
+				float bigx = 0.f;
+				for (auto& inter : activeInters) {
+					if (inter.first) {
+						if (inter.second < smallx) {
+							smallx = inter.second;
+						}
+						if (inter.second > bigx) {
+							bigx = inter.second;
+						}
+					}
+				}
+				if (smallx != 0.f) {
+					std::pair<float, float> vis{ 0.f, smallx };
+					visVec.push_back(vis);
+				}
+				if (bigx != 1.f) {
+					std::pair<float, float> vis{ bigx, 1.f };
+					visVec.push_back(vis);
+				}
+				mergeVisRange(visVec);
+			}
+		}
 
 		std::pair<int, float> intersectLine(glm::vec3 p1, glm::vec3 p2, glm::vec3 p1Orig, glm::vec3 p2Orig, HalfEdge* he) {
 			std::pair<int, float> result;
@@ -774,6 +783,8 @@ public:
 
 		void create(std::vector<uint32_t>& indexBuffer, std::vector<vkglTF::Vertex>& vertexBuffer, vks::VulkanDevice* device, VkQueue transferQueue, glm::mat4 view, glm::mat4 proj) {
 			std::unordered_map<std::string, HalfEdge*> symHEs;
+			std::unordered_map<Vertex, int, VertexHash> uniqueVers;
+			int uniqueVerId = 0;
 			for (int i = 0; i < vertexBuffer.size(); ++i) {
 #if ALL_LINE
 				glm::vec3 pos = vertexBuffer[i].pos;
@@ -782,10 +793,19 @@ public:
 				glm::vec3 pos = glm::vec3(view * glm::vec4(vertexBuffer[i].pos, 1.f));
 				glm::vec3 nor = glm::mat3(view) * vertexBuffer[i].normal;
 				glm::vec3 posProj = glm::vec3(proj * glm::vec4(pos, 1));
+				uPtr<Vertex> vert = mkU<Vertex>(i, pos, nor, vertexBuffer[i].pos, vertexBuffer[i].normal, posProj);
+				Vertex tmpVertex(pos);
+				auto it = uniqueVers.find(tmpVertex);
+				if (it != uniqueVers.end()) {
+					vert->uniqueId = it->second;
+				}
+				else {
+					uniqueVers[tmpVertex] = uniqueVerId;
+					vert->uniqueId = uniqueVerId++;
+				}
 #endif
 				verticesData.push_back(pos);
 				verticesData.push_back(nor);
-				uPtr<Vertex> vert = mkU<Vertex>(i, pos, nor, vertexBuffer[i].pos, vertexBuffer[i].normal, posProj);
 				vertices.push_back(std::move(vert));
 			}
 			for (int i = 0; i < indexBuffer.size(); i += 3) {
@@ -819,8 +839,8 @@ public:
 					HalfEdge* currHe = halfEdges[halfEdges.size() - 1 - j].get();
 					Vertex* ver1 = currHe->prev->vertex;
 					Vertex* ver2 = currHe->vertex;
-					std::string key1 = std::to_string(ver1->id) + "#" + std::to_string(ver2->id);
-					std::string key2 = std::to_string(ver2->id) + "#" + std::to_string(ver1->id);
+					std::string key1 = std::to_string(ver1->uniqueId) + "#" + std::to_string(ver2->uniqueId);
+					std::string key2 = std::to_string(ver2->uniqueId) + "#" + std::to_string(ver1->uniqueId);
 					/*if (symHEs[key2] != 0) {
 						currHe->setSym(symHEs[key2]);
 					}
@@ -949,7 +969,10 @@ public:
 			for (auto& lineSeg : lineSegs) {
 				for (auto& f : faces) {
 					if (!lineSeg->inFace(f.get())) {
-						lineSeg->calculateVisRangeWithFace(f.get());
+						// if lineSeg is not one of the sym of current face
+						if (!lineSeg->symOfFace(f.get())) {
+							lineSeg->calculateVisRangeWithFace(f.get());
+						}
 					}
 				}
 			}

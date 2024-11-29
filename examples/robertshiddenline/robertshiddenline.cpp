@@ -13,8 +13,8 @@
 #define DLF 1
 
 #define ALL_LINE 0
-#define WIREFRAME 1
-#define HIDDEN_LINE 0
+#define WIREFRAME 0
+#define HIDDEN_LINE 1
 
 #define uPtr std::unique_ptr
 #define mkU std::make_unique
@@ -1469,6 +1469,7 @@ public:
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cone1_face1.gltf", getAssetPath() + "models/test/cone1_face2.gltf", getAssetPath() + "models/test/cone1_face3.gltf", getAssetPath() + "models/test/cone1_face4.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cylinder1_side.gltf", getAssetPath() + "models/test/cylinder1_top.gltf" , getAssetPath() + "models/test/cylinder1_bottom.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/cylinder2_side.gltf", getAssetPath() + "models/test/cylinder2_top.gltf" , getAssetPath() + "models/test/cylinder2_bottom.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, {getAssetPath() + "models/test/torus.gltf"}, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/test/torus3.gltf" }, vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
 		//mesh.create(indexBuffer, vertexBuffer, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);
 		mesh.createWithMultipleMesh(indexBuffers, vertexBuffers, vulkanDevice, queue, camera.matrices.view, camera.matrices.perspective);

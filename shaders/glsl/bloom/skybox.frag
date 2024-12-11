@@ -8,6 +8,5 @@ layout (location = 0) out vec4 outFragColor;
 
 void main() 
 {
-	//outFragColor = texture(samplerCubeMap, inUVW);
-	outFragColor = vec4(0.0);
+	outFragColor = texture(samplerCubeMap, inUVW);
 }

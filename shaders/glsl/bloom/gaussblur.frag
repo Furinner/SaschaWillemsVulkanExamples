@@ -23,73 +23,22 @@ void main()
 	weight[3] = 0.054054;
 	weight[4] = 0.016216;
 
-	vec2 tex_offset = 1.f / textureSize(samplerColor, 0); // gets size of single texel
-	vec3 currCol = texture(samplerColor, inUV).rgb; // current fragment's contribution
-	vec3 result = vec3(0.f);
-	for(int i = 1; i < 2; ++i)
+	vec2 tex_offset = 1.0 / textureSize(samplerColor, 0) * ubo.blurScale; // gets size of single texel
+	vec3 result = texture(samplerColor, inUV).rgb * weight[0]; // current fragment's contribution
+	for(int i = 1; i < 5; ++i)
 	{
 		if (blurdirection == 1)
 		{
 			// H
-//			result += texture(samplerColor, inUV + vec2(tex_offset.x * i, 0.0)).rgb * weight[i] * ubo.blurStrength;
-//			result += texture(samplerColor, inUV - vec2(tex_offset.x * i, 0.0)).rgb * weight[i] * ubo.blurStrength;
-			//左右+0
-			if (length(texture(samplerColor, inUV + vec2(tex_offset.x * i, 0.0)).rgb - currCol) > 0.99f){
-				result = vec3(1.f);
-				break;
-			}//-0
-			if (length(texture(samplerColor, inUV - vec2(tex_offset.x * i, 0.0)).rgb - currCol) > 0.99f){
-				result = vec3(1.f);
-				break;
-			}
-			//左上-+
-			if (length(texture(samplerColor, inUV + vec2(-tex_offset.x * i, tex_offset.y * i)).rgb - currCol) > 0.99f){
-				result = vec3(1.f);
-				break;
-			}
-			//右下+-
-			if (length(texture(samplerColor, inUV + vec2(tex_offset.x * i, -tex_offset.y * i)).rgb - currCol) > 0.99f){
-				result = vec3(1.f);
-				break;
-			}
+			result += texture(samplerColor, inUV + vec2(tex_offset.x * i, 0.0)).rgb * weight[i] * ubo.blurStrength;
+			result += texture(samplerColor, inUV - vec2(tex_offset.x * i, 0.0)).rgb * weight[i] * ubo.blurStrength;
 		}
 		else
 		{
 			// V
-//			result += texture(samplerColor, inUV + vec2(0.0, tex_offset.y * i)).rgb * weight[i] * ubo.blurStrength;
-//			result += texture(samplerColor, inUV - vec2(0.0, tex_offset.y * i)).rgb * weight[i] * ubo.blurStrength;
-			//上下0+
-			if (length(texture(samplerColor, inUV + vec2(0.0, tex_offset.y * i)).rgb - currCol) > 0.5f){
-				result = vec3(1.f);
-				break;
-			}//0-
-			if (length(texture(samplerColor, inUV - vec2(0.0, tex_offset.y * i)).rgb - currCol) > 0.5f){
-				result = vec3(1.f);
-				break;
-			}//++
-			//右上
-			if (length(texture(samplerColor, inUV + vec2(tex_offset.x * i, tex_offset.y * i)).rgb - currCol) > 0.5f){
-				result = vec3(1.f);
-				break;
-			}//--
-			//左下
-			if (length(texture(samplerColor, inUV - vec2(tex_offset.x * i, tex_offset.y * i)).rgb - currCol) > 0.5f){
-				result = vec3(1.f);
-				break;
-			}
-
+			result += texture(samplerColor, inUV + vec2(0.0, tex_offset.y * i)).rgb * weight[i] * ubo.blurStrength;
+			result += texture(samplerColor, inUV - vec2(0.0, tex_offset.y * i)).rgb * weight[i] * ubo.blurStrength;
 		}
 	}
-
-
-	if(ubo.blurScale == 1.0){
-		outFragColor = vec4(currCol, 1.0);
-	}else if(ubo.blurScale < 1.0){
-		outFragColor = vec4(vec3(0.f), 1.0);
-	}else{
-		outFragColor = vec4(result, 1.0);
-	};
-
-
-	//outFragColor = vec4(result, 1.0);
+	outFragColor = vec4(result, 1.0);
 }

@@ -316,6 +316,7 @@ namespace vkglTF
 		//self-added
 		void loadFromFileWithVertIdx(std::vector<uint32_t>& indexBuffer, std::vector<Vertex>& vertexBuffer, std::string filename, vks::VulkanDevice* device, VkQueue transferQueue, uint32_t fileLoadingFlags = vkglTF::FileLoadingFlags::None, float scale = 1.0f);
 		void loadFromFileWithVertIdxMultipleMesh(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<Vertex>>& vertexBuffers, std::vector<std::string> filenames, vks::VulkanDevice* device, VkQueue transferQueue, uint32_t fileLoadingFlags = vkglTF::FileLoadingFlags::None, float scale = 1.0f);
+		void loadFromFolder(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<Vertex>>& vertexBuffers, std::string folder, vks::VulkanDevice* device, VkQueue transferQueue, uint32_t fileLoadingFlags = vkglTF::FileLoadingFlags::None, float scale = 1.0f);
 		//
 	};
 }

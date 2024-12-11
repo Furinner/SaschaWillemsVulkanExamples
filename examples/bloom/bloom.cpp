@@ -9,22 +9,22 @@
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
 
+
 // Offscreen frame buffer properties
-#define FB_DIM 1920
+#define FB_DIM 256
 #define FB_COLOR_FORMAT VK_FORMAT_R8G8B8A8_UNORM
 
 class VulkanExample : public VulkanExampleBase
 {
 public:
 	bool bloom = true;
-	std::vector<std::string> meshes = { "building", "monkey" };
-	int meshIdx = 0;
 
 	vks::TextureCubeMap cubemap;
 
 	struct {
-		vkglTF::Model scene;
-		vkglTF::Model monkey;
+		vkglTF::Model ufo;
+		vkglTF::Model ufoGlow;
+		vkglTF::Model skyBox;
 	} models;
 
 	struct {
@@ -140,6 +140,8 @@ public:
 		uniformBuffers.scene.destroy();
 		uniformBuffers.skyBox.destroy();
 		uniformBuffers.blurParams.destroy();
+
+		cubemap.destroy();
 	}
 
 	// Setup the offscreen framebuffer for rendering the mirrored scene
@@ -342,54 +344,54 @@ public:
 		{
 			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufInfo));
 
-			clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
-			clearValues[1].depthStencil = { 1.0f, 0 };
+			if (bloom) {
+				clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+				clearValues[1].depthStencil = { 1.0f, 0 };
 
-			VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
-			renderPassBeginInfo.renderPass = offscreenPass.renderPass;
-			renderPassBeginInfo.framebuffer = offscreenPass.framebuffers[0].framebuffer;
-			renderPassBeginInfo.renderArea.extent.width = offscreenPass.width;
-			renderPassBeginInfo.renderArea.extent.height = offscreenPass.height;
-			renderPassBeginInfo.clearValueCount = 2;
-			renderPassBeginInfo.pClearValues = clearValues;
+				VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+				renderPassBeginInfo.renderPass = offscreenPass.renderPass;
+				renderPassBeginInfo.framebuffer = offscreenPass.framebuffers[0].framebuffer;
+				renderPassBeginInfo.renderArea.extent.width = offscreenPass.width;
+				renderPassBeginInfo.renderArea.extent.height = offscreenPass.height;
+				renderPassBeginInfo.clearValueCount = 2;
+				renderPassBeginInfo.pClearValues = clearValues;
 
-			viewport = vks::initializers::viewport((float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
-			vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
+				viewport = vks::initializers::viewport((float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
+				vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
 
-			scissor = vks::initializers::rect2D(offscreenPass.width, offscreenPass.height, 0, 0);
-			vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
+				scissor = vks::initializers::rect2D(offscreenPass.width, offscreenPass.height, 0, 0);
+				vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
 
-			/*
-				First render pass: Render glow parts of the model (separate mesh) to an offscreen frame buffer
-			*/
+				/*
+					First render pass: Render glow parts of the model (separate mesh) to an offscreen frame buffer
+				*/
 
-			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
-			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.glowPass);
-			if (meshIdx == 0) {
-				models.scene.draw(drawCmdBuffers[i]);
+				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
+				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.glowPass);
+
+				models.ufoGlow.draw(drawCmdBuffers[i]);
+
+				vkCmdEndRenderPass(drawCmdBuffers[i]);
+
+				/*
+					Second render pass: Vertical blur
+
+					Render contents of the first pass into a second framebuffer and apply a vertical blur
+					This is the first blur pass, the horizontal blur is applied when rendering on top of the scene
+				*/
+
+				renderPassBeginInfo.framebuffer = offscreenPass.framebuffers[1].framebuffer;
+
+				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.blur, 0, 1, &descriptorSets.blurVert, 0, NULL);
+				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.blurVert);
+				vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
+
+				vkCmdEndRenderPass(drawCmdBuffers[i]);
 			}
-			else if (meshIdx == 1) {
-				models.monkey.draw(drawCmdBuffers[i]);
-			}
-			vkCmdEndRenderPass(drawCmdBuffers[i]);
-			/*
-				Second render pass: Vertical blur
-
-				Render contents of the first pass into a second framebuffer and apply a vertical blur
-				This is the first blur pass, the horizontal blur is applied when rendering on top of the scene
-			*/
-
-			renderPassBeginInfo.framebuffer = offscreenPass.framebuffers[1].framebuffer;
-
-			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.blur, 0, 1, &descriptorSets.blurVert, 0, NULL);
-			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.blurVert);
-			vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
-
-			vkCmdEndRenderPass(drawCmdBuffers[i]);
 
 			/*
 				Note: Explicit synchronization is not required between the render pass, as this is done implicit via sub pass dependencies
@@ -422,29 +424,21 @@ public:
 				vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
 
 				// Skybox
-				//vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.skyBox, 0, NULL);
-				//vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.skyBox);
-				//models.skyBox.draw(drawCmdBuffers[i]);
+				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.skyBox, 0, NULL);
+				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.skyBox);
+				models.skyBox.draw(drawCmdBuffers[i]);
 
 				// 3D scene
-				if (bloom) {
-					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
-					vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.phongPass);
-					if (meshIdx == 0) {
-						models.scene.draw(drawCmdBuffers[i]);
-					}
-					else if (meshIdx == 1) {
-						models.monkey.draw(drawCmdBuffers[i]);
-					}
+				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
+				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.phongPass);
+				models.ufo.draw(drawCmdBuffers[i]);
+
+				if (bloom)
+				{
+					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.blur, 0, 1, &descriptorSets.blurHorz, 0, NULL);
+					vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.blurHorz);
+					vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
 				}
-
-				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.blur, 0, 1, &descriptorSets.blurHorz, 0, NULL);
-				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.blurHorz);
-				vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
-
-				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.blur, 0, 1, &descriptorSets.blurHorz, 0, NULL);
-				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.blurHorz);
-				vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
 
 				drawUI(drawCmdBuffers[i]);
 
@@ -459,10 +453,10 @@ public:
 	void loadAssets()
 	{
 		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors | vkglTF::FileLoadingFlags::FlipY;
-
-		models.scene.loadFromFile(getAssetPath() + "models/samplebuilding.gltf", vulkanDevice, queue, glTFLoadingFlags);
-		models.monkey.loadFromFile(getAssetPath() + "models/suzanne.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors | vkglTF::FileLoadingFlags::FlipY);
-
+		models.ufo.loadFromFile(getAssetPath() + "models/retroufo.gltf", vulkanDevice, queue, glTFLoadingFlags);
+		models.ufoGlow.loadFromFile(getAssetPath() + "models/retroufo_glow.gltf", vulkanDevice, queue, glTFLoadingFlags);
+		models.skyBox.loadFromFile(getAssetPath() + "models/cube.gltf", vulkanDevice, queue, glTFLoadingFlags);
+		cubemap.loadFromFile(getAssetPath() + "textures/cubemap_space.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 	}
 
 	void setupDescriptors()
@@ -527,7 +521,13 @@ public:
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
-		
+		// Skybox
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocInfo, &descriptorSets.skyBox));
+		writeDescriptorSets = {
+			vks::initializers::writeDescriptorSet(descriptorSets.skyBox, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.skyBox.descriptor),						// Binding 0: Vertex shader uniform buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.skyBox, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	1, &cubemap.descriptor),							// Binding 1: Fragment shader texture sampler
+		};
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 	}
 
 	void preparePipelines()
@@ -659,14 +659,13 @@ public:
 		ubos.scene.projection = camera.matrices.perspective;
 		ubos.scene.view = camera.matrices.view;
 
-		/*ubos.scene.model = glm::translate(glm::mat4(1.0f), glm::vec3(sin(glm::radians(timer * 360.0f)) * 0.25f, -1.0f, cos(glm::radians(timer * 360.0f)) * 0.25f));
+		ubos.scene.model = glm::translate(glm::mat4(1.0f), glm::vec3(sin(glm::radians(timer * 360.0f)) * 0.25f, -1.0f, cos(glm::radians(timer * 360.0f)) * 0.25f));
 		ubos.scene.model = glm::rotate(ubos.scene.model, -sinf(glm::radians(timer * 360.0f)) * 0.15f, glm::vec3(1.0f, 0.0f, 0.0f));
-		ubos.scene.model = glm::rotate(ubos.scene.model, glm::radians(timer * 360.0f), glm::vec3(0.0f, 1.0f, 0.0f));*/
+		ubos.scene.model = glm::rotate(ubos.scene.model, glm::radians(timer * 360.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
 		memcpy(uniformBuffers.scene.mapped, &ubos.scene, sizeof(ubos.scene));
 
 		// Skybox
-
 		ubos.skyBox.projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 256.0f);
 		ubos.skyBox.view = glm::mat4(glm::mat3(camera.matrices.view));
 		ubos.skyBox.model = glm::mat4(1.0f);
@@ -691,10 +690,6 @@ public:
 
 	void prepare()
 	{
-
-		std::string glslToSpvBat = getShadersPath() + "bloom/glsltospv.bat " + getShadersPath() + "bloom";
-		system(glslToSpvBat.c_str());
-
 		VulkanExampleBase::prepare();
 		loadAssets();
 		prepareUniformBuffers();
@@ -719,13 +714,12 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
 		if (overlay->header("Settings")) {
-			if (overlay->checkBox("shading", &bloom)) {
+			if (overlay->checkBox("Bloom", &bloom)) {
 				buildCommandBuffers();
 			}
 			if (overlay->inputFloat("Scale", &ubos.blurParams.blurScale, 0.1f, 2)) {
 				updateUniformBuffersBlur();
 			}
-			overlay->comboBox("meshes", &meshIdx, meshes);
 		}
 	}
 };

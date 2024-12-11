@@ -1843,3 +1843,25 @@ void vkglTF::Model::loadFromFileWithVertIdxMultipleMesh(std::vector<std::vector<
 		materials.clear();
 	}
 }
+
+void vkglTF::Model::loadFromFolder(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<Vertex>>& vertexBuffers, std::string folder, vks::VulkanDevice* device, VkQueue transferQueue, uint32_t fileLoadingFlags, float scale) {
+	std::vector<std::string> filenames;
+
+	WIN32_FIND_DATA findFileData;
+	HANDLE hFind = FindFirstFile((folder + "\\*").c_str(), &findFileData);
+
+	if (hFind == INVALID_HANDLE_VALUE) {
+		std::cerr << "Invalid folder path." << std::endl;
+		return;
+	}
+
+	do {
+		// Skip directories "." and ".."
+		if (!(findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+			filenames.push_back(folder + "/" + findFileData.cFileName);
+		}
+	} while (FindNextFile(hFind, &findFileData) != 0);
+	loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, filenames, device, transferQueue, fileLoadingFlags);
+
+	FindClose(hFind);
+}

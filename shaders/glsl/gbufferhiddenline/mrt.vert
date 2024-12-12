@@ -23,10 +23,11 @@ void main()
 
 	// Vertex position in world space
 	outWorldPos = vec3(ubo.model * vec4(inPos,1));
-	
+
 	// Normal in world space
 	mat3 mNormal = transpose(inverse(mat3(ubo.model)));
-	outNormal = mNormal * normalize(inNormal);	
+	//outNormal = mNormal * normalize(inNormal);	
+	outNormal = mat3(ubo.view) * normalize(inNormal);
 	outCameraPos = vec3(-ubo.model[3]);
 	outObjectID = objectID;
 }

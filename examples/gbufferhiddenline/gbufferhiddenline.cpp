@@ -22,6 +22,23 @@
 
 class VulkanExample : public VulkanExampleBase
 {
+
+	template<typename T>
+	static inline bool fequal(T a, T b, T epsilon = 0.001) {
+		if (a == b) {
+			// Shortcut
+			return true;
+		}
+
+		const T diff = std::abs(a - b);
+		if (a * b == 0) {
+			// a or b or both are zero; relative error is not meaningful here
+			return diff < (epsilon * epsilon);
+		}
+
+		return diff / (std::abs(a) + std::abs(b)) < epsilon;
+	}
+
 public:
 	vkglTF::Model model;
 
@@ -48,13 +65,18 @@ public:
 		glm::vec3 position;
 		glm::vec3 normal;
 		unsigned int objectID;
+		unsigned int idInObj;
 
 		Vertex(glm::vec3 position, glm::vec3 normal, int objectID) :position(position), normal(normal), objectID(objectID) {};
+		
+		bool operator==(const Vertex other) const {
+			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
+		}
 
 		static VkVertexInputBindingDescription getBindingDescription() {
 			VkVertexInputBindingDescription bindingDescription{};
 			bindingDescription.binding = 0;
-			bindingDescription.stride = 2 * sizeof(glm::vec3) + sizeof(unsigned int);
+			bindingDescription.stride = sizeof(Vertex);
 			bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 			return bindingDescription;
 		}
@@ -105,21 +127,18 @@ public:
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
 					Vertex tmpVertex = Vertex(pos, nor, objectID);
-					
+
 					vertices.push_back(tmpVertex);
 				}
-				for (auto idx : indexBuffers[objectID]) {
-					index.push_back(idx + vertexBuffersSize);
-					
+				for (int i = 0; i < indexBuffers[objectID].size(); i+=3) {
+					index.push_back(indexBuffers[objectID][i] + vertexBuffersSize);
+					index.push_back(indexBuffers[objectID][i+1] + vertexBuffersSize);
+					index.push_back(indexBuffers[objectID][i+2] + vertexBuffersSize);
 				}
 				vertexBuffersSize += vertexBuffer.size();
 				indexBuffersSize += indexBuffers[objectID].size();
 				++objectID;
 			}
-
-
-
-			
 
 			size_t vertexBufferSize = vertexBuffersSize * sizeof(Vertex);
 			size_t indexBufferSize = indexBuffersSize * sizeof(uint32_t);

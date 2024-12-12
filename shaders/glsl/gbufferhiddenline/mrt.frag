@@ -25,7 +25,22 @@ void main()
 //	outNormal = vec4(tnorm, 1.0);
 //
 //	outAlbedo = texture(samplerColor, inUV);
-	outPosition = vec4(inCameraPos,1);
-	outNormal = vec4(vec3(inWorldPos), 1.0);
+	vec3 color = vec3(1);
+	vec3 N = normalize(inNormal);
+	vec3 L = normalize(inCameraPos);
+	float intensity = dot(N,L);
+	if (intensity > 0.98)
+		color = color * 1.5;
+	else if  (intensity > 0.9)
+		color = color * 1.0;
+	else if (intensity > 0.5)
+		color = color * 0.6;
+	else if (intensity > 0.25)
+		color = color * 0.4;
+	else
+		color = color * 0.2;
+	//color = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
+	outPosition = vec4(color,1);
+	outNormal = vec4(N, 1.0);
 	outAlbedo = vec4(vec3(inObjectID + 1), 1.0);
 }

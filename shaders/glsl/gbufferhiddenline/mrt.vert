@@ -3,6 +3,7 @@
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec3 inNormal;
 layout (location = 2) in int objectID;
+layout (location = 3) in int idInObj;
 
 layout (binding = 0) uniform UBO 
 {
@@ -29,5 +30,5 @@ void main()
 	//outNormal = mNormal * normalize(inNormal);	
 	outNormal = mat3(ubo.view) * normalize(inNormal);
 	outCameraPos = vec3(-ubo.model[3]);
-	outObjectID = objectID;
+	outObjectID = objectID + 1;
 }

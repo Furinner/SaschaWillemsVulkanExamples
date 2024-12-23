@@ -42,5 +42,5 @@ void main()
 	//color = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
 	outPosition = vec4(color,1);
 	outNormal = vec4(N, 1.0);
-	outAlbedo = vec4(vec3(inObjectID + 1), 1.0);
+	outAlbedo = vec4(vec3(inObjectID), 1.0);
 }

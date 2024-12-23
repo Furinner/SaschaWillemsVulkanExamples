@@ -148,5 +148,5 @@ void main()
 	vec3 color = vec3(1,0,0);
 	float factor = abs(dot(vec3(ubo.viewPos) - fragPos, normal));
    
-  outFragcolor = vec4(factor * color, 1.0);	
+  outFragcolor = vec4(vec3(0), 1.0);	
 }

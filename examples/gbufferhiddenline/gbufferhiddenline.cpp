@@ -17,6 +17,8 @@
 
 #define DLF 1
 
+#define MAX_NEIGHBOR_FACE_COUNT 20
+
 #define uPtr std::unique_ptr
 #define mkU std::make_unique
 
@@ -50,8 +52,6 @@ public:
 	class VertexHash {
 	public:
 		size_t operator()(const Vertex v) const {
-			//PROBLEM: small error of vertex can lead to different seed, change to 0 for now.
-			return 0;
 			size_t seed = 5381;
 			const auto hasher = std::hash<float>{};
 			seed ^= hasher(v.position.x) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
@@ -61,11 +61,14 @@ public:
 		}
 
 	};
+
 	struct Vertex {
 		glm::vec3 position;
 		glm::vec3 normal;
 		unsigned int objectID;
-		unsigned int idInObj;
+		unsigned int faceID;
+		unsigned int neighborFaceCnt = 0;
+		std::array<unsigned int, MAX_NEIGHBOR_FACE_COUNT> neighborFaceIDs = {0};
 
 		Vertex(glm::vec3 position, glm::vec3 normal, int objectID) :position(position), normal(normal), objectID(objectID) {};
 		
@@ -77,12 +80,13 @@ public:
 			VkVertexInputBindingDescription bindingDescription{};
 			bindingDescription.binding = 0;
 			bindingDescription.stride = sizeof(Vertex);
+			//bindingDescription.stride = 2 * sizeof(glm::vec3) + sizeof(unsigned int);
 			bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 			return bindingDescription;
 		}
 
-		static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
-			std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+		static std::array<VkVertexInputAttributeDescription, 4> getAttributeDescriptions() {
+			std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};
 			attributeDescriptions[0].binding = 0;
 			attributeDescriptions[0].location = 0;
 			attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -93,22 +97,29 @@ public:
 			attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
 			attributeDescriptions[1].offset = offsetof(Vertex, normal);
 
-			attributeDescriptions[1].binding = 0;
-			attributeDescriptions[1].location = 2;
-			attributeDescriptions[1].format = VK_FORMAT_R32_UINT;
-			attributeDescriptions[1].offset = offsetof(Vertex, objectID);
+			attributeDescriptions[2].binding = 0;
+			attributeDescriptions[2].location = 2;
+			attributeDescriptions[2].format = VK_FORMAT_R32_UINT;
+			attributeDescriptions[2].offset = offsetof(Vertex, objectID);
+
+			attributeDescriptions[3].binding = 0;
+			attributeDescriptions[3].location = 3;
+			attributeDescriptions[3].format = VK_FORMAT_R32_UINT;
+			attributeDescriptions[3].offset = offsetof(Vertex, faceID);
 
 			return attributeDescriptions;
 		}
 	};
 
 	struct HalfEdge {
-		int prevVerId;
-		int nextVerID;
+		int id;
+		int faceID;
+		Vertex* prevVer;
+		Vertex* nextVer;
 	};
 
 	struct Face {
-
+		int id;
 	};
 
 	struct Mesh {
@@ -127,7 +138,7 @@ public:
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
 					Vertex tmpVertex = Vertex(pos, nor, objectID);
-
+					
 					vertices.push_back(tmpVertex);
 				}
 				for (int i = 0; i < indexBuffers[objectID].size(); i+=3) {
@@ -141,6 +152,7 @@ public:
 			}
 
 			size_t vertexBufferSize = vertexBuffersSize * sizeof(Vertex);
+			//size_t vertexBufferSize = vertexBuffersSize * (2 * sizeof(glm::vec3) + sizeof(unsigned int));
 			size_t indexBufferSize = indexBuffersSize * sizeof(uint32_t);
 			struct StagingBuffer {
 				VkBuffer buffer;
@@ -641,8 +653,8 @@ public:
 		std::vector<std::vector<uint32_t>> indexBuffers;
 		std::vector<std::vector<vkglTF::Vertex>> vertexBuffers;
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/armor/armor.gltf", getAssetPath() + "models/test/12_quad_far.gltf", getAssetPath() + "models/cerberus/cerberus.gltf" }, vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/test", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 

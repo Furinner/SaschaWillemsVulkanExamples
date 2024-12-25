@@ -14,10 +14,10 @@
 
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
-
+#include <memory>
 #define DLF 1
 
-#define MAX_NEIGHBOR_FACE_COUNT 20
+#define MAX_NEIGHBOR_FACE_COUNT 50
 
 #define uPtr std::unique_ptr
 #define mkU std::make_unique
@@ -51,28 +51,34 @@ public:
 	struct Face;
 	class VertexHash {
 	public:
-		size_t operator()(const Vertex v) const {
+		size_t operator()(const Vertex* v) const {
 			size_t seed = 5381;
 			const auto hasher = std::hash<float>{};
-			seed ^= hasher(v.position.x) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-			seed ^= hasher(v.position.y) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-			seed ^= hasher(v.position.z) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+			seed ^= hasher(v->position.x) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+			seed ^= hasher(v->position.y) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+			seed ^= hasher(v->position.z) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 			return seed;
 		}
 
 	};
 
+	struct VertexEqual {
+		bool operator()(Vertex* const& v1, Vertex* const& v2) const {
+			return fequal(v1->position.x, v2->position.x) && (fequal(v1->position.y, v2->position.y) && (fequal(v1->position.z, v2->position.z)));
+		};
+	};
+
 	struct Vertex {
 		glm::vec3 position;
 		glm::vec3 normal;
-		unsigned int objectID;
-		unsigned int faceID;
-		unsigned int neighborFaceCnt = 0;
-		std::array<unsigned int, MAX_NEIGHBOR_FACE_COUNT> neighborFaceIDs = {0};
+		int objectID;
+		int faceID;
+		int uniqueID; //unique id in obj
 
 		Vertex(glm::vec3 position, glm::vec3 normal, int objectID) :position(position), normal(normal), objectID(objectID) {};
-		
-		bool operator==(const Vertex other) const {
+		Vertex(Vertex* ver, int faceID) : position(ver->position), objectID(ver->objectID), faceID(faceID) {};
+
+		bool operator==(const Vertex& other) const {
 			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
 		}
 
@@ -80,7 +86,6 @@ public:
 			VkVertexInputBindingDescription bindingDescription{};
 			bindingDescription.binding = 0;
 			bindingDescription.stride = sizeof(Vertex);
-			//bindingDescription.stride = 2 * sizeof(glm::vec3) + sizeof(unsigned int);
 			bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 			return bindingDescription;
 		}
@@ -111,63 +116,241 @@ public:
 		}
 	};
 
+	struct FaceConnectToVertex {
+		int neighborFaceCnt = 0;
+		std::vector<int> neighborFaceIDs = {};
+		void addFace(int id) {
+			if (neighborFaceCnt < MAX_NEIGHBOR_FACE_COUNT) {
+				neighborFaceIDs.push_back(id);
+				++neighborFaceCnt;
+			}
+		}
+	};
+
 	struct HalfEdge {
-		int id;
+		int id; //for debug
 		int faceID;
 		Vertex* prevVer;
 		Vertex* nextVer;
+		HalfEdge* next;
+		HalfEdge* prev;
+		HalfEdge* sym = nullptr;
+		HalfEdge(int id, Vertex* prevVer, Vertex* nextVer, int faceID) :id(id), prevVer(prevVer), nextVer(nextVer), faceID(faceID) {};
+		void setSym(HalfEdge* sym) {
+			this->sym = sym;
+			sym->sym = this;
+		};
 	};
 
 	struct Face {
+		int objectID;
 		int id;
+		FaceConnectToVertex* v1;
+		FaceConnectToVertex* v2;
+		FaceConnectToVertex* v3;
+		int neighborFaceCnt = 0;
+		std::vector<int> neighborFaces = {};
+		Face(int objectID, int id, FaceConnectToVertex* v1, FaceConnectToVertex* v2, FaceConnectToVertex* v3) :objectID(objectID), id(id), v1(v1), v2(v2), v3(v3) {};
+		void getAllNeighborFaces() {
+			for (auto v1tmp : v1->neighborFaceIDs) {
+				if (v1tmp != id) {
+					auto it = std::find(neighborFaces.begin(), neighborFaces.end(), v1tmp);
+					if (it == neighborFaces.end()) {
+						neighborFaces.push_back(v1tmp);
+						++neighborFaceCnt;
+					}
+				}
+			}
+			for (auto v2tmp : v2->neighborFaceIDs) {
+				if (v2tmp != id) {
+					auto it = std::find(neighborFaces.begin(), neighborFaces.end(), v2tmp);
+					if (it == neighborFaces.end()) {
+						neighborFaces.push_back(v2tmp);
+						++neighborFaceCnt;
+					}
+				}
+			}
+			for (auto v3tmp : v3->neighborFaceIDs) {
+				if (v3tmp != id) {
+					auto it = std::find(neighborFaces.begin(), neighborFaces.end(), v3tmp);
+					if (it == neighborFaces.end()) {
+						neighborFaces.push_back(v3tmp);
+						++neighborFaceCnt;
+					}
+				}
+			}
+			if (neighborFaceCnt < MAX_NEIGHBOR_FACE_COUNT) {
+				for (int i = neighborFaceCnt; i < MAX_NEIGHBOR_FACE_COUNT; ++i) {
+					neighborFaces.push_back(-1);
+				}
+			}
+			if (neighborFaceCnt > MAX_NEIGHBOR_FACE_COUNT) {
+				for (int i = neighborFaceCnt; i > MAX_NEIGHBOR_FACE_COUNT; --i) {
+					neighborFaces.pop_back();
+				}
+			}
+		}
 	};
 
 	struct Mesh {
 		std::vector<uint32_t> index{};
-		std::vector<Vertex> vertices{};
+		std::vector<uPtr<Vertex>> vertices1{};  //simple vertices, merged using position
+		std::vector<Vertex> vertices2{};  //complex vertices, used for final rendering
+		std::vector<uPtr<FaceConnectToVertex>> facesConnectToVertex{};
+		//std::vector<uPtr<HalfEdge>> halfEdges{};
+		std::vector<uPtr<Face>> faces{};
+		std::vector<int> neighborFacesData{};
+		std::vector<int> neighborFacesInfo{};
 		vks::Buffer verticesBuffer;
 		vks::Buffer idxBuffer;
-		size_t vertexBuffersSize = 0;
+		vks::Buffer faceInfoBuffer;
+		vks::Buffer faceDataBuffer;
+		size_t vertexBuffersSize1 = 0;
+		size_t vertexBuffersSize2 = 0;
 		size_t indexBuffersSize = 0;
+		size_t facesSize = 0;
 
 		void create(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<vkglTF::Vertex>>& vertexBuffers, vks::VulkanDevice* device, VkQueue transferQueue) {
 			int objectID = 0;
 			for (auto& vertexBuffer : vertexBuffers) {
 				int uniqueVerId = 0;
+				std::unordered_map<Vertex*, int, VertexHash, VertexEqual> uniqueVers;
+				std::unordered_map<int, int> verIDtoUniqueID;
+				std::unordered_map<std::string, HalfEdge*> symHEs;
+				std::vector<std::vector<int>> neighborFaces;
 				for (int i = 0; i < vertexBuffer.size(); ++i) {
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
-					Vertex tmpVertex = Vertex(pos, nor, objectID);
-					
-					vertices.push_back(tmpVertex);
+					uPtr<Vertex> tmpVer = mkU<Vertex>(pos, nor, objectID);
+					Vertex* tmpVerPtr = tmpVer.get();
+					auto it = uniqueVers.find(tmpVerPtr);
+					if (it != uniqueVers.end()) {
+						//tmpVerPtr->uniqueID = it->second;
+						verIDtoUniqueID[i] = it->second;
+					}
+					else {
+						uniqueVers[tmpVerPtr] = uniqueVerId;
+						if (i != uniqueVerId) {
+							verIDtoUniqueID[i] = uniqueVerId;
+						}
+						tmpVerPtr->uniqueID = uniqueVerId++;
+						vertices1.push_back(std::move(tmpVer));
+						facesConnectToVertex.push_back(std::move(mkU<FaceConnectToVertex>()));
+					}
 				}
+				int faceID = 0;
+				int indexCnt = 0;
 				for (int i = 0; i < indexBuffers[objectID].size(); i+=3) {
-					index.push_back(indexBuffers[objectID][i] + vertexBuffersSize);
-					index.push_back(indexBuffers[objectID][i+1] + vertexBuffersSize);
-					index.push_back(indexBuffers[objectID][i+2] + vertexBuffersSize);
+					int idx1 = indexBuffers[objectID][i];
+					auto it = verIDtoUniqueID.find(idx1);
+					if (it != verIDtoUniqueID.end()) {
+						idx1 = it->second;
+					}
+					int idx2 = indexBuffers[objectID][i + 1];
+					it = verIDtoUniqueID.find(idx2);
+					if (it != verIDtoUniqueID.end()) {
+						idx2 = it->second;
+					}
+					int idx3 = indexBuffers[objectID][i + 2];
+					it = verIDtoUniqueID.find(idx3);
+					if (it != verIDtoUniqueID.end()) {
+						idx3 = it->second;
+					}
+					/*index.push_back(idx1 + vertexBuffersSize);
+					index.push_back(idx2 + vertexBuffersSize);
+					index.push_back(idx3 + vertexBuffersSize);*/
+					Vertex* v1 = vertices1[idx1 + vertexBuffersSize1].get();
+					Vertex* v2 = vertices1[idx2 + vertexBuffersSize1].get();
+					Vertex* v3 = vertices1[idx3 + vertexBuffersSize1].get();
+					FaceConnectToVertex* ftv1 = facesConnectToVertex[idx1 + vertexBuffersSize1].get();
+					FaceConnectToVertex* ftv2 = facesConnectToVertex[idx2 + vertexBuffersSize1].get();
+					FaceConnectToVertex* ftv3 = facesConnectToVertex[idx3 + vertexBuffersSize1].get();
+					Vertex v1fin(v1, faceID);
+					Vertex v2fin(v2, faceID);
+					Vertex v3fin(v3, faceID);
+					ftv1->addFace(faceID);
+					ftv2->addFace(faceID);
+					ftv3->addFace(faceID);
+					uPtr<Face> f = mkU<Face>(objectID, faceID, ftv1, ftv2, ftv3);
+					glm::vec3 faceNor = glm::cross(glm::normalize(v3->position - v2->position), glm::normalize(v1->position - v2->position));
+					v1fin.normal = faceNor;
+					v2fin.normal = faceNor;
+					v3fin.normal = faceNor;
+					index.push_back(vertexBuffersSize2 + indexCnt++);
+					index.push_back(vertexBuffersSize2 + indexCnt++);
+					index.push_back(vertexBuffersSize2 + indexCnt++);
+					vertices2.push_back(v1fin);
+					vertices2.push_back(v2fin);
+					vertices2.push_back(v3fin);
+					faces.push_back(std::move(f));
+
+					/*halfEdges.push_back(std::move(mkU<HalfEdge>(heID++, v1, v2)));
+					halfEdges.push_back(std::move(mkU<HalfEdge>(heID++, v2, v3)));
+					halfEdges.push_back(std::move(mkU<HalfEdge>(heID++, v3, v1)));
+					HalfEdge* he1 = halfEdges[halfEdges.size() - 3].get();
+					HalfEdge* he2 = halfEdges[halfEdges.size() - 2].get();
+					HalfEdge* he3 = halfEdges[halfEdges.size() - 1].get();
+					he1->prev = he3;
+					he1->next = he2;
+					he2->prev = he1;
+					he2->next = he3;
+					he3->prev = he2;
+					he3->next = he1;
+					std::array<HalfEdge*, 3> hes = { he1, he2, he3 };
+					for (auto currHe : hes) {
+						Vertex* ver1 = currHe->prevVer;
+						Vertex* ver2 = currHe->nextVer;
+						std::string key1 = std::to_string(ver1->uniqueID) + "#" + std::to_string(ver2->uniqueID);
+						std::string key2 = std::to_string(ver2->uniqueID) + "#" + std::to_string(ver1->uniqueID);
+						auto it = symHEs.find(key2);
+						if (it != symHEs.end()) {
+							currHe->setSym(it->second);
+						}
+						else {
+							symHEs[key1] = currHe;
+						}
+					}
+					uPtr<Face> f = mkU<Face>(faceID, he1, he2, he3);
+					faces.push_back(std::move(f));*/
+					++faceID;
 				}
-				vertexBuffersSize += vertexBuffer.size();
-				indexBuffersSize += indexBuffers[objectID].size();
+				neighborFacesInfo.push_back(neighborFacesData.size());
+				for (int i = facesSize; i < faces.size(); ++i) {
+					faces[i]->getAllNeighborFaces();
+					neighborFacesData.insert(neighborFacesData.end(), faces[i]->neighborFaces.begin(), faces[i]->neighborFaces.end());
+				}
+				facesSize = faces.size();
+				vertexBuffersSize1 = vertices1.size();
+				vertexBuffersSize2 = vertices2.size();
+				indexBuffersSize = index.size();
 				++objectID;
+				
 			}
 
-			size_t vertexBufferSize = vertexBuffersSize * sizeof(Vertex);
-			//size_t vertexBufferSize = vertexBuffersSize * (2 * sizeof(glm::vec3) + sizeof(unsigned int));
+			size_t vertexBufferSize = vertexBuffersSize2 * sizeof(Vertex);
+			//size_t vertexBufferSize = vertexBuffersSize * (2 * sizeof(glm::vec3) + sizeof(int));
 			size_t indexBufferSize = indexBuffersSize * sizeof(uint32_t);
+			size_t faceInfoSize = neighborFacesInfo.size() * sizeof(int);
+			size_t faceDataSize = neighborFacesData.size() * sizeof(int);
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
-			} vertexStaging, indexStaging;
+			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging;
 
 			// Create staging buffers
 			// Vertex data
+			//has to transfer from std::vector<uPtr<Vertex>> to std::vector<Vertex>, since uPtr vector is not contiguous like Vertex vector.
+			/*std::vector<Vertex> verticesData{};
+			for (auto& verData : vertices) {
+				verticesData.push_back(Vertex(verData->position, verData->normal, verData->objectID));
+			}*/
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 				vertexBufferSize,
 				&vertexStaging.buffer,
 				&vertexStaging.memory,
-				vertices.data()));
+				vertices2.data()));
 			// Index data
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -176,6 +359,23 @@ public:
 				&indexStaging.buffer,
 				&indexStaging.memory,
 				index.data()));
+			// Neighbor Face Info
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				faceInfoSize,
+				&faceInfoStaging.buffer,
+				&faceInfoStaging.memory,
+				neighborFacesInfo.data()));
+			// Neighbor Face Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				faceDataSize,
+				&faceDataStaging.buffer,
+				&faceDataStaging.memory,
+				neighborFacesData.data()));
+			//
 			// Create device local buffers
 			// Vertex buffer
 			VK_CHECK_RESULT(device->createBuffer(
@@ -191,7 +391,20 @@ public:
 				indexBufferSize,
 				&idxBuffer.buffer,
 				&idxBuffer.memory));
-
+			// Face Info
+			//this buffer creation method is different from the one above
+			//this one will create a default descriptor for you
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				&faceInfoBuffer,
+				faceInfoSize));
+			// Face Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				&faceDataBuffer,
+				faceDataSize));
 			// Copy from staging buffers
 			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 
@@ -202,6 +415,12 @@ public:
 
 			copyRegion.size = indexBufferSize;
 			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, idxBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = faceInfoSize;
+			vkCmdCopyBuffer(copyCmd, faceInfoStaging.buffer, faceInfoBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = faceDataSize;
+			vkCmdCopyBuffer(copyCmd, faceDataStaging.buffer, faceDataBuffer.buffer, 1, &copyRegion);
 
 			device->flushCommandBuffer(copyCmd, transferQueue, true);
 
@@ -218,8 +437,11 @@ public:
 
 		}
 	};
-
+	struct PushValue{
+		int max_neighbor_cnt = MAX_NEIGHBOR_FACE_COUNT;
+	};
 	Mesh mesh;
+	PushValue pushVal{};
 	//
 
 	int32_t debugDisplayTarget = 0;
@@ -293,8 +515,10 @@ public:
 		FrameBufferAttachment position, normal, albedo;
 		FrameBufferAttachment depth;
 		VkRenderPass renderPass;
+		vks::Buffer linkedList;
 	} offScreenFrameBuf{};
 
+	
 	// One sampler for the frame buffer color attachments
 	VkSampler colorSampler{ VK_NULL_HANDLE };
 
@@ -442,6 +666,14 @@ public:
 		offScreenFrameBuf.width = 1920;
 		offScreenFrameBuf.height = 1080;
 
+		//self-added
+		/*VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&offScreenFrameBuf.linkedList,
+			sizeof(Node) * offScreenFrameBuf.width * offScreenFrameBuf.height));*/
+		// 
+		
 		// Color attachments
 
 		// (World space) Positions
@@ -458,7 +690,7 @@ public:
 
 		// Albedo (color)
 		createAttachment(
-			VK_FORMAT_R16G16B16A16_SFLOAT,
+			VK_FORMAT_R32G32_SINT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			&offScreenFrameBuf.albedo);
 
@@ -599,7 +831,8 @@ public:
 		std::array<VkClearValue, 4> clearValues;
 		clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
 		clearValues[1].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
-		clearValues[2].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+		clearValues[2].color.int32[0] = -1;
+		clearValues[2].color.int32[1] = -1;
 		clearValues[3].depthStencil = { 1.0f, 0 };
 
 		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
@@ -622,6 +855,7 @@ public:
 
 		vkCmdBindPipeline(offScreenCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.offscreen);
 
+		vkCmdPushConstants(offScreenCmdBuffer, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushValue), &pushVal);
 		//// Floor
 		//vkCmdBindDescriptorSets(offScreenCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.floor, 0, nullptr);
 		//models.floor.draw(offScreenCmdBuffer);
@@ -633,8 +867,6 @@ public:
 		vkCmdBindDescriptorSets(offScreenCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.floor, 0, nullptr);
 		mesh.bindBuffers(offScreenCmdBuffer);
 		vkCmdDrawIndexed(offScreenCmdBuffer, mesh.index.size(), 1, 0, 0, 0);
-
-
 
 		vkCmdEndRenderPass(offScreenCmdBuffer);
 
@@ -653,11 +885,13 @@ public:
 		std::vector<std::vector<uint32_t>> indexBuffers;
 		std::vector<std::vector<vkglTF::Vertex>> vertexBuffers;
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/armor/armor.gltf", getAssetPath() + "models/test/12_quad_far.gltf", getAssetPath() + "models/cerberus/cerberus.gltf" }, vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/test", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_tri", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/three_tri", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
-
 	}
 
 	void buildCommandBuffers()
@@ -713,8 +947,9 @@ public:
 	{
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9)
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 3);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
@@ -731,6 +966,10 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
 			// Binding 4 : Fragment shader uniform buffer
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
+			// Binding 5 : Storage buffer face info
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 5),
+			// Binding 6 : Storage buffer face data
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 6),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
@@ -769,6 +1008,10 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &texDescriptorAlbedo),
 			// Binding 4 : Fragment shader uniform buffer
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4, &uniformBuffers.composition.descriptor),
+			// Binding 5 : Neighbor Face Info Buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &mesh.faceInfoBuffer.descriptor),
+			// Binding 6 : Neighbor Face Data Buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &mesh.faceDataBuffer.descriptor),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
@@ -782,7 +1025,7 @@ public:
 			// Binding 1: Color map
 			vks::initializers::writeDescriptorSet(descriptorSets.model, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &textures.model.colorMap.descriptor),
 			// Binding 2: Normal map
-			vks::initializers::writeDescriptorSet(descriptorSets.model, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.model.normalMap.descriptor)
+			vks::initializers::writeDescriptorSet(descriptorSets.model, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.model.normalMap.descriptor),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
@@ -803,6 +1046,9 @@ public:
 	{
 		// Pipeline layout
 		VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayout, 1);
+		VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(PushValue), 0);
+		pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+		pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout));
 
 		// Pipelines
@@ -849,7 +1095,7 @@ public:
 		pipelineCI.pVertexInputState = &pipelineVertexInputStateCreateInfo;
 		// Vertex input state from glTF model for pipeline rendering models
 		//pipelineCI.pVertexInputState = vkglTF::Vertex::getPipelineVertexInputState({ vkglTF::VertexComponent::Position, vkglTF::VertexComponent::UV, vkglTF::VertexComponent::Color, vkglTF::VertexComponent::Normal, vkglTF::VertexComponent::Tangent });
-		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
 		// Offscreen pipeline
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
@@ -1031,7 +1277,7 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "Line", "Line2" });
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace"});
 			ImGui::InputInt("Stride", &singleStride);
 		}
 	}

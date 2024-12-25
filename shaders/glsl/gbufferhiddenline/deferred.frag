@@ -2,7 +2,7 @@
 
 layout (binding = 1) uniform sampler2D samplerposition;
 layout (binding = 2) uniform sampler2D samplerNormal;
-layout (binding = 3) uniform sampler2D samplerAlbedo;
+layout (binding = 3) uniform isampler2D samplerAlbedo;
 
 layout (location = 0) in vec2 inUV;
 
@@ -22,80 +22,207 @@ layout (binding = 4) uniform UBO
 	int singleStride;
 } ubo;
 
+layout (binding = 5) buffer FaceInfo
+{
+    int faceInfos[];
+};
+
+layout (binding = 6) buffer FaceData
+{
+    int faceData[];
+};
+
+layout(push_constant) uniform PushConsts {
+	int max_neighbor;
+} pushConsts;
+
+
+bool grid_3x3(vec2 low_left_uv, vec2 tex_offset, int neighborFaceCnt, int faceIdxStart, int faceID){
+	bool shouldColor = false;
+	for(int i = 0; i < 3; ++i){
+		for(int j = 0; j < 3; ++j){
+			if((i == 1) && (j == 1)){
+				continue;
+			}
+			int currFaceID = texture(samplerAlbedo, low_left_uv + vec2(tex_offset.x * i, tex_offset.y * j)).g;
+			if(currFaceID != faceID){
+				if(neighborFaceCnt > 0){
+					bool haveThisNeighbor = false;
+					for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
+						if(faceData[k] == currFaceID){
+							haveThisNeighbor = true;
+							break;
+						}
+					}
+					if(haveThisNeighbor){
+						continue;
+					}else{
+						shouldColor = true;
+						return shouldColor;
+					}
+				}else{
+					shouldColor = true;
+					return shouldColor;
+				}
+			}
+		}
+	}
+	return shouldColor;
+}
+
+bool sampleOn3x3Grid(vec2 low_left_uv, vec2 tex_offset, int stride, int neighborFaceCnt, int faceIdxStart, int faceID){
+	int move = 2 * stride - 1;
+	for(int i = 0; i < move; ++i){
+		for(int j = 0; j < move; ++j){
+			vec2 currUV = low_left_uv + vec2(tex_offset.x * i, tex_offset.y * j);
+			if(grid_3x3(currUV, tex_offset, neighborFaceCnt, faceIdxStart, faceID)){
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+
 void main() 
 {
 	// Get G-Buffer values
 	vec3 fragPos = texture(samplerposition, inUV).rgb;
 	vec3 normal = texture(samplerNormal, inUV).rgb;
-	vec4 albedo = texture(samplerAlbedo, inUV);
-	float objectID = albedo.r;
+	//vec4 albedo = texture(samplerAlbedo, inUV);
+	//float objectID = albedo.r;
+	int objectID = texture(samplerAlbedo, inUV).r;  
+	int faceID = texture(samplerAlbedo, inUV).g;  
 	vec2 tex_offset = 1.f / textureSize(samplerAlbedo, 0); // gets size of single texel
+	int size = ubo.singleStride;
 	// Debug display
 	if (ubo.displayDebugTarget > 0) {
 		switch (ubo.displayDebugTarget) {
 			case 1: 
-				outFragcolor.rgb = fragPos;
+				//outFragcolor.rgb = fragPos;
+				vec3 color = vec3(1,0,0);
+				float intensity = dot(normal,fragPos);
+				if (intensity > 0.98)
+					color *= 1.5;
+				else if  (intensity > 0.9)
+					color *= 1.0;
+				else if (intensity > 0.5)
+					color *= 0.6;
+				else if (intensity > 0.25)
+					color *= 0.4;
+				else
+					color *= 0.2;
+				// Desaturate a bit
+				outFragcolor.rgb = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
+				//outFragcolor.rgb = fragPos;	
 				break;
 			case 2: 
-				outFragcolor.rgb = normal;
+				//outFragcolor.rgb = normal;
+				outFragcolor.rgb = vec3(pushConsts.max_neighbor/100.f);
+				//outFragcolor.rgb = vec3(faceInfos[8] / 16200.f);
 				break;
 			case 3: 
-				//top left
-				if(abs(texture(samplerAlbedo, inUV + vec2(-tex_offset.x, tex_offset.y)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				//top
-				if(abs(texture(samplerAlbedo, inUV + vec2(tex_offset.x, tex_offset.y)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				//top right
-				if(abs(texture(samplerAlbedo, inUV + vec2(tex_offset.x, tex_offset.y)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				//left
-				if(abs(texture(samplerAlbedo, inUV + vec2(-tex_offset.x, 0)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				//right
-				if(abs(texture(samplerAlbedo, inUV + vec2(tex_offset.x, 0)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				//down left
-				if(abs(texture(samplerAlbedo, inUV + vec2(-tex_offset.x, -tex_offset.y)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				//down
-				if(abs(texture(samplerAlbedo, inUV + vec2(0, -tex_offset.y)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				//down right
-				if(abs(texture(samplerAlbedo, inUV + vec2(tex_offset.x, -tex_offset.y)).r - objectID) > 0.1f){
-					outFragcolor = vec4(1);
-					return;
-				}
-				outFragcolor.rgb = vec3(0);
-				break;
-			case 4: 
-				int size = ubo.singleStride;
 				for(int i = -size; i <= size; ++i){
 					for(int j = -size; j <= size; ++j){
 						if((i == 0) && (j == 0)){
 							continue;
 						}
-						float currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
-						if(abs(currID - objectID) > 0.1f){
+						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+						if(abs(currID - objectID) > 0){
+							outFragcolor = vec4(1);
+							return;
+						}else{
+							int currFaceID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
+							if(abs(currFaceID - faceID) > 0){
+								outFragcolor = vec4(1);
+								return;
+							}
+						}
+					}
+				}
+				outFragcolor.rgb = vec3(0);
+				break;
+			case 4: 
+				for(int i = -size; i <= size; ++i){
+					for(int j = -size; j <= size; ++j){
+						if((i == 0) && (j == 0)){
+							continue;
+						}
+						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+						if(abs(currID - objectID) > 0){
 							outFragcolor = vec4(1);
 							return;
 						}
 					}
 				}
+				outFragcolor.rgb = vec3(0);
+				break;
+			case 5:
+			    bool inObj = false;
+				int neighborFaceCnt = 0;
+				int faceIdxStart = 0;
+				if(objectID > -1){
+					inObj = true;
+				};
+				if(inObj){
+					int objIdx = faceInfos[objectID];
+					faceIdxStart = objIdx + pushConsts.max_neighbor * faceID;
+					for(int i = 0; i < pushConsts.max_neighbor; ++i){
+						if(faceData[faceIdxStart + i] > -1){
+							++neighborFaceCnt;
+						}else{
+							break;
+						}
+					}
+				};
+				for(int i = -size; i <= size; ++i){
+					for(int j = -size; j <= size; ++j){
+						if((i == 0) && (j == 0)){
+							continue;
+						}
+						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+						if(abs(currID - objectID) > 0){
+							outFragcolor = vec4(1);
+							return;
+						}
+					}
+				}
+				if(inObj){
+					vec2 low_left_uv = inUV + vec2(-tex_offset.x * size, -tex_offset.y * size);
+					bool shouldColor = sampleOn3x3Grid(low_left_uv, tex_offset, size, neighborFaceCnt, faceIdxStart, faceID);
+					if(shouldColor){
+						outFragcolor = vec4(1);
+						return;
+					}
+				}
+//				if(inObj){
+//					for(int i = -size; i <= size; ++i){
+//						for(int j = -size; j <= size; ++j){
+//							if((i == 0) && (j == 0)){
+//								continue;
+//							}
+//							int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
+//							if(currID != faceID){
+//								if(neighborFaceCnt == 0){
+//									outFragcolor = vec4(1);
+//									return;
+//								}else{
+//									bool haveThisNeighbor = false;
+//									for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
+//										if(faceData[k] == currID){
+//											haveThisNeighbor = true;
+//											break;
+//										}
+//									}
+//									if(!haveThisNeighbor){
+//										outFragcolor = vec4(1);
+//										return;
+//									}
+//								}
+//							}
+//						}
+//					}
+//				}
 				outFragcolor.rgb = vec3(0);
 				break;
 		}		

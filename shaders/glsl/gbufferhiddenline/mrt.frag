@@ -7,10 +7,11 @@ layout (location = 0) in vec3 inNormal;
 layout (location = 1) in vec3 inWorldPos;
 layout (location = 2) in flat int inObjectID;
 layout (location = 3) in vec3 inCameraPos;
+layout (location = 4) in flat int inFaceID;
 
 layout (location = 0) out vec4 outPosition;
 layout (location = 1) out vec4 outNormal;
-layout (location = 2) out vec4 outAlbedo;
+layout (location = 2) out ivec2 outAlbedo;
 
 void main() 
 {
@@ -39,8 +40,9 @@ void main()
 		color = color * 0.4;
 	else
 		color = color * 0.2;
-	//color = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
-	outPosition = vec4(color,1);
+	color = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
+	outPosition = vec4(inWorldPos,1);
 	outNormal = vec4(N, 1.0);
-	outAlbedo = vec4(vec3(inObjectID), 1.0);
+	outAlbedo.r = inObjectID;
+	outAlbedo.g = inFaceID;
 }

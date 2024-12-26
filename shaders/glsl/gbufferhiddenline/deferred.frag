@@ -83,6 +83,79 @@ bool sampleOn3x3Grid(vec2 low_left_uv, vec2 tex_offset, int stride, int neighbor
 	return false;
 }
 
+vec3 case3(int objectID, int size, int faceID, vec2 inUV, vec2 tex_offset){
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				continue;
+			}
+			int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+			if(abs(currID - objectID) > 0){
+				return vec3(1);
+			}else{
+				int currFaceID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
+				if(abs(currFaceID - faceID) > 0){
+					return vec3(1);
+				}
+			}
+		}
+	}
+	return vec3(0);
+}
+
+vec3 case4(int objectID, int size, vec2 inUV, vec2 tex_offset){
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				continue;
+			}
+			int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+			if(abs(currID - objectID) > 0){
+				return vec3(1);
+			}
+		}
+	}
+	return vec3(0);
+}
+
+vec3 case5(int objectID, int size, int faceID, vec2 inUV, vec2 tex_offset){
+	bool inObj = false;
+	int neighborFaceCnt = 0;
+	int faceIdxStart = 0;
+	if(objectID > -1){
+		inObj = true;
+	};
+	if(inObj){
+		int objIdx = faceInfos[objectID];
+		faceIdxStart = objIdx + pushConsts.max_neighbor * faceID;
+		for(int i = 0; i < pushConsts.max_neighbor; ++i){
+			if(faceData[faceIdxStart + i] > -1){
+				++neighborFaceCnt;
+			}else{
+				break;
+			}
+		}
+	};
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				continue;
+			}
+			int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+			if(abs(currID - objectID) > 0){
+				return vec3(1);
+			}
+		}
+	}
+	if(inObj){
+		vec2 low_left_uv = inUV + vec2(-tex_offset.x * size, -tex_offset.y * size);
+		bool shouldColor = sampleOn3x3Grid(low_left_uv, tex_offset, size, neighborFaceCnt, faceIdxStart, faceID);
+		if(shouldColor){
+			return vec3(1);
+		}
+	}
+	return vec3(0);
+}
 
 void main() 
 {
@@ -122,108 +195,110 @@ void main()
 				//outFragcolor.rgb = vec3(faceInfos[8] / 16200.f);
 				break;
 			case 3: 
-				for(int i = -size; i <= size; ++i){
-					for(int j = -size; j <= size; ++j){
-						if((i == 0) && (j == 0)){
-							continue;
-						}
-						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
-						if(abs(currID - objectID) > 0){
-							outFragcolor = vec4(1);
-							return;
-						}else{
-							int currFaceID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
-							if(abs(currFaceID - faceID) > 0){
-								outFragcolor = vec4(1);
-								return;
-							}
-						}
-					}
-				}
-				outFragcolor.rgb = vec3(0);
-				break;
-			case 4: 
-				for(int i = -size; i <= size; ++i){
-					for(int j = -size; j <= size; ++j){
-						if((i == 0) && (j == 0)){
-							continue;
-						}
-						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
-						if(abs(currID - objectID) > 0){
-							outFragcolor = vec4(1);
-							return;
-						}
-					}
-				}
-				outFragcolor.rgb = vec3(0);
-				break;
-			case 5:
-			    bool inObj = false;
-				int neighborFaceCnt = 0;
-				int faceIdxStart = 0;
-				if(objectID > -1){
-					inObj = true;
-				};
-				if(inObj){
-					int objIdx = faceInfos[objectID];
-					faceIdxStart = objIdx + pushConsts.max_neighbor * faceID;
-					for(int i = 0; i < pushConsts.max_neighbor; ++i){
-						if(faceData[faceIdxStart + i] > -1){
-							++neighborFaceCnt;
-						}else{
-							break;
-						}
-					}
-				};
-				for(int i = -size; i <= size; ++i){
-					for(int j = -size; j <= size; ++j){
-						if((i == 0) && (j == 0)){
-							continue;
-						}
-						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
-						if(abs(currID - objectID) > 0){
-							outFragcolor = vec4(1);
-							return;
-						}
-					}
-				}
-				if(inObj){
-					vec2 low_left_uv = inUV + vec2(-tex_offset.x * size, -tex_offset.y * size);
-					bool shouldColor = sampleOn3x3Grid(low_left_uv, tex_offset, size, neighborFaceCnt, faceIdxStart, faceID);
-					if(shouldColor){
-						outFragcolor = vec4(1);
-						return;
-					}
-				}
-//				if(inObj){
-//					for(int i = -size; i <= size; ++i){
-//						for(int j = -size; j <= size; ++j){
-//							if((i == 0) && (j == 0)){
-//								continue;
-//							}
-//							int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
-//							if(currID != faceID){
-//								if(neighborFaceCnt == 0){
-//									outFragcolor = vec4(1);
-//									return;
-//								}else{
-//									bool haveThisNeighbor = false;
-//									for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
-//										if(faceData[k] == currID){
-//											haveThisNeighbor = true;
-//											break;
-//										}
-//									}
-//									if(!haveThisNeighbor){
-//										outFragcolor = vec4(1);
-//										return;
-//									}
-//								}
+//				for(int i = -size; i <= size; ++i){
+//					for(int j = -size; j <= size; ++j){
+//						if((i == 0) && (j == 0)){
+//							continue;
+//						}
+//						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+//						if(abs(currID - objectID) > 0){
+//							outFragcolor = vec4(1);
+//							return;
+//						}else{
+//							int currFaceID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
+//							if(abs(currFaceID - faceID) > 0){
+//								outFragcolor = vec4(1);
+//								return;
 //							}
 //						}
 //					}
 //				}
-				outFragcolor.rgb = vec3(0);
+//				outFragcolor.rgb = vec3(0);
+				vec3 finalCol = vec3(0);
+				vec2 uv1 = inUV - vec2(tex_offset / 2.f);
+				vec2 uv2 = uv1 + vec2(tex_offset.x, 0);
+				vec2 uv3 = uv1 + vec2(0, tex_offset.y);
+				vec2 uv4 = uv1 + vec2(tex_offset.x, tex_offset.y);
+				finalCol += case3(objectID, size, faceID, uv1, tex_offset);
+				finalCol += case3(objectID, size, faceID, uv2, tex_offset);
+				finalCol += case3(objectID, size, faceID, uv3, tex_offset);
+				finalCol += case3(objectID, size, faceID, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 4: 
+//				for(int i = -size; i <= size; ++i){
+//					for(int j = -size; j <= size; ++j){
+//						if((i == 0) && (j == 0)){
+//							continue;
+//						}
+//						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+//						if(abs(currID - objectID) > 0){
+//							outFragcolor = vec4(1);
+//							return;
+//						}
+//					}
+//				}
+//				outFragcolor.rgb = vec3(0);
+				finalCol = vec3(0);
+				uv1 = inUV - vec2(tex_offset / 2.f);
+				uv2 = uv1 + vec2(tex_offset.x, 0);
+				uv3 = uv1 + vec2(0, tex_offset.y);
+				uv4 = uv1 + vec2(tex_offset.x, tex_offset.y);
+				finalCol += case4(objectID, size, uv1, tex_offset);
+				finalCol += case4(objectID, size, uv2, tex_offset);
+				finalCol += case4(objectID, size, uv3, tex_offset);
+				finalCol += case4(objectID, size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 5:
+//			    bool inObj = false;
+//				int neighborFaceCnt = 0;
+//				int faceIdxStart = 0;
+//				if(objectID > -1){
+//					inObj = true;
+//				};
+//				if(inObj){
+//					int objIdx = faceInfos[objectID];
+//					faceIdxStart = objIdx + pushConsts.max_neighbor * faceID;
+//					for(int i = 0; i < pushConsts.max_neighbor; ++i){
+//						if(faceData[faceIdxStart + i] > -1){
+//							++neighborFaceCnt;
+//						}else{
+//							break;
+//						}
+//					}
+//				};
+//				for(int i = -size; i <= size; ++i){
+//					for(int j = -size; j <= size; ++j){
+//						if((i == 0) && (j == 0)){
+//							continue;
+//						}
+//						int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+//						if(abs(currID - objectID) > 0){
+//							outFragcolor = vec4(1);
+//							return;
+//						}
+//					}
+//				}
+//				if(inObj){
+//					vec2 low_left_uv = inUV + vec2(-tex_offset.x * size, -tex_offset.y * size);
+//					bool shouldColor = sampleOn3x3Grid(low_left_uv, tex_offset, size, neighborFaceCnt, faceIdxStart, faceID);
+//					if(shouldColor){
+//						outFragcolor = vec4(1);
+//						return;
+//					}
+//				}
+//				outFragcolor.rgb = vec3(0);
+				finalCol = vec3(0);
+				uv1 = inUV - vec2(tex_offset / 2.f);
+				uv2 = uv1 + vec2(tex_offset.x, 0);
+				uv3 = uv1 + vec2(0, tex_offset.y);
+				uv4 = uv1 + vec2(tex_offset.x, tex_offset.y);
+				finalCol += case5(objectID, size, faceID, uv1, tex_offset);
+				finalCol += case5(objectID, size, faceID, uv2, tex_offset);
+				finalCol += case5(objectID, size, faceID, uv3, tex_offset);
+				finalCol += case5(objectID, size, faceID, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
 				break;
 		}		
 		outFragcolor.a = 1.0;

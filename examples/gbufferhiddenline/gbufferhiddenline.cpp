@@ -665,8 +665,8 @@ public:
 		// Note: Instead of using fixed sizes, one could also match the window size and recreate the attachments on resize
 		//offScreenFrameBuf.width = 1920;
 		//offScreenFrameBuf.height = 1080;
-		offScreenFrameBuf.width = 3840;
-		offScreenFrameBuf.height = 2160;
+		offScreenFrameBuf.width = width * 2;
+		offScreenFrameBuf.height = height * 2;
 
 		//self-added
 		/*VK_CHECK_RESULT(vulkanDevice->createBuffer(

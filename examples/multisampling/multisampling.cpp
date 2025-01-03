@@ -364,7 +364,8 @@ public:
 
 			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
+			VkViewport viewport = vks::initializers::viewport((float)width, -(float)height, 0.0f, 1.0f);
+			viewport.y = (float)height;
 			vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
 
 			VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
@@ -384,7 +385,7 @@ public:
 
 	void loadAssets()
 	{
-		model.loadFromFile(getAssetPath() + "models/voyager.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::FlipY);
+		model.loadFromFile(getAssetPath() + "models/voyager.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::PreTransformVertices);
 	}
 
 	void setupDescriptors()

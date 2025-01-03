@@ -191,8 +191,8 @@ void main()
 				break;
 			case 2: 
 				//outFragcolor.rgb = normal;
-				outFragcolor.rgb = vec3(pushConsts.max_neighbor/100.f);
-				//outFragcolor.rgb = vec3(faceInfos[8] / 16200.f);
+				//outFragcolor.rgb = vec3(pushConsts.max_neighbor/100.f);
+				outFragcolor.rgb = vec3(inUV.x, inUV.y, 0);
 				break;
 			case 3: 
 //				for(int i = -size; i <= size; ++i){

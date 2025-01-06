@@ -31,7 +31,7 @@ void main()
 	//mat3 mNormal = transpose(inverse(mat3(ubo.model)));
 	//outNormal = mNormal * normalize(inNormal);	
 	//outNormal = mat3(ubo.view) * normalize(inNormal);
-	outNormal = normalize(mat3(ubo.view) * inNormal);
+	outNormal = mat3(ubo.view) * inNormal;
 	outCameraPos = vec3(-ubo.model[3]);
 	outObjectID = objectID;
 	outFaceID = faceID;

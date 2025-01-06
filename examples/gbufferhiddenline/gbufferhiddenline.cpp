@@ -200,11 +200,13 @@ public:
 		//std::vector<uPtr<HalfEdge>> halfEdges{};
 		std::vector<uPtr<Face>> faces{};
 		std::vector<int> neighborFacesData{};
-		std::vector<int> neighborFacesInfo{};
+		std::vector<int> objFaceCnt{};
+		std::vector<glm::vec3> faceNors{};
 		vks::Buffer verticesBuffer;
 		vks::Buffer idxBuffer;
 		vks::Buffer faceInfoBuffer;
 		vks::Buffer faceDataBuffer;
+		vks::Buffer faceNorBuffer;
 		size_t vertexBuffersSize1 = 0;
 		size_t vertexBuffersSize2 = 0;
 		size_t indexBuffersSize = 0;
@@ -240,6 +242,7 @@ public:
 				}
 				int faceID = 0;
 				int indexCnt = 0;
+				objFaceCnt.push_back(faceNors.size());
 				for (int i = 0; i < indexBuffers[objectID].size(); i+=3) {
 					int idx1 = indexBuffers[objectID][i];
 					auto it = verIDtoUniqueID.find(idx1);
@@ -272,10 +275,11 @@ public:
 					ftv2->addFace(faceID);
 					ftv3->addFace(faceID);
 					uPtr<Face> f = mkU<Face>(objectID, faceID, ftv1, ftv2, ftv3);
-					glm::vec3 faceNor = glm::cross(glm::normalize(v3->position - v2->position), glm::normalize(v1->position - v2->position));
+					glm::vec3 faceNor = glm::normalize(glm::cross(v3->position - v2->position, v1->position - v2->position));
 					v1fin.normal = faceNor;
 					v2fin.normal = faceNor;
 					v3fin.normal = faceNor;
+					faceNors.push_back(faceNor);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
@@ -314,7 +318,6 @@ public:
 					faces.push_back(std::move(f));*/
 					++faceID;
 				}
-				neighborFacesInfo.push_back(neighborFacesData.size());
 				for (int i = facesSize; i < faces.size(); ++i) {
 					faces[i]->getAllNeighborFaces();
 					neighborFacesData.insert(neighborFacesData.end(), faces[i]->neighborFaces.begin(), faces[i]->neighborFaces.end());
@@ -330,12 +333,13 @@ public:
 			size_t vertexBufferSize = vertexBuffersSize2 * sizeof(Vertex);
 			//size_t vertexBufferSize = vertexBuffersSize * (2 * sizeof(glm::vec3) + sizeof(int));
 			size_t indexBufferSize = indexBuffersSize * sizeof(uint32_t);
-			size_t faceInfoSize = neighborFacesInfo.size() * sizeof(int);
+			size_t faceInfoSize = objFaceCnt.size() * sizeof(int);
 			size_t faceDataSize = neighborFacesData.size() * sizeof(int);
+			size_t faceNorSize = faceNors.size() * sizeof(glm::vec3);
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
-			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging;
+			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging;
 
 			// Create staging buffers
 			// Vertex data
@@ -366,7 +370,7 @@ public:
 				faceInfoSize,
 				&faceInfoStaging.buffer,
 				&faceInfoStaging.memory,
-				neighborFacesInfo.data()));
+				objFaceCnt.data()));
 			// Neighbor Face Data
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -375,6 +379,14 @@ public:
 				&faceDataStaging.buffer,
 				&faceDataStaging.memory,
 				neighborFacesData.data()));
+			//Face Nor Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				faceNorSize,
+				&faceNorStaging.buffer,
+				&faceNorStaging.memory,
+				faceNors.data()));
 			//
 			// Create device local buffers
 			// Vertex buffer
@@ -405,6 +417,12 @@ public:
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				&faceDataBuffer,
 				faceDataSize));
+			//Face Nor
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				&faceNorBuffer,
+				faceNorSize));
 			// Copy from staging buffers
 			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 
@@ -421,6 +439,9 @@ public:
 
 			copyRegion.size = faceDataSize;
 			vkCmdCopyBuffer(copyCmd, faceDataStaging.buffer, faceDataBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = faceNorSize;
+			vkCmdCopyBuffer(copyCmd, faceNorStaging.buffer, faceNorBuffer.buffer, 1, &copyRegion);
 
 			device->flushCommandBuffer(copyCmd, transferQueue, true);
 
@@ -480,6 +501,7 @@ public:
 		glm::vec4 viewPos;
 		int debugDisplayTarget = 0;
 		int singleStride = 1;
+		glm::mat4 camView;
 	} uniformDataComposition;
 
 	struct {
@@ -849,7 +871,9 @@ public:
 
 		vkCmdBeginRenderPass(offScreenCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		VkViewport viewport = vks::initializers::viewport((float)offScreenFrameBuf.width, (float)offScreenFrameBuf.height, 0.0f, 1.0f);
+		VkViewport viewport = vks::initializers::viewport((float)offScreenFrameBuf.width, -(float)offScreenFrameBuf.height, 0.0f, 1.0f);
+		viewport.x = 0;
+		viewport.y = (float)offScreenFrameBuf.height;
 		vkCmdSetViewport(offScreenCmdBuffer, 0, 1, &viewport);
 
 		VkRect2D scissor = vks::initializers::rect2D(offScreenFrameBuf.width, offScreenFrameBuf.height, 0, 0);
@@ -877,7 +901,7 @@ public:
 
 	void loadAssets()
 	{
-		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors | vkglTF::FileLoadingFlags::FlipY;
+		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors;
 		models.model.loadFromFile(getAssetPath() + "models/armor/armor.gltf", vulkanDevice, queue, glTFLoadingFlags);
 		models.floor.loadFromFile(getAssetPath() + "models/deferred_floor.gltf", vulkanDevice, queue, glTFLoadingFlags);
 		textures.model.colorMap.loadFromFile(getAssetPath() + "models/armor/colormap_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
@@ -921,7 +945,8 @@ public:
 
 			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
+			VkViewport viewport = vks::initializers::viewport((float)width, -(float)height, 0.0f, 1.0f);
+			viewport.y = (float)height;
 			vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
 
 			VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
@@ -951,7 +976,7 @@ public:
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2)
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 3);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
@@ -972,6 +997,8 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 5),
 			// Binding 6 : Storage buffer face data
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 6),
+			// Binding 7 : Storage buffer face nor
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 7),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
@@ -1014,6 +1041,8 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &mesh.faceInfoBuffer.descriptor),
 			// Binding 6 : Neighbor Face Data Buffer
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &mesh.faceDataBuffer.descriptor),
+			// Binding 6 : Neighbor Face Data Buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7, &mesh.faceNorBuffer.descriptor),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
@@ -1077,7 +1106,7 @@ public:
 		pipelineCI.pStages = shaderStages.data();
 
 		// Final fullscreen composition pass pipeline
-		rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
+		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		// Empty vertex input state, vertices are generated by the vertex shader
@@ -1097,7 +1126,7 @@ public:
 		pipelineCI.pVertexInputState = &pipelineVertexInputStateCreateInfo;
 		// Vertex input state from glTF model for pipeline rendering models
 		//pipelineCI.pVertexInputState = vkglTF::Vertex::getPipelineVertexInputState({ vkglTF::VertexComponent::Position, vkglTF::VertexComponent::UV, vkglTF::VertexComponent::Color, vkglTF::VertexComponent::Normal, vkglTF::VertexComponent::Tangent });
-		rasterizationState.cullMode = VK_CULL_MODE_NONE;
+		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 
 		// Offscreen pipeline
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
@@ -1205,7 +1234,7 @@ public:
 		uniformDataComposition.viewPos = -glm::vec4(glm::vec3(camera.matrices.view[3]), 0.0f);
 		uniformDataComposition.debugDisplayTarget = debugDisplayTarget;
 		uniformDataComposition.singleStride = singleStride;
-
+		uniformDataComposition.camView = camera.matrices.view;
 		memcpy(uniformBuffers.composition.mapped, &uniformDataComposition, sizeof(UniformDataComposition));
 	}
 
@@ -1214,6 +1243,7 @@ public:
 #if DLF
 		std::string glslToSpvBat = getShadersPath() + "gbufferhiddenline/glsltospv.bat " + getShadersPath() + "gbufferhiddenline";
 		system(glslToSpvBat.c_str());
+		camera.flipY = true;
 #endif
 		VulkanExampleBase::prepare();
 		loadAssets();
@@ -1279,7 +1309,7 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace"});
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "Test"});
 			ImGui::InputInt("Stride", &singleStride);
 		}
 	}

@@ -188,6 +188,7 @@ void main()
 				// Desaturate a bit
 				outFragcolor.rgb = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
 				//outFragcolor.rgb = fragPos;	
+				outFragcolor.rgb = vec3(fragPos.z);
 				break;
 			case 2: 
 				//outFragcolor.rgb = normal;

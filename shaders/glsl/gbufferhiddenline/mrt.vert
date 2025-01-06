@@ -25,7 +25,8 @@ void main()
 
 	// Vertex position in world space
 	vec3 camPos = vec3(-ubo.view[3]);
-	outWorldPos = normalize(vec3(ubo.view * vec4(camPos, 1)) - vec3(ubo.view * vec4(inPos, 1)));
+	//outWorldPos = normalize(vec3(ubo.view * vec4(camPos, 1)) - vec3(ubo.view * vec4(inPos, 1)));
+	outWorldPos = vec3(ubo.projection * ubo.view * vec4(inPos, 1));
 	// Normal in world space
 	//mat3 mNormal = transpose(inverse(mat3(ubo.model)));
 	//outNormal = mNormal * normalize(inNormal);	

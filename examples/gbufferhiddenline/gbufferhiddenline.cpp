@@ -35,7 +35,7 @@ class VulkanExample : public VulkanExampleBase
 		const T diff = std::abs(a - b);
 		if (a * b == 0) {
 			// a or b or both are zero; relative error is not meaningful here
-			return diff < (epsilon * epsilon);
+			return diff < (epsilon* epsilon);
 		}
 
 		return diff / (std::abs(a) + std::abs(b)) < epsilon;
@@ -243,7 +243,7 @@ public:
 				int faceID = 0;
 				int indexCnt = 0;
 				objFaceCnt.push_back(faceNors.size());
-				for (int i = 0; i < indexBuffers[objectID].size(); i+=3) {
+				for (int i = 0; i < indexBuffers[objectID].size(); i += 3) {
 					int idx1 = indexBuffers[objectID][i];
 					auto it = verIDtoUniqueID.find(idx1);
 					if (it != verIDtoUniqueID.end()) {
@@ -327,7 +327,7 @@ public:
 				vertexBuffersSize2 = vertices2.size();
 				indexBuffersSize = index.size();
 				++objectID;
-				
+
 			}
 
 			size_t vertexBufferSize = vertexBuffersSize2 * sizeof(Vertex);
@@ -335,10 +335,6 @@ public:
 			size_t indexBufferSize = indexBuffersSize * sizeof(uint32_t);
 			size_t faceInfoSize = objFaceCnt.size() * sizeof(int);
 			size_t faceDataSize = neighborFacesData.size() * sizeof(int);
-			faceNors.clear();
-			faceNors.push_back(glm::vec4(1, 1, 0, 0));
-			faceNors.push_back(glm::vec4(1, 1, 1, 0));
-			faceNors.push_back(glm::vec4(1, 0, 1, 0));
 			size_t faceNorSize = faceNors.size() * sizeof(glm::vec4);
 			struct StagingBuffer {
 				VkBuffer buffer;
@@ -468,7 +464,7 @@ public:
 
 		}
 	};
-	struct PushValue{
+	struct PushValue {
 		int max_neighbor_cnt = MAX_NEIGHBOR_FACE_COUNT;
 	};
 	Mesh mesh;
@@ -509,9 +505,9 @@ public:
 	struct UniformDataComposition {
 		Light lights[6];
 		glm::vec4 viewPos;
+		glm::mat4 camView;
 		int debugDisplayTarget = 0;
 		int singleStride = 1;
-		glm::mat4 camView;
 	} uniformDataComposition;
 
 	struct {
@@ -550,7 +546,7 @@ public:
 		vks::Buffer linkedList;
 	} offScreenFrameBuf{};
 
-	
+
 	// One sampler for the frame buffer color attachments
 	VkSampler colorSampler{ VK_NULL_HANDLE };
 
@@ -567,8 +563,11 @@ public:
 #ifndef __ANDROID__
 		camera.rotationSpeed = 0.25f;
 #endif
-		camera.position = { 2.15f, 0.3f, -8.75f };
+		/*camera.position = { 2.15f, 0.3f, -8.75f };
 		camera.setRotation(glm::vec3(-0.75f, 12.5f, 0.0f));
+		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);*/
+		camera.position = { 0.f, 0.f, -8.75f };
+		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
 	}
 
@@ -706,11 +705,11 @@ public:
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&offScreenFrameBuf.linkedList,
 			sizeof(Node) * offScreenFrameBuf.width * offScreenFrameBuf.height));*/
-		// 
-		
-		// Color attachments
+			// 
 
-		// (World space) Positions
+			// Color attachments
+
+			// (World space) Positions
 		createAttachment(
 			VK_FORMAT_R16G16B16A16_SFLOAT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -922,13 +921,13 @@ public:
 		std::vector<std::vector<vkglTF::Vertex>> vertexBuffers;
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/armor/armor.gltf", getAssetPath() + "models/test/12_quad_far.gltf", getAssetPath() + "models/cerberus/cerberus.gltf" }, vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/test", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_tri", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/three_tri", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/quad", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cube", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cube", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 	}
 
@@ -1321,7 +1320,7 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "Test"});
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "Test" });
 			ImGui::InputInt("Stride", &singleStride);
 		}
 	}

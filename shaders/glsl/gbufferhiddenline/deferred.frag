@@ -18,9 +18,9 @@ layout (binding = 4) uniform UBO
 {
 	Light lights[6];
 	vec4 viewPos;
+	mat4 camView;
 	int displayDebugTarget;
 	int singleStride;
-	mat4 camView;
 } ubo;
 
 layout (binding = 5) buffer FaceInfo
@@ -116,6 +116,9 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 			}
 		}
 	};
+	vec3 nor = vec3(faceNor[faceIdx]);
+	vec3 negViewDir = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
+	float checkVal1 = dot(nor, negViewDir);
 	for(int i = -1; i <= 1; ++i){
 		for(int j = -1; j <= 1; ++j){
 			if((i == 0) && (j == 0)){
@@ -134,18 +137,17 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 					if(haveThisNeighbor){
 						continue;
 					}else{
-						//no this neighbor, then
-//						vec3 nor = faceNor[faceIdx];
-//						for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
-//							int neighborFaceIdx = objFaceInfo + faceData[k];
-//							vec3 neighborNor = faceNor[neighborFaceIdx];
-//							if(dot(nor,neighborNor) < 0){
-//								shouldColor = true;
-//								return shouldColor;
-//							}else{
-//								continue;
-//							}
-//						}
+						for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
+							int neighborFaceIdx = objFaceInfo + faceData[k];
+							vec3 neighborNor = vec3(faceNor[neighborFaceIdx]);
+							float checkVal2 = dot(neighborNor, negViewDir);
+							if((checkVal1 * checkVal2) < 0){
+								shouldColor = true;
+								return shouldColor;
+							}else{
+								continue;
+							}
+						}
 					}
 				}else{
 					shouldColor = true;
@@ -282,7 +284,9 @@ vec3 case7(int size, vec2 center_uv, vec2 tex_offset){
 	int objectID = texture(samplerAlbedo, center_uv).r;
 	if(objectID > -1){
 		int faceIdx = faceInfos[objectID] + faceID;
-		return vec3(faceNor[2]);
+		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);
+		vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
+		return vec3(dot(viewDirection, vec3(faceNor[faceIdx])));
 	}
 	return vec3(0);
 }
@@ -296,7 +300,7 @@ void main()
 	//vec4 albedo = texture(samplerAlbedo, inUV);
 	//float objectID = albedo.r;
 	int objectID = texture(samplerAlbedo, inUV).r;  
-	int faceID = texture(samplerAlbedo, inUV).g;  
+	int faceID = texture(samplerAlbedo, inUV).g; 
 	vec2 tex_offset = 1.f / textureSize(samplerAlbedo, 0); // gets size of single texel
 	int size = ubo.singleStride;
 	// Debug display

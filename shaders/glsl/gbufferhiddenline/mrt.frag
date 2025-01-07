@@ -11,7 +11,7 @@ layout (location = 4) in flat int inFaceID;
 
 layout (location = 0) out vec4 outPosition;
 layout (location = 1) out vec4 outNormal;
-layout (location = 2) out ivec2 outAlbedo;
+layout (location = 2) out ivec3 outAlbedo;
 
 void main() 
 {

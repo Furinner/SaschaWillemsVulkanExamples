@@ -201,7 +201,7 @@ public:
 		std::vector<uPtr<Face>> faces{};
 		std::vector<int> neighborFacesData{};
 		std::vector<int> objFaceCnt{};
-		std::vector<glm::vec3> faceNors{};
+		std::vector<glm::vec4> faceNors{};
 		vks::Buffer verticesBuffer;
 		vks::Buffer idxBuffer;
 		vks::Buffer faceInfoBuffer;
@@ -279,7 +279,7 @@ public:
 					v1fin.normal = faceNor;
 					v2fin.normal = faceNor;
 					v3fin.normal = faceNor;
-					faceNors.push_back(faceNor);
+					faceNors.push_back(glm::vec4(faceNor, 1));
 					index.push_back(vertexBuffersSize2 + indexCnt++);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
@@ -335,7 +335,11 @@ public:
 			size_t indexBufferSize = indexBuffersSize * sizeof(uint32_t);
 			size_t faceInfoSize = objFaceCnt.size() * sizeof(int);
 			size_t faceDataSize = neighborFacesData.size() * sizeof(int);
-			size_t faceNorSize = faceNors.size() * sizeof(glm::vec3);
+			faceNors.clear();
+			faceNors.push_back(glm::vec4(1, 1, 0, 0));
+			faceNors.push_back(glm::vec4(1, 1, 1, 0));
+			faceNors.push_back(glm::vec4(1, 0, 1, 0));
+			size_t faceNorSize = faceNors.size() * sizeof(glm::vec4);
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
@@ -449,6 +453,12 @@ public:
 			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, faceInfoStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, faceInfoStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, faceDataStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, faceDataStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, faceNorStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, faceNorStaging.memory, nullptr);
 		}
 
 		void bindBuffers(VkCommandBuffer commandBuffer) {
@@ -912,11 +922,13 @@ public:
 		std::vector<std::vector<vkglTF::Vertex>> vertexBuffers;
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/armor/armor.gltf", getAssetPath() + "models/test/12_quad_far.gltf", getAssetPath() + "models/cerberus/cerberus.gltf" }, vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/test", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_tri", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/three_tri", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/quad", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cube", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 	}
 
@@ -1041,7 +1053,7 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &mesh.faceInfoBuffer.descriptor),
 			// Binding 6 : Neighbor Face Data Buffer
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &mesh.faceDataBuffer.descriptor),
-			// Binding 6 : Neighbor Face Data Buffer
+			// Binding 7 : Neighbor Face Nor Buffer
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7, &mesh.faceNorBuffer.descriptor),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);

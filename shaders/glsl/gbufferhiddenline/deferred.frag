@@ -35,7 +35,7 @@ layout (binding = 6) buffer FaceData
 
 layout (binding = 7) buffer FaceNor
 {
-	vec3 faceNor[];
+	vec4 faceNor[];
 };
 
 layout(push_constant) uniform PushConsts {
@@ -135,17 +135,17 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 						continue;
 					}else{
 						//no this neighbor, then
-						vec3 nor = faceNor[faceIdx];
-						for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
-							int neighborFaceIdx = objFaceInfo + faceData[k];
-							vec3 neighborNor = faceNor[neighborFaceIdx];
-							if(dot(nor,neighborNor) < 0){
-								shouldColor = true;
-								return shouldColor;
-							}else{
-								continue;
-							}
-						}
+//						vec3 nor = faceNor[faceIdx];
+//						for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
+//							int neighborFaceIdx = objFaceInfo + faceData[k];
+//							vec3 neighborNor = faceNor[neighborFaceIdx];
+//							if(dot(nor,neighborNor) < 0){
+//								shouldColor = true;
+//								return shouldColor;
+//							}else{
+//								continue;
+//							}
+//						}
 					}
 				}else{
 					shouldColor = true;
@@ -282,7 +282,7 @@ vec3 case7(int size, vec2 center_uv, vec2 tex_offset){
 	int objectID = texture(samplerAlbedo, center_uv).r;
 	if(objectID > -1){
 		int faceIdx = faceInfos[objectID] + faceID;
-		return vec3(faceNor[faceIdx]);
+		return vec3(faceNor[2]);
 	}
 	return vec3(0);
 }

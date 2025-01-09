@@ -19,8 +19,16 @@ layout (location = 3) out flat int outFaceID;
 
 void main() 
 {
-	gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
+	//gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
+	float x = -1;
+	float y = -1;
+	if(gl_VertexIndex == 0){
+		y = 3;
+	}else if(gl_VertexIndex == 1){
 
+	}else{
+		x=3;
+	}
 	outPos = vec3(ubo.projection * ubo.view * ubo.model * vec4(inPos, 1));
 	outNormal = inNormal;
 	outObjectID = inObjectID;

@@ -239,6 +239,8 @@ public:
 		vks::Buffer faceInfoBuffer;
 		vks::Buffer faceDataBuffer;
 		vks::Buffer faceNorBuffer;
+		vks::Buffer edgeIdxBuffer;
+		vks::Buffer edgeVertBuffer;
 		size_t vertexBuffersSize1 = 0;
 		size_t vertexBuffersSize2 = 0;
 		size_t indexBuffersSize = 0;
@@ -390,10 +392,12 @@ public:
 			size_t faceInfoSize = objFaceCnt.size() * sizeof(int);
 			size_t faceDataSize = neighborFacesData.size() * sizeof(int);
 			size_t faceNorSize = faceNors.size() * sizeof(glm::vec4);
+			size_t edgeVertSize = edgeVert.size() * sizeof(Vertex);
+			size_t edgeIdxSize = edgeIdx.size() * sizeof(int);
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
-			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging;
+			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging, edgeVertStaging, edgeIdxStaging;
 
 			// Create staging buffers
 			// Vertex data
@@ -441,6 +445,22 @@ public:
 				&faceNorStaging.buffer,
 				&faceNorStaging.memory,
 				faceNors.data()));
+			//Edge Vert Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				edgeVertSize,
+				&edgeVertStaging.buffer,
+				&edgeVertStaging.memory,
+				edgeVert.data()));
+			//Edge Idx Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				edgeIdxSize,
+				&edgeIdxStaging.buffer,
+				&edgeIdxStaging.memory,
+				edgeIdx.data()));
 			//
 			// Create device local buffers
 			// Vertex buffer
@@ -477,6 +497,20 @@ public:
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				&faceNorBuffer,
 				faceNorSize));
+			// Edge Vert Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				edgeVertSize,
+				&edgeVertBuffer.buffer,
+				&edgeVertBuffer.memory));
+			// Edge Idx Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				edgeIdxSize,
+				&edgeIdxBuffer.buffer,
+				&edgeIdxBuffer.memory));
 			// Copy from staging buffers
 			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 
@@ -497,6 +531,12 @@ public:
 			copyRegion.size = faceNorSize;
 			vkCmdCopyBuffer(copyCmd, faceNorStaging.buffer, faceNorBuffer.buffer, 1, &copyRegion);
 
+			copyRegion.size = edgeVertSize;
+			vkCmdCopyBuffer(copyCmd, edgeVertStaging.buffer, edgeVertBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = edgeIdxSize;
+			vkCmdCopyBuffer(copyCmd, edgeIdxStaging.buffer, edgeIdxBuffer.buffer, 1, &copyRegion);
+
 			device->flushCommandBuffer(copyCmd, transferQueue, true);
 
 			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
@@ -509,6 +549,10 @@ public:
 			vkFreeMemory(device->logicalDevice, faceDataStaging.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, faceNorStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, faceNorStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, edgeVertStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, edgeVertStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, edgeIdxStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, edgeIdxStaging.memory, nullptr);
 		}
 
 		void bindBuffers(VkCommandBuffer commandBuffer) {
@@ -516,6 +560,12 @@ public:
 			vkCmdBindVertexBuffers(commandBuffer, 0, 1, &verticesBuffer.buffer, offsets);
 			vkCmdBindIndexBuffer(commandBuffer, idxBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
+		}
+
+		void bindLineBuffers(VkCommandBuffer commandBuffer) {
+			const VkDeviceSize offsets[1] = { 0 };
+			vkCmdBindVertexBuffers(commandBuffer, 0, 1, &edgeVertBuffer.buffer, offsets);
+			vkCmdBindIndexBuffer(commandBuffer, edgeIdxBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 		}
 	};
 	struct PushValue {
@@ -588,6 +638,7 @@ public:
 	struct {
 		VkPipeline offscreen{ VK_NULL_HANDLE };
 		VkPipeline composition{ VK_NULL_HANDLE };
+		VkPipeline edge{ VK_NULL_HANDLE };
 	} pipelines;
 	VkPipelineLayout pipelineLayout{ VK_NULL_HANDLE };
 
@@ -595,6 +646,7 @@ public:
 		VkDescriptorSet model{ VK_NULL_HANDLE };
 		VkDescriptorSet floor{ VK_NULL_HANDLE };
 		VkDescriptorSet composition{ VK_NULL_HANDLE };
+		VkDescriptorSet edge{ VK_NULL_HANDLE };
 	} descriptorSets;
 
 	VkDescriptorSetLayout descriptorSetLayout{ VK_NULL_HANDLE };
@@ -622,9 +674,11 @@ public:
 	VkSampler colorSampler{ VK_NULL_HANDLE };
 
 	VkCommandBuffer offScreenCmdBuffer{ VK_NULL_HANDLE };
+	VkCommandBuffer edgeCmdBuffer{ VK_NULL_HANDLE };
 
 	// Semaphore used to synchronize between offscreen and final scene rendering
 	VkSemaphore offscreenSemaphore{ VK_NULL_HANDLE };
+	VkSemaphore edgeSemaphore{ VK_NULL_HANDLE };
 
 	VulkanExample() : VulkanExampleBase()
 	{
@@ -869,7 +923,7 @@ public:
 		subpass.pDepthStencilAttachment = &depthReference;
 
 		// Use subpass dependencies for attachment layout transitions
-		std::array<VkSubpassDependency, 2> dependencies;
+		std::array<VkSubpassDependency, 3> dependencies;
 
 		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
 		dependencies[0].dstSubpass = 0;
@@ -887,13 +941,21 @@ public:
 		dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
 		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
+		dependencies[2].srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[2].dstSubpass = 0;
+		dependencies[2].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependencies[2].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		dependencies[2].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependencies[2].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+		dependencies[2].dependencyFlags = 0;
+
 		VkRenderPassCreateInfo renderPassInfo = {};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 		renderPassInfo.pAttachments = attachmentDescs.data();
 		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachmentDescs.size());
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
-		renderPassInfo.dependencyCount = 2;
+		renderPassInfo.dependencyCount = 3;
 		renderPassInfo.pDependencies = dependencies.data();
 
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &offScreenFrameBuf.renderPass));
@@ -994,7 +1056,9 @@ public:
 			attachmentDescs[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 			if (i == 3)
 			{
-				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				//diff: if share depth attachmentm, its initial layout should match the initial layout
+				//of last depth attachment
+				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 			}
 			else
@@ -1026,7 +1090,7 @@ public:
 		subpass.pDepthStencilAttachment = &depthReference;
 
 		// Use subpass dependencies for attachment layout transitions
-		std::array<VkSubpassDependency, 2> dependencies;
+		std::array<VkSubpassDependency, 3> dependencies;
 
 		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
 		dependencies[0].dstSubpass = 0;
@@ -1044,13 +1108,21 @@ public:
 		dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
 		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
+		dependencies[2].srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[2].dstSubpass = 0;
+		dependencies[2].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependencies[2].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		dependencies[2].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependencies[2].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+		dependencies[2].dependencyFlags = 0;
+
 		VkRenderPassCreateInfo renderPassInfo = {};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 		renderPassInfo.pAttachments = attachmentDescs.data();
 		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachmentDescs.size());
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
-		renderPassInfo.dependencyCount = 2;
+		renderPassInfo.dependencyCount = 3;
 		renderPassInfo.pDependencies = dependencies.data();
 
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &edgeFrameBuf.renderPass));
@@ -1059,7 +1131,7 @@ public:
 		attachments[0] = edgeFrameBuf.position.view;
 		attachments[1] = edgeFrameBuf.normal.view;
 		attachments[2] = edgeFrameBuf.albedo.view;
-		attachments[3] = edgeFrameBuf.depth.view;
+		attachments[3] = offScreenFrameBuf.depth.view;
 
 		VkFramebufferCreateInfo fbufCreateInfo = {};
 		fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -1136,6 +1208,57 @@ public:
 		VK_CHECK_RESULT(vkEndCommandBuffer(offScreenCmdBuffer));
 	}
 
+	void buildEdgeCommandBuffer()
+	{
+		if (edgeCmdBuffer == VK_NULL_HANDLE) {
+			edgeCmdBuffer = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
+		}
+
+		// Create a semaphore used to synchronize offscreen rendering and usage
+		VkSemaphoreCreateInfo semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
+		VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &edgeSemaphore));
+
+		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+
+		// Clear values for all attachments written in the fragment shader
+		std::array<VkClearValue, 4> clearValues;
+		clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+		clearValues[1].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+		clearValues[2].color.int32[0] = -1;
+		clearValues[2].color.int32[1] = -1;
+		clearValues[3].depthStencil = { 1.0f, 0 };
+
+		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+		renderPassBeginInfo.renderPass = edgeFrameBuf.renderPass;
+		renderPassBeginInfo.framebuffer = edgeFrameBuf.frameBuffer;
+		renderPassBeginInfo.renderArea.extent.width = edgeFrameBuf.width;
+		renderPassBeginInfo.renderArea.extent.height = edgeFrameBuf.height;
+		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassBeginInfo.pClearValues = clearValues.data();
+
+		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer, &cmdBufInfo));
+
+		vkCmdBeginRenderPass(edgeCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkViewport viewport = vks::initializers::viewport((float)edgeFrameBuf.width, -(float)edgeFrameBuf.height, 0.0f, 1.0f);
+		viewport.x = 0;
+		viewport.y = (float)edgeFrameBuf.height;
+		vkCmdSetViewport(edgeCmdBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor = vks::initializers::rect2D(edgeFrameBuf.width, edgeFrameBuf.height, 0, 0);
+		vkCmdSetScissor(edgeCmdBuffer, 0, 1, &scissor);
+
+		vkCmdBindPipeline(edgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.edge);
+
+		vkCmdBindDescriptorSets(edgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.edge, 0, nullptr);
+		mesh.bindLineBuffers(edgeCmdBuffer);
+		vkCmdDrawIndexed(edgeCmdBuffer, mesh.edgeIdx.size(), 1, 0, 0, 0);
+
+		vkCmdEndRenderPass(edgeCmdBuffer);
+
+		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer));
+	}
+
 	void loadAssets()
 	{
 		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors;
@@ -1150,9 +1273,9 @@ public:
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/armor/armor.gltf", getAssetPath() + "models/test/12_quad_far.gltf", getAssetPath() + "models/cerberus/cerberus.gltf" }, vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/5f_cube_smooth", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/5f_cube_smooth", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/test", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_tri", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/three_tri", vulkanDevice, queue, glTFLoadingFlags);
@@ -1219,7 +1342,7 @@ public:
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3)
 		};
-		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 3);
+		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 4);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 
 		// Layouts
@@ -1312,7 +1435,16 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.floor, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.floor.normalMap.descriptor)
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
-	}
+	
+		// Edge
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.edge));
+		writeDescriptorSets = {
+			// Binding 0: Vertex shader uniform buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.edge, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.edge.descriptor),
+		};
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
+
+}
 
 	void preparePipelines()
 	{
@@ -1389,6 +1521,12 @@ public:
 		colorBlendState.pAttachments = blendAttachmentStates.data();
 
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.offscreen));
+
+		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		pipelineCI.renderPass = edgeFrameBuf.renderPass;
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.edge));
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
@@ -1508,6 +1646,7 @@ public:
 		preparePipelines();
 		buildCommandBuffers();
 		buildDeferredCommandBuffer();
+		buildEdgeCommandBuffer();
 		prepared = true;
 	}
 

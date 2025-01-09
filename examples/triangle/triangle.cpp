@@ -6,7 +6,7 @@
 *	Contrary to the other examples, this one won't make use of helper functions or initializers
 *	Except in a few cases (swap chain setup e.g.)
 *
-* Copyright (C) 2016-2023 by Sascha Willems - www.saschawillems.de
+* Copyright (C) 2016-2024 by Sascha Willems - www.saschawillems.de
 *
 * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 */
@@ -44,23 +44,23 @@ public:
 	// Vertex buffer and attributes
 	struct {
 		VkDeviceMemory memory{ VK_NULL_HANDLE }; // Handle to the device memory for this buffer
-		VkBuffer buffer;						 // Handle to the Vulkan buffer object that the memory is bound to
+		VkBuffer buffer{ VK_NULL_HANDLE };		 // Handle to the Vulkan buffer object that the memory is bound to
 	} vertices;
 
 	// Index buffer
 	struct {
 		VkDeviceMemory memory{ VK_NULL_HANDLE };
-		VkBuffer buffer;
+		VkBuffer buffer{ VK_NULL_HANDLE };
 		uint32_t count{ 0 };
 	} indices;
 
 	// Uniform buffer block object
 	struct UniformBuffer {
-		VkDeviceMemory memory;
-		VkBuffer buffer;
+		VkDeviceMemory memory{ VK_NULL_HANDLE };
+		VkBuffer buffer{ VK_NULL_HANDLE };
 		// The descriptor set stores the resources bound to the binding points in a shader
 		// It connects the binding points of the different shaders with the buffers and images used for those bindings
-		VkDescriptorSet descriptorSet;
+		VkDescriptorSet descriptorSet{ VK_NULL_HANDLE };
 		// We keep a pointer to the mapped buffer, so we can easily update it's contents via a memcpy
 		uint8_t* mapped{ nullptr };
 	};
@@ -175,7 +175,7 @@ public:
 		throw "Could not find a suitable memory type!";
 	}
 
-	// Create the per-frame (in flight) sVulkan synchronization primitives used in this example
+	// Create the per-frame (in flight) Vulkan synchronization primitives used in this example
 	void createSynchronizationPrimitives()
 	{
 		// Semaphores are used for correct command ordering within a queue
@@ -259,7 +259,7 @@ public:
 		struct {
 			StagingBuffer vertices;
 			StagingBuffer indices;
-		} stagingBuffers;
+		} stagingBuffers{};
 
 		void* data;
 
@@ -273,7 +273,7 @@ public:
 		VK_CHECK_RESULT(vkCreateBuffer(device, &vertexBufferInfoCI, nullptr, &stagingBuffers.vertices.buffer));
 		vkGetBufferMemoryRequirements(device, stagingBuffers.vertices.buffer, &memReqs);
 		memAlloc.allocationSize = memReqs.size;
-		// Request a host visible memory type that can be used to copy our data do
+		// Request a host visible memory type that can be used to copy our data to
 		// Also request it to be coherent, so that writes are visible to the GPU right after unmapping the buffer
 		memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &stagingBuffers.vertices.memory));
@@ -373,7 +373,7 @@ public:
 	void createDescriptorPool()
 	{
 		// We need to tell the API the number of max. requested descriptors per type
-		VkDescriptorPoolSize descriptorTypeCounts[1];
+		VkDescriptorPoolSize descriptorTypeCounts[1]{};
 		// This example only one descriptor type (uniform buffer)
 		descriptorTypeCounts[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		// We have one buffer (and as such descriptor) per frame
@@ -414,15 +414,6 @@ public:
 		descriptorLayoutCI.bindingCount = 1;
 		descriptorLayoutCI.pBindings = &layoutBinding;
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayoutCI, nullptr, &descriptorSetLayout));
-
-		// Create the pipeline layout that is used to generate the rendering pipelines that are based on this descriptor set layout
-		// In a more complex scenario you would have different pipeline layouts for different descriptor set layouts that could be reused
-		VkPipelineLayoutCreateInfo pipelineLayoutCI{};
-		pipelineLayoutCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutCI.pNext = nullptr;
-		pipelineLayoutCI.setLayoutCount = 1;
-		pipelineLayoutCI.pSetLayouts = &descriptorSetLayout;
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr, &pipelineLayout));
 	}
 
 	// Shaders access data using descriptor sets that "point" at our uniform buffers
@@ -514,12 +505,12 @@ public:
 	void setupFrameBuffer()
 	{
 		// Create a frame buffer for every image in the swapchain
-		frameBuffers.resize(swapChain.imageCount);
+		frameBuffers.resize(swapChain.images.size());
 		for (size_t i = 0; i < frameBuffers.size(); i++)
 		{
-			std::array<VkImageView, 2> attachments;
+			std::array<VkImageView, 2> attachments{};
 			// Color attachment is the view of the swapchain image
-			attachments[0] = swapChain.buffers[i].view;
+			attachments[0] = swapChain.imageViews[i];
 			// Depth/Stencil attachment is the same for all frame buffers due to how depth works with current GPUs
 			attachments[1] = depthStencil.view;         
 
@@ -596,7 +587,7 @@ public:
 		// Each subpass dependency will introduce a memory and execution dependency between the source and dest subpass described by
 		// srcStageMask, dstStageMask, srcAccessMask, dstAccessMask (and dependencyFlags is set)
 		// Note: VK_SUBPASS_EXTERNAL is a special constant that refers to all commands executed outside of the actual renderpass)
-		std::array<VkSubpassDependency, 2> dependencies;
+		std::array<VkSubpassDependency, 2> dependencies{};
 
 		// Does the transition from final to initial layout for the depth an color attachments
 		// Depth attachment
@@ -684,6 +675,15 @@ public:
 
 	void createPipelines()
 	{
+		// Create the pipeline layout that is used to generate the rendering pipelines that are based on this descriptor set layout
+		// In a more complex scenario you would have different pipeline layouts for different descriptor set layouts that could be reused
+		VkPipelineLayoutCreateInfo pipelineLayoutCI{};
+		pipelineLayoutCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutCI.pNext = nullptr;
+		pipelineLayoutCI.setLayoutCount = 1;
+		pipelineLayoutCI.pSetLayouts = &descriptorSetLayout;
+		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr, &pipelineLayout));
+
 		// Create the graphics pipeline used in this example
 		// Vulkan uses the concept of rendering pipelines to encapsulate fixed states, replacing OpenGL's complex state machine
 		// A pipeline is then stored and hashed on the GPU making pipeline changes very fast
@@ -776,7 +776,7 @@ public:
 		vertexInputBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
 		// Input attribute bindings describe shader attribute locations and memory layouts
-		std::array<VkVertexInputAttributeDescription, 2> vertexInputAttributs;
+		std::array<VkVertexInputAttributeDescription, 2> vertexInputAttributs{};
 		// These match the following shader layout (see triangle.vert):
 		//	layout (location = 0) in vec3 inPos;
 		//	layout (location = 1) in vec3 inColor;
@@ -849,7 +849,7 @@ public:
 	void createUniformBuffers()
 	{
 		// Prepare and initialize the per-frame uniform buffer blocks containing shader uniforms
-		// Single uniforms like in OpenGL are no longer present in Vulkan. All Shader uniforms are passed via uniform buffer blocks
+		// Single uniforms like in OpenGL are no longer present in Vulkan. All hader uniforms are passed via uniform buffer blocks
 		VkMemoryRequirements memReqs;
 
 		// Vertex shader uniform buffer block
@@ -943,7 +943,7 @@ public:
 
 		// Set clear values for all framebuffer attachments with loadOp set to clear
 		// We use two attachments (color and depth) that are cleared at the start of the subpass and as such we need to set clear values for both
-		VkClearValue clearValues[2];
+		VkClearValue clearValues[2]{};
 		clearValues[0].color = { { 0.0f, 0.0f, 0.2f, 1.0f } };
 		clearValues[1].depthStencil = { 1.0f, 0 };
 
@@ -979,7 +979,7 @@ public:
 		scissor.offset.x = 0;
 		scissor.offset.y = 0;
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-		// Bind descriptor set for the currrent frame's uniform buffer, so the shader uses the data from that buffer for this draw
+		// Bind descriptor set for the current frame's uniform buffer, so the shader uses the data from that buffer for this draw
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &uniformBuffers[currentFrame].descriptorSet, 0, nullptr);
 		// Bind the rendering pipeline
 		// The pipeline (state object) contains all states of the rendering pipeline, binding it will set all the states specified at pipeline creation time
@@ -990,7 +990,7 @@ public:
 		// Bind triangle index buffer
 		vkCmdBindIndexBuffer(commandBuffer, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
 		// Draw indexed triangle
-		vkCmdDrawIndexed(commandBuffer, indices.count, 1, 0, 0, 1);
+		vkCmdDrawIndexed(commandBuffer, indices.count, 1, 0, 0, 0);
 		vkCmdEndRenderPass(commandBuffer);
 		// Ending the render pass will add an implicit barrier transitioning the frame buffer color attachment to
 		// VK_IMAGE_LAYOUT_PRESENT_SRC_KHR for presenting it to the windowing system
@@ -1056,7 +1056,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	}
 	return (DefWindowProc(hWnd, uMsg, wParam, lParam));
 }
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
+int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_  HINSTANCE hPrevInstance, _In_ LPSTR, _In_ int)
 {
 	for (size_t i = 0; i < __argc; i++) { VulkanExample::args.push_back(__argv[i]); };
 	vulkanExample = new VulkanExample();

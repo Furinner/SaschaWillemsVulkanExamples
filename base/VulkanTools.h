@@ -67,6 +67,9 @@ namespace vks
 {
 	namespace tools
 	{
+		/** @brief Setting this path chnanges the place where the samples looks for assets and shaders */
+		extern std::string resourcePath;
+
 		/** @brief Disable message boxes on fatal errors */
 		extern bool errorModeSilent;
 
@@ -82,7 +85,7 @@ namespace vks
 		// Same as getSupportedDepthFormat but will only select formats that also have stencil
 		VkBool32 getSupportedDepthStencilFormat(VkPhysicalDevice physicalDevice, VkFormat* depthStencilFormat);
 
-		// Returns tru a given format support LINEAR filtering
+		// Returns true a given format support LINEAR filtering
 		VkBool32 formatIsFilterable(VkPhysicalDevice physicalDevice, VkFormat format, VkImageTiling tiling);
 		// Returns true if a given format has a stencil part
 		VkBool32 formatHasStencil(VkFormat format);

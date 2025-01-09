@@ -21,7 +21,7 @@ jobs:
       - name: Install Vulkan libraries
         run: |
           sudo apt update
-          sudo apt install libvulkan-dev
+          sudo apt install libvulkan-dev libxcb1-dev
 
       - name: Build
         run: |
@@ -55,12 +55,12 @@ jobs:
           submodules: "recursive"  
       - name: Setup
         run: |
-          curl -L "https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg" -o /tmp/vulkan-sdk.dmg
-          hdiutil attach /tmp/vulkan-sdk.dmg -mountpoint /Volumes/vulkan-sdk
-          /Volumes/vulkan-sdk/InstallVulkan.app/Contents/MacOS/InstallVulkan \
-              --root ~/VulkanSDK/latest --accept-licenses --default-answer --confirm-command install
+          curl -L "https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip" -o /tmp/vulkan-sdk.zip
+          unzip /tmp/vulkan-sdk.zip -d /tmp
+          /tmp/InstallVulkan.app/Contents/MacOS/InstallVulkan \
+              --root ~/VulkanSDK/latest --accept-licenses --default-answer --confirm-command install          
           cd ~/VulkanSDK/latest
-          sudo python ./install_vulkan.py
+          sudo ./install_vulkan.py
           brew install libomp
       - name: Build
         run: |
@@ -68,25 +68,25 @@ jobs:
           cmake -G "Xcode" -DOpenMP_omp_LIBRARY=$LIBOMP_PREFIX/lib/libomp.dylib .
           cmake --build .
 
-  build_iOS:
-    name: Build iOS
-    runs-on: macos-12
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"  
-      - name: Setup
-        run: |
-          curl -L "https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg" -o /tmp/vulkan-sdk.dmg
-          hdiutil attach /tmp/vulkan-sdk.dmg -mountpoint /Volumes/vulkan-sdk
-          /Volumes/vulkan-sdk/InstallVulkan.app/Contents/MacOS/InstallVulkan \
-              --root ~/VulkanSDK/latest --accept-licenses --default-answer --confirm-command install
-          cd ~/VulkanSDK/latest
-          sudo python ./install_vulkan.py
-      - name: Build
-        run: |
-          cd apple
-          rm MoltenVK.xcframework
-          ln -s ~/VulkanSDK/latest/macOS/lib/MoltenVK.xcframework
-          xcodebuild -scheme examples-ios build CODE_SIGNING_ALLOWED=NO
-          xcodebuild -scheme examples-macos build
+  # build_iOS:
+  #   name: Build iOS
+  #   runs-on: macos-13
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         submodules: "recursive"  
+  #     - name: Setup
+  #       run: |
+  #         curl -L "https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip" -o /tmp/vulkan-sdk.zip
+  #         unzip /tmp/vulkan-sdk.zip -d /tmp
+  #         /tmp/InstallVulkan.app/Contents/MacOS/InstallVulkan \
+  #             --root ~/VulkanSDK/latest --accept-licenses --default-answer --confirm-command install          
+  #         cd ~/VulkanSDK/latest   
+  #         sudo ./install_vulkan.py
+  #     - name: Build
+  #       run: |
+  #         cd apple
+  #         rm MoltenVK.xcframework
+  #         ln -s ~/VulkanSDK/latest/macOS/lib/MoltenVK.xcframework
+  #         xcodebuild -scheme examples-ios build CODE_SIGNING_ALLOWED=NO
+  #         xcodebuild -scheme examples-macos build

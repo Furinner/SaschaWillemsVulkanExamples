@@ -76,7 +76,7 @@
 class VulkanExampleBase
 {
 private:
-	std::string getWindowTitle();
+	std::string getWindowTitle() const;
 	uint32_t destWidth;
 	uint32_t destHeight;
 	bool resizing = false;
@@ -86,8 +86,8 @@ private:
 	void createPipelineCache();
 	void createCommandPool();
 	void createSynchronizationPrimitives();
-	void initSwapchain();
-	void setupSwapChain();
+	void createSurface();
+	void createSwapChain();
 	void createCommandBuffers();
 	void destroyCommandBuffers();
 	std::string shaderDir = "glsl";

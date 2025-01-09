@@ -169,7 +169,7 @@ void VulkanExampleBase::renderFrame()
 	VulkanExampleBase::submitFrame();
 }
 
-std::string VulkanExampleBase::getWindowTitle()
+std::string VulkanExampleBase::getWindowTitle() const
 {
 	std::string windowTitle{ title + " - " + deviceProperties.deviceName };
 	if (!settings.overlay) {
@@ -181,7 +181,7 @@ std::string VulkanExampleBase::getWindowTitle()
 void VulkanExampleBase::createCommandBuffers()
 {
 	// Create one command buffer for each swap chain image
-	drawCmdBuffers.resize(swapChain.imageCount);
+	drawCmdBuffers.resize(swapChain.images.size());
 	VkCommandBufferAllocateInfo cmdBufAllocateInfo = vks::initializers::commandBufferAllocateInfo(cmdPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, static_cast<uint32_t>(drawCmdBuffers.size()));
 	VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, drawCmdBuffers.data()));
 }
@@ -205,9 +205,9 @@ void VulkanExampleBase::createPipelineCache()
 
 void VulkanExampleBase::prepare()
 {
-	initSwapchain();
+	createSurface();
 	createCommandPool();
-	setupSwapChain();
+	createSwapChain();
 	createCommandBuffers();
 	createSynchronizationPrimitives();
 	setupDepthStencil();
@@ -301,12 +301,19 @@ void VulkanExampleBase::renderLoop()
 	if (benchmark.active) {
 #if defined(VK_USE_PLATFORM_WAYLAND_KHR)
 		while (!configured)
-			wl_display_dispatch(display);
+		{
+			if (wl_display_dispatch(display) == -1)
+				break;
+		}
 		while (wl_display_prepare_read(display) != 0)
-			wl_display_dispatch_pending(display);
+		{
+			if (wl_display_dispatch_pending(display) == -1)
+				break;
+		}
 		wl_display_flush(display);
 		wl_display_read_events(display);
-		wl_display_dispatch_pending(display);
+		if (wl_display_dispatch_pending(display) == -1)
+			return;
 #endif
 
 		benchmark.run([=] { render(); }, vulkanDevice->properties);
@@ -348,7 +355,7 @@ void VulkanExampleBase::renderLoop()
 
 		focused = true;
 
-		while ((ident = ALooper_pollAll(focused ? 0 : -1, NULL, &events, (void**)&source)) >= 0)
+		while ((ident = ALooper_pollOnce(focused ? 0 : -1, NULL, &events, (void**)&source)) > ALOOPER_POLL_TIMEOUT)
 		{
 			if (source != NULL)
 			{
@@ -524,12 +531,19 @@ void VulkanExampleBase::renderLoop()
 		}
 
 		while (!configured)
-			wl_display_dispatch(display);
+		{
+			if (wl_display_dispatch(display) == -1)
+				break;
+		}
 		while (wl_display_prepare_read(display) != 0)
-			wl_display_dispatch_pending(display);
+		{
+			if (wl_display_dispatch_pending(display) == -1)
+				break;
+		}
 		wl_display_flush(display);
 		wl_display_read_events(display);
-		wl_display_dispatch_pending(display);
+		if (wl_display_dispatch_pending(display) == -1)
+			break;
 
 		render();
 		frameCounter++;
@@ -739,7 +753,7 @@ void VulkanExampleBase::drawUI(const VkCommandBuffer commandBuffer)
 void VulkanExampleBase::prepareFrame()
 {
 	// Acquire the next image from the swap chain
-	VkResult result = swapChain.acquireNextImage(semaphores.presentComplete, &currentBuffer);
+	VkResult result = swapChain.acquireNextImage(semaphores.presentComplete, currentBuffer);
 	// Recreate the swapchain if it's no longer compatible with the surface (OUT_OF_DATE)
 	// SRS - If no longer optimal (VK_SUBOPTIMAL_KHR), wait until submitFrame() in case number of swapchain images will change on resize
 	if ((result == VK_ERROR_OUT_OF_DATE_KHR) || (result == VK_SUBOPTIMAL_KHR)) {
@@ -771,26 +785,6 @@ void VulkanExampleBase::submitFrame()
 
 VulkanExampleBase::VulkanExampleBase()
 {
-#if !defined(VK_USE_PLATFORM_ANDROID_KHR)
-	// Check for a valid asset path
-	struct stat info;
-	if (stat(getAssetPath().c_str(), &info) != 0)
-	{
-#if defined(_WIN32)
-		std::string msg = "Could not locate asset path in \"" + getAssetPath() + "\" !";
-		MessageBox(NULL, msg.c_str(), "Fatal error", MB_OK | MB_ICONERROR);
-#else
-		std::cerr << "Error: Could not find asset path in " << getAssetPath() << "\n";
-#endif
-		exit(-1);
-	}
-#endif
-
-	// Validation for all samples can be forced at compile time using the FORCE_VALIDATION define
-#if defined(FORCE_VALIDATION)
-	settings.validation = true;
-#endif
-
 	// Command line arguments
 	commandLineParser.add("help", { "--help" }, 0, "Show help");
 	commandLineParser.add("validation", { "-v", "--validation" }, 0, "Enable validation layers");
@@ -807,7 +801,9 @@ VulkanExampleBase::VulkanExampleBase()
 	commandLineParser.add("benchmarkresultfile", { "-bf", "--benchfilename" }, 1, "Set file name for benchmark results");
 	commandLineParser.add("benchmarkresultframes", { "-bt", "--benchframetimes" }, 0, "Save frame times to benchmark results file");
 	commandLineParser.add("benchmarkframes", { "-bfs", "--benchmarkframes" }, 1, "Only render the given number of frames");
-
+#if (!(defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT)))
+	commandLineParser.add("resourcepath", { "-rp", "--resourcepath" }, 1, "Set path for dir where assets and shaders folder is present");
+#endif
 	commandLineParser.parse(args);
 	if (commandLineParser.isSet("help")) {
 #if defined(_WIN32)
@@ -865,6 +861,31 @@ VulkanExampleBase::VulkanExampleBase()
 	if (commandLineParser.isSet("benchmarkframes")) {
 		benchmark.outputFrames = commandLineParser.getValueAsInt("benchmarkframes", benchmark.outputFrames);
 	}
+#if (!(defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT)))
+	if(commandLineParser.isSet("resourcepath")) {
+		vks::tools::resourcePath = commandLineParser.getValueAsString("resourcepath", "");
+	}
+#endif
+
+#if !defined(VK_USE_PLATFORM_ANDROID_KHR)
+	// Check for a valid asset path
+	struct stat info;
+	if (stat(getAssetPath().c_str(), &info) != 0)
+	{
+#if defined(_WIN32)
+		std::string msg = "Could not locate asset path in \"" + getAssetPath() + "\" !";
+		MessageBox(NULL, msg.c_str(), "Fatal error", MB_OK | MB_ICONERROR);
+#else
+		std::cerr << "Error: Could not find asset path in " << getAssetPath() << "\n";
+#endif
+		exit(-1);
+	}
+#endif
+
+	// Validation for all samples can be forced at compile time using the FORCE_VALIDATION define
+#if defined(FORCE_VALIDATION)
+	settings.validation = true;
+#endif
 
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
 	// Vulkan library is loaded dynamically on Android
@@ -1146,7 +1167,7 @@ HWND VulkanExampleBase::setupWindow(HINSTANCE hinstance, WNDPROC wndproc)
 {
 	this->windowInstance = hinstance;
 
-	WNDCLASSEX wndClass;
+	WNDCLASSEX wndClass{};
 
 	wndClass.cbSize = sizeof(WNDCLASSEX);
 	wndClass.style = CS_HREDRAW | CS_VREDRAW;
@@ -3062,26 +3083,23 @@ void VulkanExampleBase::setupDepthStencil()
 
 void VulkanExampleBase::setupFrameBuffer()
 {
-	VkImageView attachments[2];
-
-	// Depth/Stencil attachment is the same for all frame buffers
-	attachments[1] = depthStencil.view;
-
-	VkFramebufferCreateInfo frameBufferCreateInfo = {};
-	frameBufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-	frameBufferCreateInfo.pNext = NULL;
-	frameBufferCreateInfo.renderPass = renderPass;
-	frameBufferCreateInfo.attachmentCount = 2;
-	frameBufferCreateInfo.pAttachments = attachments;
-	frameBufferCreateInfo.width = width;
-	frameBufferCreateInfo.height = height;
-	frameBufferCreateInfo.layers = 1;
-
 	// Create frame buffers for every swap chain image
-	frameBuffers.resize(swapChain.imageCount);
+	frameBuffers.resize(swapChain.images.size());
 	for (uint32_t i = 0; i < frameBuffers.size(); i++)
 	{
-		attachments[0] = swapChain.buffers[i].view;
+		const VkImageView attachments[2] = {
+			swapChain.imageViews[i],
+			// Depth/Stencil attachment is the same for all frame buffers
+			depthStencil.view
+		};
+		VkFramebufferCreateInfo frameBufferCreateInfo{};
+		frameBufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		frameBufferCreateInfo.renderPass = renderPass;
+		frameBufferCreateInfo.attachmentCount = 2;
+		frameBufferCreateInfo.pAttachments = attachments;
+		frameBufferCreateInfo.width = width;
+		frameBufferCreateInfo.height = height;
+		frameBufferCreateInfo.layers = 1;
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCreateInfo, nullptr, &frameBuffers[i]));
 	}
 }
@@ -3128,7 +3146,7 @@ void VulkanExampleBase::setupRenderPass()
 	subpassDescription.pResolveAttachments = nullptr;
 
 	// Subpass dependencies for layout transitions
-	std::array<VkSubpassDependency, 2> dependencies;
+	std::array<VkSubpassDependency, 2> dependencies{};
 
 	dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
 	dependencies[0].dstSubpass = 0;
@@ -3177,7 +3195,7 @@ void VulkanExampleBase::windowResize()
 	// Recreate swap chain
 	width = destWidth;
 	height = destHeight;
-	setupSwapChain();
+	createSwapChain();
 
 	// Recreate the frame buffers
 	vkDestroyImageView(device, depthStencil.view, nullptr);
@@ -3254,7 +3272,7 @@ void VulkanExampleBase::handleMouseMove(int32_t x, int32_t y)
 
 void VulkanExampleBase::windowResized() {}
 
-void VulkanExampleBase::initSwapchain()
+void VulkanExampleBase::createSurface()
 {
 #if defined(_WIN32)
 	swapChain.initSurface(windowInstance, window);
@@ -3277,9 +3295,9 @@ void VulkanExampleBase::initSwapchain()
 #endif
 }
 
-void VulkanExampleBase::setupSwapChain()
+void VulkanExampleBase::createSwapChain()
 {
-	swapChain.create(&width, &height, settings.vsync, settings.fullscreen);
+	swapChain.create(width, height, settings.vsync, settings.fullscreen);
 }
 
 void VulkanExampleBase::OnUpdateUIOverlay(vks::UIOverlay *overlay) {}

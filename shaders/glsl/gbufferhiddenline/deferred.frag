@@ -19,6 +19,7 @@ layout (binding = 4) uniform UBO
 	Light lights[6];
 	vec4 viewPos;
 	mat4 camView;
+	mat4 camViewTr;
 	int displayDebugTarget;
 	int singleStride;
 } ubo;
@@ -40,6 +41,8 @@ layout (binding = 7) buffer FaceNor
 
 layout(push_constant) uniform PushConsts {
 	int max_neighbor;
+	float screenHalfLengthX;
+	float screenHalfLengthY;
 } pushConsts;
 
 
@@ -96,6 +99,10 @@ bool grid_3x3(vec2 center_uv, vec2 tex_offset){
 
 bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 	bool shouldColor = false;
+	vec2 screen_uv = center_uv * 2 -1;
+	screen_uv.y = - screen_uv.y;
+	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
+	vec3 negViewDir = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
 	int faceID = texture(samplerAlbedo, center_uv).g;  
 	int objectID = texture(samplerAlbedo, center_uv).r;
 	int objFaceInfo = faceInfos[objectID];
@@ -117,14 +124,20 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 		}
 	};
 	vec3 nor = vec3(faceNor[faceIdx]);
-	vec3 negViewDir = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
 	float checkVal1 = dot(nor, negViewDir);
+	float checkVal2 = 1.f;
+	if(checkVal1 <= 0.f){
+		return true;
+	}
 	for(int i = -1; i <= 1; ++i){
 		for(int j = -1; j <= 1; ++j){
 			if((i == 0) && (j == 0)){
 				continue;
 			}
-			int currFaceID = texture(samplerAlbedo, center_uv + vec2(tex_offset.x * i, tex_offset.y * j)).g;
+			vec2 currUV = center_uv + vec2(tex_offset.x * i, tex_offset.y * j);
+			vec2 curr_screen_uv = currUV * 2 -1;
+			curr_screen_uv.y = - screen_uv.y;
+			int currFaceID = texture(samplerAlbedo, currUV).g;
 			if(currFaceID != faceID){
 				if(neighborFaceCnt > 0){
 					bool haveThisNeighbor = false;
@@ -137,11 +150,41 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 					if(haveThisNeighbor){
 						continue;
 					}else{
+						//check neighbor for this pixel
 						for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
 							int neighborFaceIdx = objFaceInfo + faceData[k];
 							vec3 neighborNor = vec3(faceNor[neighborFaceIdx]);
-							float checkVal2 = dot(neighborNor, negViewDir);
-							if((checkVal1 * checkVal2) < 0){
+							checkVal2 = dot(neighborNor, negViewDir);
+							if(checkVal2 <= 0.f){
+								shouldColor = true;
+								return shouldColor;
+							}else{
+								continue;
+							}
+						}
+						//check neighbor for the other pixel
+						int faceIdx2 = objFaceInfo + currFaceID;
+						int faceIdxStart2 = faceIdx2 * pushConsts.max_neighbor;
+						int neighborFaceCnt2 = 0;
+						for(int k = 0; k < pushConsts.max_neighbor; ++k){
+							if(faceData[faceIdxStart2 + k] > -1){
+								++neighborFaceCnt2;
+							}else{
+								break;
+							}
+						}
+						vec3 nor2 = vec3(faceNor[faceIdx2]);
+						vec3 negViewDir2 = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * curr_screen_uv, -1));
+						checkVal2 = dot(nor2, negViewDir2);
+						if(checkVal2 <= 0.f){
+							shouldColor = true;
+							return shouldColor;
+						}
+						for(int k = faceIdxStart2; k < faceIdxStart2 + neighborFaceCnt2; ++k){
+							int neighborFaceIdx = objFaceInfo + faceData[k];
+							vec3 neighborNor = vec3(faceNor[neighborFaceIdx]);
+							checkVal2 = dot(neighborNor, negViewDir2);
+							if(checkVal2 <= 0.f){
 								shouldColor = true;
 								return shouldColor;
 							}else{
@@ -254,22 +297,46 @@ vec3 case5(int size, vec2 center_uv, vec2 tex_offset){
 
 vec3 case6(int size, vec2 center_uv, vec2 tex_offset){
 	int objectID = texture(samplerAlbedo, center_uv).r;  
+	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
 	bool inObj = false;
 	if(objectID > -1){
 		inObj = true;
 	};
+	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
+	if(inObj){
+		vec2 screen_uv = center_uv * 2 -1;
+		screen_uv.y = - screen_uv.y;
+		vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
+		if(dot(screen_normal, normalTex) <= 0.f){
+			return vec3(1);
+		}
+	}
 	for(int i = -size; i <= size; ++i){
 		for(int j = -size; j <= size; ++j){
 			if((i == 0) && (j == 0)){
 				continue;
 			}
-			int currID = texture(samplerAlbedo, center_uv + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+			vec2 currUV = center_uv + vec2(tex_offset.x * i, tex_offset.y * j);
+			//check objectID
+			int currID = texture(samplerAlbedo, currUV).r;
 			if(abs(currID - objectID) > 0){
 				return vec3(1);
+			}
+			//check normal
+			int currObjID = texture(samplerAlbedo, currUV).r;  
+			if(currObjID > -1){
+				vec3 curr_normal_tex = texture(samplerNormal, currUV).rgb;
+				vec2 curr_screen_uv = currUV * 2 -1;
+				curr_screen_uv.y = -curr_screen_uv.y;
+				vec3 curr_screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * curr_screen_uv, -1));
+				if(dot(curr_normal_tex, curr_screen_normal) <= 0.f){
+					return vec3(1);
+				}
 			}
 		}
 	}
 	if(inObj){
+		//if size == 1, then low_left_uv is just center_uv
 		vec2 low_left_uv = center_uv + vec2(-tex_offset.x * (size-1), -tex_offset.y * (size-1));
 		bool shouldColor = sampleOn3x3Grid2(low_left_uv, tex_offset, size);
 		if(shouldColor){
@@ -280,13 +347,51 @@ vec3 case6(int size, vec2 center_uv, vec2 tex_offset){
 }
 
 vec3 case7(int size, vec2 center_uv, vec2 tex_offset){
+	vec2 screen_uv = center_uv * 2 -1;
+	screen_uv.y = - screen_uv.y;
+	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
+	vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
 	int faceID = texture(samplerAlbedo, center_uv).g;  
 	int objectID = texture(samplerAlbedo, center_uv).r;
 	if(objectID > -1){
 		int faceIdx = faceInfos[objectID] + faceID;
 		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);
-		vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
-		return vec3(dot(viewDirection, vec3(faceNor[faceIdx])));
+		//vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
+		return vec3(dot(screen_normal, vec3(faceNor[faceIdx])));
+	}
+	return vec3(0);
+}
+
+vec3 case8(int size, vec2 center_uv, vec2 tex_offset){
+	vec2 screen_uv = center_uv * 2 -1;
+	screen_uv.y = - screen_uv.y;
+	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
+	vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
+	int faceID = texture(samplerAlbedo, center_uv).g;  
+	int objectID = texture(samplerAlbedo, center_uv).r;
+	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
+	if(objectID > -1){
+		int faceIdx = faceInfos[objectID] + faceID;
+		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);
+		//vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
+		return vec3(dot(screen_normal, normalTex));
+	}
+	return vec3(0);
+}
+
+vec3 case9(int size, vec2 center_uv, vec2 tex_offset){
+	vec2 screen_uv = center_uv * 2 -1;
+	screen_uv.y = - screen_uv.y;
+	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
+	vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
+	int faceID = texture(samplerAlbedo, center_uv).g;  
+	int objectID = texture(samplerAlbedo, center_uv).r;
+	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
+	if(objectID > -1){
+		int faceIdx = faceInfos[objectID] + faceID;
+		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);
+		//vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
+		return vec3(dot(screen_normal, vec3(faceNor[faceIdx])));
 	}
 	return vec3(0);
 }
@@ -458,6 +563,30 @@ void main()
 				finalCol += case7(size, uv2, tex_offset);
 				finalCol += case7(size, uv3, tex_offset);
 				finalCol += case7(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 8:
+				finalCol = vec3(0);
+				uv1 = inUV - (tex_offset / 2.f);
+				uv2 = uv1 + vec2(tex_offset.x, 0);
+				uv3 = uv1 + vec2(0, tex_offset.y);
+				uv4 = uv1 + tex_offset;
+				finalCol += case8(size, uv1, tex_offset);
+				finalCol += case8(size, uv2, tex_offset);
+				finalCol += case8(size, uv3, tex_offset);
+				finalCol += case8(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 9:
+				finalCol = vec3(0);
+				uv1 = inUV - (tex_offset / 2.f);
+				uv2 = uv1 + vec2(tex_offset.x, 0);
+				uv3 = uv1 + vec2(0, tex_offset.y);
+				uv4 = uv1 + tex_offset;
+				finalCol += case9(size, uv1, tex_offset);
+				finalCol += case9(size, uv2, tex_offset);
+				finalCol += case9(size, uv3, tex_offset);
+				finalCol += case9(size, uv4, tex_offset);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 		}		

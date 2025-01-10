@@ -71,6 +71,7 @@ public:
 	struct Vertex {
 		glm::vec3 position;
 		glm::vec3 normal;
+		glm::vec2 uv;
 		int objectID;
 		int faceID;
 		int uniqueID; //unique id in obj
@@ -104,13 +105,18 @@ public:
 
 			attributeDescriptions[2].binding = 0;
 			attributeDescriptions[2].location = 2;
-			attributeDescriptions[2].format = VK_FORMAT_R32_UINT;
-			attributeDescriptions[2].offset = offsetof(Vertex, objectID);
+			attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+			attributeDescriptions[2].offset = offsetof(Vertex, uv);
 
 			attributeDescriptions[3].binding = 0;
 			attributeDescriptions[3].location = 3;
 			attributeDescriptions[3].format = VK_FORMAT_R32_UINT;
-			attributeDescriptions[3].offset = offsetof(Vertex, faceID);
+			attributeDescriptions[3].offset = offsetof(Vertex, objectID);
+
+			attributeDescriptions[4].binding = 0;
+			attributeDescriptions[4].location = 4;
+			attributeDescriptions[4].format = VK_FORMAT_R32_UINT;
+			attributeDescriptions[4].offset = offsetof(Vertex, faceID);
 
 			return attributeDescriptions;
 		}
@@ -255,8 +261,10 @@ public:
 				std::unordered_map<std::string, HalfEdge*> symHEs;
 				std::vector<std::vector<int>> neighborFaces;
 				for (int i = 0; i < vertexBuffer.size(); ++i) {
+					vertexBuffer[i].pos *= 100.f;
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
+					vertexBuffer[i].uv;
 					uPtr<Vertex> tmpVer = mkU<Vertex>(pos, nor, objectID);
 					Vertex* tmpVerPtr = tmpVer.get();
 					auto it = uniqueVers.find(tmpVerPtr);
@@ -584,6 +592,7 @@ public:
 	float halfScreenHeightX = halfScreenHeightY * ((float)width / (float)height);
 	int32_t debugDisplayTarget = 0;
 	int singleStride = 1;
+	float depthFactor = 1.f;
 
 	struct {
 		struct {
@@ -621,6 +630,7 @@ public:
 		glm::mat4 camViewTr;
 		int debugDisplayTarget = 0;
 		int singleStride = 1;
+		float depthFactor = 1.f;
 	} uniformDataComposition;
 
 	struct UniformDataEdge {
@@ -691,9 +701,10 @@ public:
 		/*camera.position = { 2.15f, 0.3f, -8.75f };
 		camera.setRotation(glm::vec3(-0.75f, 12.5f, 0.0f));
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);*/
-		camera.position = { 0.f, 0.f, -8.75f };
+		camera.movementSpeed = 80.f;
+		camera.position = { 0.f, 80.f, -350.f };
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
-		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
+		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 2560.0f);
 	}
 
 	~VulkanExample()
@@ -1645,6 +1656,7 @@ public:
 		uniformDataComposition.singleStride = singleStride;
 		uniformDataComposition.camView = camera.matrices.view;
 		uniformDataComposition.camViewTr = glm::transpose(camera.matrices.view);
+		uniformDataComposition.depthFactor = depthFactor;
 		memcpy(uniformBuffers.composition.mapped, &uniformDataComposition, sizeof(UniformDataComposition));
 	}
 
@@ -1728,8 +1740,9 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "DepthNormal", "Test1", "Test2"});
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Test1", "Test2"});
 			ImGui::InputInt("Stride", &singleStride);
+			ImGui::DragFloat("DepthFactor", &depthFactor, 0.1f, 0.f, 100.f);
 		}
 	}
 };

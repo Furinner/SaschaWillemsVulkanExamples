@@ -22,6 +22,7 @@ layout (binding = 4) uniform UBO
 	mat4 camViewTr;
 	int displayDebugTarget;
 	int singleStride;
+	float depthFactor;
 } ubo;
 
 layout (binding = 5) buffer FaceInfo
@@ -318,12 +319,11 @@ vec3 case6(int size, vec2 center_uv, vec2 tex_offset){
 			}
 			vec2 currUV = center_uv + vec2(tex_offset.x * i, tex_offset.y * j);
 			//check objectID
-			int currID = texture(samplerAlbedo, currUV).r;
-			if(abs(currID - objectID) > 0){
+			int currObjID = texture(samplerAlbedo, currUV).r;
+			if(abs(currObjID - objectID) > 0){
 				return vec3(1);
 			}
 			//check normal
-			int currObjID = texture(samplerAlbedo, currUV).r;  
 			if(currObjID > -1){
 				vec3 curr_normal_tex = texture(samplerNormal, currUV).rgb;
 				vec2 curr_screen_uv = currUV * 2 -1;
@@ -346,23 +346,155 @@ vec3 case6(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
+
 vec3 case7(int size, vec2 center_uv, vec2 tex_offset){
-	vec2 screen_uv = center_uv * 2 -1;
-	screen_uv.y = - screen_uv.y;
+	//pure normal
+	int objectID = texture(samplerAlbedo, center_uv).r;  
+	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
-	vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
-	int faceID = texture(samplerAlbedo, center_uv).g;  
-	int objectID = texture(samplerAlbedo, center_uv).r;
-	if(objectID > -1){
-		int faceIdx = faceInfos[objectID] + faceID;
-		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);
-		//vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
-		return vec3(dot(screen_normal, vec3(faceNor[faceIdx])));
+	bool noObj = true;
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			int currObjID = texture(samplerAlbedo, center_uv).r; 
+			if(currObjID != -1){
+				noObj = false;
+				break;
+			}
+		}
+		if(!noObj){
+			break;
+		}
+	}
+	if(noObj){
+		return vec3(0);
+	}
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				vec2 screen_uv = center_uv * 2 -1;
+				screen_uv.y = -screen_uv.y;
+				vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
+				if(dot(normalTex, screen_normal) <= 0.f){
+					return vec3(1);
+				}
+				continue;
+			}
+			vec2 currUV = center_uv + vec2(tex_offset.x * i, tex_offset.y * j);
+			//check objectID
+			int currObjID = texture(samplerAlbedo, currUV).r;
+			if(abs(currObjID - objectID) > 0){
+				return vec3(1);
+			}
+			//check normal
+			if(currObjID > -1){
+				vec3 curr_normal_tex = texture(samplerNormal, currUV).rgb;
+				vec2 curr_screen_uv = currUV * 2 -1;
+				curr_screen_uv.y = -curr_screen_uv.y;
+				vec3 curr_screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * curr_screen_uv, -1));
+				if(dot(curr_normal_tex, curr_screen_normal) <= 0.f){
+					return vec3(1);
+				}
+			}
+		}
 	}
 	return vec3(0);
 }
 
 vec3 case8(int size, vec2 center_uv, vec2 tex_offset){
+	//depth nor
+	int objectID = texture(samplerAlbedo, center_uv).r;  
+	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
+	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
+	bool noObj = true;
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			int currObjID = texture(samplerAlbedo, center_uv).r; 
+			if(currObjID != -1){
+				noObj = false;
+				break;
+			}
+		}
+		if(!noObj){
+			break;
+		}
+	}
+	if(noObj){
+		return vec3(0);
+	}
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				vec2 screen_uv = center_uv * 2 -1;
+				screen_uv.y = -screen_uv.y;
+				vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
+				if(dot(normalTex, screen_normal) <= 0.f){
+					return vec3(1);
+				}
+				continue;
+			}
+			vec2 currUV = center_uv + vec2(tex_offset.x * i, tex_offset.y * j);
+			//check objectID
+			int currObjID = texture(samplerAlbedo, currUV).r;
+			if(abs(currObjID - objectID)*100.f > 0){
+				return vec3(1);
+			}
+			//check normal
+//			if(currObjID > -1){
+//				vec3 curr_normal_tex = texture(samplerNormal, currUV).rgb;
+//				vec2 curr_screen_uv = currUV * 2 -1;
+//				curr_screen_uv.y = -curr_screen_uv.y;
+//				vec3 curr_screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * curr_screen_uv, -1));
+//				if(dot(curr_normal_tex, curr_screen_normal) <= 0.f){
+//					return vec3(1);
+//				}
+//			}
+		}
+	}
+	int sampleNum = 2 * size * 2;
+	float depthVal = 0.f;
+	float center_depth = -texture(samplerposition, center_uv).b;
+	for(int i = -size; i <= size; ++i){
+		if(i == 0){
+			continue;
+		}
+		vec2 currUV = center_uv + vec2(tex_offset.x * i, 0);
+		depthVal += -texture(samplerposition, currUV).z;
+	}
+	for(int i = -size; i <= size; ++i){
+		if(i == 0){
+			continue;
+		}
+		vec2 currUV = center_uv + vec2(0, tex_offset.y * i);
+		depthVal += -texture(samplerposition, currUV).z;
+	}
+	depthVal /= sampleNum;
+	return vec3(clamp((center_depth - depthVal) * ubo.depthFactor, 0.f, 1.f));
+	return vec3(0);
+}
+
+vec3 case9(int size, vec2 inUV, vec2 tex_offset){
+	int objectID = texture(samplerAlbedo, inUV).r;  
+	int faceID = texture(samplerAlbedo, inUV).g;  
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				continue;
+			}
+			int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+			if(abs(currID - objectID) > 0){
+				return vec3(1);
+			}else{
+				int currFaceID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
+				if(abs(currFaceID - faceID) > 0){
+					return vec3(1);
+				}
+			}
+		}
+	}
+	return vec3(0);
+}
+
+vec3 case10(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -379,23 +511,18 @@ vec3 case8(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
-vec3 case9(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case11(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
 	vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
 	int faceID = texture(samplerAlbedo, center_uv).g;  
 	int objectID = texture(samplerAlbedo, center_uv).r;
-	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
-//	if(objectID > -1){
-//		int faceIdx = faceInfos[objectID] + faceID;
-//		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);
-//		//vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
-//		return vec3(dot(screen_normal, vec3(faceNor[faceIdx])));
-//	}
-	int test = texture(samplerAlbedo, center_uv).g;
-	if(test == -2){
-		return vec3(1);
+	if(objectID > -1){
+		int faceIdx = faceInfos[objectID] + faceID;
+		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);
+		//vec3 viewDirection = vec3(ubo.camView[0][2], ubo.camView[1][2], ubo.camView[2][2]);
+		return vec3(dot(screen_normal, vec3(faceNor[faceIdx])));
 	}
 	return vec3(0);
 }
@@ -404,7 +531,7 @@ vec3 case9(int size, vec2 center_uv, vec2 tex_offset){
 void main() 
 {
 	// Get G-Buffer values
-	vec3 fragPos = texture(samplerposition, inUV).rgb;
+	vec3 pos = texture(samplerposition, inUV).rgb;
 	vec3 normal = texture(samplerNormal, inUV).rgb;
 	//vec4 albedo = texture(samplerAlbedo, inUV);
 	//float objectID = albedo.r;
@@ -417,22 +544,23 @@ void main()
 		switch (ubo.displayDebugTarget) {
 			case 1: 
 				//outFragcolor.rgb = fragPos;
-				vec3 color = vec3(1,0,0);
-				float intensity = dot(normal,fragPos);
-				if (intensity > 0.98)
-					color *= 1.5;
-				else if  (intensity > 0.9)
-					color *= 1.0;
-				else if (intensity > 0.5)
-					color *= 0.6;
-				else if (intensity > 0.25)
-					color *= 0.4;
-				else
-					color *= 0.2;
-				// Desaturate a bit
-				outFragcolor.rgb = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
-				//outFragcolor.rgb = fragPos;	
-				outFragcolor.rgb = vec3(fragPos.z);
+//				vec3 color = vec3(1,0,0);
+//				float intensity = dot(normal,fragPos);
+//				if (intensity > 0.98)
+//					color *= 1.5;
+//				else if  (intensity > 0.9)
+//					color *= 1.0;
+//				else if (intensity > 0.5)
+//					color *= 0.6;
+//				else if (intensity > 0.25)
+//					color *= 0.4;
+//				else
+//					color *= 0.2;
+//				// Desaturate a bit
+//				outFragcolor.rgb = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
+//				//outFragcolor.rgb = fragPos;	
+//				outFragcolor.rgb = vec3(fragPos.z);
+				outFragcolor.rgb = pos;
 				break;
 			case 2: 
 				outFragcolor.rgb = normal;
@@ -593,6 +721,30 @@ void main()
 				finalCol += case9(size, uv4, tex_offset);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
+			case 10:
+				finalCol = vec3(0);
+				uv1 = inUV - (tex_offset / 2.f);
+				uv2 = uv1 + vec2(tex_offset.x, 0);
+				uv3 = uv1 + vec2(0, tex_offset.y);
+				uv4 = uv1 + tex_offset;
+				finalCol += case10(size, uv1, tex_offset);
+				finalCol += case10(size, uv2, tex_offset);
+				finalCol += case10(size, uv3, tex_offset);
+				finalCol += case10(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 11:
+				finalCol = vec3(0);
+				uv1 = inUV - (tex_offset / 2.f);
+				uv2 = uv1 + vec2(tex_offset.x, 0);
+				uv3 = uv1 + vec2(0, tex_offset.y);
+				uv4 = uv1 + tex_offset;
+				finalCol += case11(size, uv1, tex_offset);
+				finalCol += case11(size, uv2, tex_offset);
+				finalCol += case11(size, uv3, tex_offset);
+				finalCol += case11(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
 		}		
 		outFragcolor.a = 1.0;
 		return;
@@ -639,9 +791,6 @@ void main()
 //			fragcolor += diff + spec;	
 //		}	
 //	}    	
-
-	vec3 color = vec3(1,0,0);
-	float factor = abs(dot(vec3(ubo.viewPos) - fragPos, normal));
    
   outFragcolor = vec4(vec3(0), 1.0);	
 }

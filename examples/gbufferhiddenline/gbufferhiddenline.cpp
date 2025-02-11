@@ -593,6 +593,8 @@ public:
 	int32_t debugDisplayTarget = 0;
 	int singleStride = 1;
 	float depthFactor = 1.f;
+	int uFactor = 1;
+	int vFactor = 1;
 
 	struct {
 		struct {
@@ -631,6 +633,8 @@ public:
 		int debugDisplayTarget = 0;
 		int singleStride = 1;
 		float depthFactor = 1.f;
+		int uFactor = 1;
+		int vFactor = 1;
 	} uniformDataComposition;
 
 	struct UniformDataEdge {
@@ -1657,6 +1661,8 @@ public:
 		uniformDataComposition.camView = camera.matrices.view;
 		uniformDataComposition.camViewTr = glm::transpose(camera.matrices.view);
 		uniformDataComposition.depthFactor = depthFactor;
+		uniformDataComposition.uFactor = uFactor;
+		uniformDataComposition.vFactor = vFactor;
 		memcpy(uniformBuffers.composition.mapped, &uniformDataComposition, sizeof(UniformDataComposition));
 	}
 
@@ -1743,6 +1749,8 @@ public:
 			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Test1", "Test2"});
 			ImGui::InputInt("Stride", &singleStride);
 			ImGui::DragFloat("DepthFactor", &depthFactor, 0.1f, 0.f, 100.f);
+			overlay->sliderInt("U", &uFactor, 0, 100);
+			overlay->sliderInt("V", &vFactor, 0, 100);
 		}
 	}
 };

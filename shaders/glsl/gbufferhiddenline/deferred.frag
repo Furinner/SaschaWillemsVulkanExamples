@@ -23,6 +23,8 @@ layout (binding = 4) uniform UBO
 	int displayDebugTarget;
 	int singleStride;
 	float depthFactor;
+	int uFactor;
+	int vFactor;
 } ubo;
 
 layout (binding = 5) buffer FaceInfo
@@ -486,7 +488,7 @@ vec3 case9(int size, vec2 inUV, vec2 tex_offset){
 			}else{
 				int currFaceID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
 				if(abs(currFaceID - faceID) > 0){
-					return vec3(1);
+					return vec3(ubo.vFactor / 100.f);
 				}
 			}
 		}

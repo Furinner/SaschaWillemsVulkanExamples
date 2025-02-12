@@ -69,12 +69,19 @@ public:
 	};
 
 	struct Vertex {
-		glm::vec3 position;
-		glm::vec3 normal;
-		glm::vec2 uv;
-		int objectID;
-		int faceID;
-		int uniqueID; //unique id in obj
+		//alignas means some memory before the variable behind
+		//for example, glm::vec3 pos should align to 16 bytes (meaning the start point of pos in memory should be a multiple of 16 byte)
+		//if my first variable is glm::vec2 uv, then glm::vec3 pos, now the start point of pos is 8 byte, which is not a multiple of 16 byte.
+		//thus we change it to alignas(16) glm::vec3 pos, it will fill the empty 8 bytes and make the start point of pos be 16 byte.
+		//thus, alignas(16) automatically fill the bytes to make the variable behind has a start memory point be multiple of 16.
+		alignas(16) glm::vec3 position;
+		alignas(16) glm::vec3 normal;
+		alignas(16) glm::vec3 faceNor;
+		alignas(16) glm::vec3 symFaceNor;
+		alignas(8) glm::vec2 uv;
+		alignas(4) int objectID;
+		alignas(4) int faceID;
+		alignas(4) int uniqueID; //unique id in obj
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
 		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), objectID(ver->objectID), uv(ver->uv), faceID(faceID) {};
@@ -91,8 +98,8 @@ public:
 			return bindingDescription;
 		}
 
-		static std::array<VkVertexInputAttributeDescription, 5> getAttributeDescriptions() {
-			std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
+		static std::array<VkVertexInputAttributeDescription, 7> getAttributeDescriptions() {
+			std::array<VkVertexInputAttributeDescription, 7> attributeDescriptions{};
 			attributeDescriptions[0].binding = 0;
 			attributeDescriptions[0].location = 0;
 			attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -105,18 +112,28 @@ public:
 
 			attributeDescriptions[2].binding = 0;
 			attributeDescriptions[2].location = 2;
-			attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-			attributeDescriptions[2].offset = offsetof(Vertex, uv);
+			attributeDescriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+			attributeDescriptions[2].offset = offsetof(Vertex, faceNor);
 
 			attributeDescriptions[3].binding = 0;
 			attributeDescriptions[3].location = 3;
-			attributeDescriptions[3].format = VK_FORMAT_R32_UINT;
-			attributeDescriptions[3].offset = offsetof(Vertex, objectID);
+			attributeDescriptions[3].format = VK_FORMAT_R32G32B32_SFLOAT;
+			attributeDescriptions[3].offset = offsetof(Vertex, symFaceNor);
 
 			attributeDescriptions[4].binding = 0;
 			attributeDescriptions[4].location = 4;
-			attributeDescriptions[4].format = VK_FORMAT_R32_UINT;
-			attributeDescriptions[4].offset = offsetof(Vertex, faceID);
+			attributeDescriptions[4].format = VK_FORMAT_R32G32_SFLOAT;
+			attributeDescriptions[4].offset = offsetof(Vertex, uv);
+
+			attributeDescriptions[5].binding = 0;
+			attributeDescriptions[5].location = 5;
+			attributeDescriptions[5].format = VK_FORMAT_R32_UINT;
+			attributeDescriptions[5].offset = offsetof(Vertex, objectID);
+
+			attributeDescriptions[6].binding = 0;
+			attributeDescriptions[6].location = 6;
+			attributeDescriptions[6].format = VK_FORMAT_R32_UINT;
+			attributeDescriptions[6].offset = offsetof(Vertex, faceID);
 
 			return attributeDescriptions;
 		}

@@ -76,8 +76,8 @@ public:
 		int faceID;
 		int uniqueID; //unique id in obj
 
-		Vertex(glm::vec3 position, glm::vec3 normal, int objectID) :position(position), normal(normal), objectID(objectID) {};
-		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), objectID(ver->objectID), faceID(faceID) {};
+		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
+		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), objectID(ver->objectID), uv(ver->uv), faceID(faceID) {};
 
 		bool operator==(const Vertex& other) const {
 			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
@@ -147,6 +147,7 @@ public:
 	struct Face {
 		int objectID;
 		int id;
+		glm::vec3 normal;
 		FaceConnectToVertex* v1;
 		FaceConnectToVertex* v2;
 		FaceConnectToVertex* v3;
@@ -157,6 +158,7 @@ public:
 		std::vector<int> neighborFaces = {};
 		Face(int objectID, int id, FaceConnectToVertex* v1, FaceConnectToVertex* v2, FaceConnectToVertex* v3, HalfEdge* he1, HalfEdge* he2, HalfEdge* he3) 
 			:objectID(objectID), id(id), v1(v1), v2(v2), v3(v3), he1(he1), he2(he2), he3(he3) {};
+		
 		void getAllNeighborFaces() {
 			for (auto v1tmp : v1->neighborFaceIDs) {
 				if (v1tmp != id) {
@@ -197,7 +199,7 @@ public:
 			}
 		}
 
-		void getAllEdges(std::vector<int>& edgeIdx, std::vector<Vertex>& edgeVert) {
+		void getAllBorderEdges(std::vector<int>& edgeIdx, std::vector<Vertex>& edgeVert) {
 			if (he1->sym == nullptr) {
 				int newIdx = edgeIdx.size();
 				edgeIdx.push_back(newIdx);
@@ -217,6 +219,36 @@ public:
 				edgeVert.push_back(tmpV2);
 			}
 			if (he3->sym == nullptr) {
+				int newIdx = edgeIdx.size();
+				edgeIdx.push_back(newIdx);
+				edgeIdx.push_back(newIdx + 1);
+				Vertex tmpV1 = Vertex(he3->prevVer, id);
+				Vertex tmpV2 = Vertex(he3->nextVer, id);
+				edgeVert.push_back(tmpV1);
+				edgeVert.push_back(tmpV2);
+			}
+		};
+
+		void getAllEdges(std::vector<int>& edgeIdx, std::vector<Vertex>& edgeVert) {
+			if (he1 != nullptr) {
+				int newIdx = edgeIdx.size();
+				edgeIdx.push_back(newIdx);
+				edgeIdx.push_back(newIdx + 1);
+				Vertex tmpV1 = Vertex(he1->prevVer, id);
+				Vertex tmpV2 = Vertex(he1->nextVer, id);
+				edgeVert.push_back(tmpV1);
+				edgeVert.push_back(tmpV2);
+			}
+			if (he2 != nullptr) {
+				int newIdx = edgeIdx.size();
+				edgeIdx.push_back(newIdx);
+				edgeIdx.push_back(newIdx + 1);
+				Vertex tmpV1 = Vertex(he2->prevVer, id);
+				Vertex tmpV2 = Vertex(he2->nextVer, id);
+				edgeVert.push_back(tmpV1);
+				edgeVert.push_back(tmpV2);
+			}
+			if (he3 != nullptr) {
 				int newIdx = edgeIdx.size();
 				edgeIdx.push_back(newIdx);
 				edgeIdx.push_back(newIdx + 1);
@@ -264,8 +296,8 @@ public:
 					vertexBuffer[i].pos *= 100.f;
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
-					vertexBuffer[i].uv;
-					uPtr<Vertex> tmpVer = mkU<Vertex>(pos, nor, objectID);
+					glm::vec2 uv = vertexBuffer[i].uv;
+					uPtr<Vertex> tmpVer = mkU<Vertex>(pos, nor, uv, objectID);
 					Vertex* tmpVerPtr = tmpVer.get();
 					auto it = uniqueVers.find(tmpVerPtr);
 					if (it != uniqueVers.end()) {
@@ -320,8 +352,8 @@ public:
 					ftv2->addFace(faceID);
 					ftv3->addFace(faceID);
 					uPtr<Face> f = mkU<Face>(objectID, faceID, ftv1, ftv2, ftv3, he1.get(), he2.get(), he3.get());
-					//glm::vec3 faceNor = glm::normalize(glm::cross(v3->position - v2->position, v1->position - v2->position));
-					glm::vec3 faceNor = glm::normalize((v1->normal + v2->normal + v3->normal) / 3.f);
+					glm::vec3 faceNor = glm::normalize(glm::cross(v3->position - v2->position, v1->position - v2->position));
+					//glm::vec3 faceNor = glm::normalize((v1->normal + v2->normal + v3->normal) / 3.f);
 					v1fin.normal = v1->normal;
 					v2fin.normal = v2->normal;
 					v3fin.normal = v3->normal;
@@ -332,6 +364,7 @@ public:
 					vertices2.push_back(v1fin);
 					vertices2.push_back(v2fin);
 					vertices2.push_back(v3fin);
+					f->normal = faceNor;
 					faces.push_back(std::move(f));
 
 					std::array<HalfEdge*, 3> hes = { he1.get(), he2.get(), he3.get()};
@@ -383,7 +416,8 @@ public:
 				}
 				for (int i = facesSize; i < faces.size(); ++i) {
 					faces[i]->getAllNeighborFaces();
-					faces[i]->getAllEdges(edgeIdx, edgeVert);
+					faces[i]->getAllBorderEdges(edgeIdx, edgeVert);
+					//faces[i]->getAllEdges(edgeIdx, edgeVert);
 					neighborFacesData.insert(neighborFacesData.end(), faces[i]->neighborFaces.begin(), faces[i]->neighborFaces.end());
 				}
 				facesSize = faces.size();
@@ -708,7 +742,7 @@ public:
 		camera.movementSpeed = 80.f;
 		camera.position = { 0.f, 80.f, -350.f };
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
-		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 2560.0f);
+		camera.setPerspective(60.0f, (float)width / (float)height, 0.01f, 2560.0f);
 	}
 
 	~VulkanExample()
@@ -1026,18 +1060,6 @@ public:
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			&edgeFrameBuf.position);
 
-		// (World space) Normals
-		createAttachment(
-			VK_FORMAT_R16G16B16A16_SFLOAT,
-			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&edgeFrameBuf.normal);
-
-		// Albedo (color)
-		createAttachment(
-			VK_FORMAT_R32G32_SINT,
-			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&edgeFrameBuf.albedo);
-
 		// Depth attachment
 
 		// Find a suitable depth format
@@ -1045,50 +1067,43 @@ public:
 		VkBool32 validDepthFormat = vks::tools::getSupportedDepthFormat(physicalDevice, &attDepthFormat);
 		assert(validDepthFormat);
 
-		createAttachment(
-			attDepthFormat,
-			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-			&edgeFrameBuf.depth);
 
 		// Set up separate renderpass with references to the color and depth attachments
-		std::array<VkAttachmentDescription, 4> attachmentDescs = {};
+		std::array<VkAttachmentDescription, 2> attachmentDescs = {};
 
 		// Init attachment properties
-		for (uint32_t i = 0; i < 4; ++i)
+		for (uint32_t i = 0; i < 2; ++i)
 		{
 			//diff: edge should change loadOp to VK_ATTACHMENT_LOAD_OP_LOAD
 			attachmentDescs[i].samples = VK_SAMPLE_COUNT_1_BIT;
-			attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 			attachmentDescs[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 			attachmentDescs[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 			attachmentDescs[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			if (i == 3)
+			if (i == 1)
 			{
-				//diff: if share depth attachmentm, its initial layout should match the initial layout
+				//diff: if share depth attachmentm, its initial layout should match the final layout
 				//of last depth attachment
-				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 			}
 			else
 			{
-				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 			}
 		}
 
 		// Formats
 		attachmentDescs[0].format = edgeFrameBuf.position.format;
-		attachmentDescs[1].format = edgeFrameBuf.normal.format;
-		attachmentDescs[2].format = edgeFrameBuf.albedo.format;
-		attachmentDescs[3].format = edgeFrameBuf.depth.format;
+		attachmentDescs[1].format = offScreenFrameBuf.depth.format;
 
 		std::vector<VkAttachmentReference> colorReferences;
 		colorReferences.push_back({ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
-		colorReferences.push_back({ 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
-		colorReferences.push_back({ 2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
 
 		VkAttachmentReference depthReference = {};
-		depthReference.attachment = 3;
+		depthReference.attachment = 1;
 		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
 		VkSubpassDescription subpass = {};
@@ -1098,7 +1113,7 @@ public:
 		subpass.pDepthStencilAttachment = &depthReference;
 
 		// Use subpass dependencies for attachment layout transitions
-		std::array<VkSubpassDependency, 2> dependencies;
+		std::array<VkSubpassDependency, 3> dependencies;
 
 		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
 		dependencies[0].dstSubpass = 0;
@@ -1107,6 +1122,14 @@ public:
 		dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
 		dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+		dependencies[2].srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[2].dstSubpass = 0;
+		dependencies[2].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependencies[2].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependencies[2].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependencies[2].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+		dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
 		dependencies[1].srcSubpass = 0;
 		dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
@@ -1127,11 +1150,9 @@ public:
 
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &edgeFrameBuf.renderPass));
 
-		std::array<VkImageView, 4> attachments;
-		attachments[0] = offScreenFrameBuf.position.view;
-		attachments[1] = edgeFrameBuf.normal.view;
-		attachments[2] = offScreenFrameBuf.albedo.view;
-		attachments[3] = edgeFrameBuf.depth.view;
+		std::array<VkImageView, 2> attachments;
+		attachments[0] = edgeFrameBuf.position.view;
+		attachments[1] = offScreenFrameBuf.depth.view;
 
 		VkFramebufferCreateInfo fbufCreateInfo = {};
 		fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -1145,7 +1166,7 @@ public:
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &fbufCreateInfo, nullptr, &edgeFrameBuf.frameBuffer));
 	}
 
-	// Build command buffer for rendering the scene to the offscreen frame buffer attachments
+	// Build command buffer for rendering the scene to the offscreen frame buffer attachments (to G-buffer)
 	void buildDeferredCommandBuffer()
 	{
 		if (offScreenCmdBuffer == VK_NULL_HANDLE) {
@@ -1283,9 +1304,9 @@ public:
 		vkCmdBindPipeline(edgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.edge);
 
 		vkCmdBindDescriptorSets(edgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.edge, 0, nullptr);
-		//mesh.bindLineBuffers(edgeCmdBuffer);
-		//vkCmdDrawIndexed(edgeCmdBuffer, mesh.edgeIdx.size(), 1, 0, 0, 0);
-		vkCmdDraw(edgeCmdBuffer, 3, 1, 0, 0);
+		mesh.bindLineBuffers(edgeCmdBuffer);
+		vkCmdDrawIndexed(edgeCmdBuffer, mesh.edgeIdx.size(), 1, 0, 0, 0);
+		//vkCmdDraw(edgeCmdBuffer, 2, 1, 0, 0);
 
 		vkCmdEndRenderPass(edgeCmdBuffer);
 
@@ -1306,7 +1327,8 @@ public:
 		//model.loadFromFileWithVertIdxMultipleMesh(indexBuffers, vertexBuffers, { getAssetPath() + "models/armor/armor.gltf", getAssetPath() + "models/test/12_quad_far.gltf", getAssetPath() + "models/cerberus/cerberus.gltf" }, vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/5f_cube_smooth", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/test", vulkanDevice, queue, glTFLoadingFlags);
@@ -1317,6 +1339,7 @@ public:
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 	}
 
+	//Final Composition Command Buffer
 	void buildCommandBuffers()
 	{
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
@@ -1372,7 +1395,7 @@ public:
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 4);
@@ -1396,6 +1419,8 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 6),
 			// Binding 7 : Storage buffer face nor
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 7),
+			// Binding 8 : Edge texture target
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 8)
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
@@ -1423,6 +1448,12 @@ public:
 				offScreenFrameBuf.albedo.view,
 				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+		VkDescriptorImageInfo texDescriptorEdge =
+			vks::initializers::descriptorImageInfo(
+				colorSampler,
+				edgeFrameBuf.position.view,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
 		// Deferred composition
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.composition));
 		writeDescriptorSets = {
@@ -1440,6 +1471,8 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &mesh.faceDataBuffer.descriptor),
 			// Binding 7 : Neighbor Face Nor Buffer
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7, &mesh.faceNorBuffer.descriptor),
+			// Binding 8 : Extra texture target
+			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8, &texDescriptorEdge),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
@@ -1554,7 +1587,17 @@ public:
 		colorBlendState.pAttachments = blendAttachmentStates.data();
 
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.offscreen));
-		rasterizationState.lineWidth = 2.f;
+
+
+		std::array<VkPipelineColorBlendAttachmentState, 1> blendAttachmentStates2 = {
+			vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE)
+		};
+		colorBlendState.attachmentCount = static_cast<uint32_t>(blendAttachmentStates2.size());
+		colorBlendState.pAttachments = blendAttachmentStates2.data();
+		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+		rasterizationState.lineWidth = 5.f;
+		depthStencilState.depthWriteEnable = VK_FALSE;
+		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1746,7 +1789,7 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Test1", "Test2"});
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Line", "Test1", "Test2"});
 			ImGui::InputInt("Stride", &singleStride);
 			ImGui::DragFloat("DepthFactor", &depthFactor, 0.1f, 0.f, 100.f);
 			overlay->sliderInt("U", &uFactor, 0, 100);

@@ -3,6 +3,7 @@
 layout (binding = 1) uniform sampler2D samplerposition;
 layout (binding = 2) uniform sampler2D samplerNormal;
 layout (binding = 3) uniform isampler2D samplerAlbedo;
+layout (binding = 8) uniform sampler2D samplerEdge;
 
 layout (location = 0) in vec2 inUV;
 
@@ -474,9 +475,15 @@ vec3 case8(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
-vec3 case9(int size, vec2 inUV, vec2 tex_offset){
+vec3 case9(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 	int objectID = texture(samplerAlbedo, inUV).r;  
 	int faceID = texture(samplerAlbedo, inUV).g;  
+	vec2 uvVal = vec2(texture(samplerposition, inUV).a, texture(samplerNormal, inUV).a);
+	float uDiv = 1.f / uFactor;
+	float vDiv = 1.f / vFactor;
+	int uSlot = int(uvVal.x / uDiv);
+	int vSlot = int(uvVal.y / vDiv);
+	bool noObj = true;
 	for(int i = -size; i <= size; ++i){
 		for(int j = -size; j <= size; ++j){
 			if((i == 0) && (j == 0)){
@@ -486,9 +493,14 @@ vec3 case9(int size, vec2 inUV, vec2 tex_offset){
 			if(abs(currID - objectID) > 0){
 				return vec3(1);
 			}else{
-				int currFaceID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).g;
-				if(abs(currFaceID - faceID) > 0){
-					return vec3(ubo.vFactor / 100.f);
+				if((currID == -1) || (objectID) == -1){
+					continue;
+				}
+				vec2 currUVVal = vec2(texture(samplerposition, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).a, texture(samplerNormal, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).a);
+				int currUSlot = int(currUVVal.x / uDiv);
+				int currVSlot = int(currUVVal.y / vDiv);
+				if(((currUSlot - uSlot) > 0) || ((currVSlot - vSlot) > 0)){
+					return vec3(1);
 				}
 			}
 		}
@@ -496,7 +508,11 @@ vec3 case9(int size, vec2 inUV, vec2 tex_offset){
 	return vec3(0);
 }
 
-vec3 case10(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case10(int size, vec2 inUV, vec2 tex_offset){
+	return texture(samplerEdge, inUV).rgb;
+}
+
+vec3 case11(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -513,7 +529,7 @@ vec3 case10(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
-vec3 case11(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case12(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -535,6 +551,8 @@ void main()
 	// Get G-Buffer values
 	vec3 pos = texture(samplerposition, inUV).rgb;
 	vec3 normal = texture(samplerNormal, inUV).rgb;
+	vec2 uv = vec2(texture(samplerposition, inUV).a, texture(samplerNormal, inUV).a);
+	vec4 edge = texture(samplerEdge, inUV).rgba;
 	//vec4 albedo = texture(samplerAlbedo, inUV);
 	//float objectID = albedo.r;
 	int objectID = texture(samplerAlbedo, inUV).r;  
@@ -717,10 +735,10 @@ void main()
 				uv2 = uv1 + vec2(tex_offset.x, 0);
 				uv3 = uv1 + vec2(0, tex_offset.y);
 				uv4 = uv1 + tex_offset;
-				finalCol += case9(size, uv1, tex_offset);
-				finalCol += case9(size, uv2, tex_offset);
-				finalCol += case9(size, uv3, tex_offset);
-				finalCol += case9(size, uv4, tex_offset);
+				finalCol += case9(size, uv1, tex_offset, ubo.uFactor, ubo.vFactor);
+				finalCol += case9(size, uv2, tex_offset, ubo.uFactor, ubo.vFactor);
+				finalCol += case9(size, uv3, tex_offset, ubo.uFactor, ubo.vFactor);
+				finalCol += case9(size, uv4, tex_offset, ubo.uFactor, ubo.vFactor);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 10:
@@ -745,6 +763,18 @@ void main()
 				finalCol += case11(size, uv2, tex_offset);
 				finalCol += case11(size, uv3, tex_offset);
 				finalCol += case11(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 12:
+				finalCol = vec3(0);
+				uv1 = inUV - (tex_offset / 2.f);
+				uv2 = uv1 + vec2(tex_offset.x, 0);
+				uv3 = uv1 + vec2(0, tex_offset.y);
+				uv4 = uv1 + tex_offset;
+				finalCol += case12(size, uv1, tex_offset);
+				finalCol += case12(size, uv2, tex_offset);
+				finalCol += case12(size, uv3, tex_offset);
+				finalCol += case12(size, uv4, tex_offset);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 		}		

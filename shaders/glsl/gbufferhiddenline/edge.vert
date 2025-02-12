@@ -9,8 +9,9 @@ layout (binding = 0) uniform UBO
 
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec3 inNormal;
-layout (location = 2) in int inObjectID;
-layout (location = 3) in int inFaceID;
+layout (location = 2) in vec2 inUV;
+layout (location = 3) in int inObjectID;
+layout (location = 4) in int inFaceID;
 
 layout (location = 0) out vec3 outPos;
 layout (location = 1) out vec3 outNormal;
@@ -19,17 +20,29 @@ layout (location = 3) out flat int outFaceID;
 
 void main() 
 {
-	//gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
-	float x = -1;
-	float y = -1;
-	if(gl_VertexIndex == 0){
-		y = 3;
-	}else if(gl_VertexIndex == 1){
+//	float x = -1;
+//	float y = -1;
+//	if(gl_VertexIndex == 0){
+//
+//	}else if(gl_VertexIndex == 1){
+//		x = 3;
+//		y = 3;
+//	}
+//	gl_Position = vec4(x, y, 1, 1);
+	vec3 viewPos = vec3(ubo.view * ubo.model * vec4(inPos,1));
+	
+	//move all vertices towards positive z a small amount.
+	//vec3 closerViewPos = viewPos + vec3(0, 0, 0.01);
+	
+	//lerp all vertices with camera. Far vertices will move more since all using one lerp value.
+	//vec3 closerViewPos = mix(viewPos, vec3(0), 0.01);
+	
+	//move all vertices towards camera a small amount.
+	//vec3 closerViewPos = viewPos - normalize(viewPos) * 0.01;
+	vec3 closerViewPos = viewPos;
 
-	}else{
-		x=3;
-	}
-	outPos = vec3(ubo.projection * ubo.view * ubo.model * vec4(inPos, 1));
+	gl_Position = ubo.projection * vec4(closerViewPos,1);
+	outPos = closerViewPos;
 	outNormal = inNormal;
 	outObjectID = inObjectID;
 	outFaceID = inFaceID;

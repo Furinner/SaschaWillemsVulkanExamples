@@ -3,8 +3,8 @@
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec3 inNormal;
 layout (location = 2) in vec2 inUV;
-layout (location = 3) in int objectID;
-layout (location = 4) in int faceID;
+layout (location = 3) in int inObjectID;
+layout (location = 4) in int inFaceID;
 
 layout (binding = 0) uniform UBO 
 {
@@ -19,6 +19,7 @@ layout (location = 1) out vec3 outWorldPos;
 layout (location = 2) out flat int outObjectID;
 layout (location = 3) out vec3 outCameraPos;
 layout (location = 4) out flat int outFaceID;
+layout (location = 5) out vec2 outUV;
 
 void main() 
 {
@@ -35,6 +36,7 @@ void main()
 	//outNormal = mat3(ubo.view) * normalize(inNormal);
 	outNormal = inNormal;
 	outCameraPos = vec3(-ubo.model[3]);
-	outObjectID = objectID;
-	outFaceID = faceID;
+	outObjectID = inObjectID;
+	outFaceID = inFaceID;
+	outUV = inUV;
 }

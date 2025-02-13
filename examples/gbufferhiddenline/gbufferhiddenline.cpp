@@ -26,7 +26,7 @@ class VulkanExample : public VulkanExampleBase
 {
 
 	template<typename T>
-	static inline bool fequal(T a, T b, T epsilon = 0.001) {
+	static inline bool fequal(T a, T b, T epsilon = 0.0001) {
 		if (a == b) {
 			// Shortcut
 			return true;
@@ -76,15 +76,17 @@ public:
 		//thus, alignas(16) automatically fill the bytes to make the variable behind has a start memory point be multiple of 16.
 		alignas(16) glm::vec3 position;
 		alignas(16) glm::vec3 normal;
-		alignas(16) glm::vec3 faceNor;
-		alignas(16) glm::vec3 symFaceNor;
+		alignas(16) glm::vec3 faceNor = glm::vec3(0);
+		alignas(16) glm::vec3 symFaceNor = glm::vec3(0);
 		alignas(8) glm::vec2 uv;
 		alignas(4) int objectID;
 		alignas(4) int faceID;
+		alignas(4) int border = 0;
 		alignas(4) int uniqueID; //unique id in obj
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
-		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), objectID(ver->objectID), uv(ver->uv), faceID(faceID) {};
+		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), uniqueID(ver->uniqueID), faceID(faceID) {};
+		Vertex(Vertex* ver): position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
 
 		bool operator==(const Vertex& other) const {
 			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
@@ -98,8 +100,8 @@ public:
 			return bindingDescription;
 		}
 
-		static std::array<VkVertexInputAttributeDescription, 7> getAttributeDescriptions() {
-			std::array<VkVertexInputAttributeDescription, 7> attributeDescriptions{};
+		static std::array<VkVertexInputAttributeDescription, 8> getAttributeDescriptions() {
+			std::array<VkVertexInputAttributeDescription, 8> attributeDescriptions{};
 			attributeDescriptions[0].binding = 0;
 			attributeDescriptions[0].location = 0;
 			attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -127,13 +129,18 @@ public:
 
 			attributeDescriptions[5].binding = 0;
 			attributeDescriptions[5].location = 5;
-			attributeDescriptions[5].format = VK_FORMAT_R32_UINT;
+			attributeDescriptions[5].format = VK_FORMAT_R32_SINT;
 			attributeDescriptions[5].offset = offsetof(Vertex, objectID);
 
 			attributeDescriptions[6].binding = 0;
 			attributeDescriptions[6].location = 6;
-			attributeDescriptions[6].format = VK_FORMAT_R32_UINT;
+			attributeDescriptions[6].format = VK_FORMAT_R32_SINT;
 			attributeDescriptions[6].offset = offsetof(Vertex, faceID);
+
+			attributeDescriptions[7].binding = 0;
+			attributeDescriptions[7].location = 7;
+			attributeDescriptions[7].format = VK_FORMAT_R32_SINT;
+			attributeDescriptions[7].offset = offsetof(Vertex, border);
 
 			return attributeDescriptions;
 		}
@@ -253,6 +260,14 @@ public:
 				edgeIdx.push_back(newIdx + 1);
 				Vertex tmpV1 = Vertex(he1->prevVer, id);
 				Vertex tmpV2 = Vertex(he1->nextVer, id);
+				if (he1->sym != nullptr) {
+					tmpV1.symFaceNor = he1->sym->prevVer->faceNor;
+					tmpV2.symFaceNor = tmpV1.symFaceNor;
+				}
+				else {
+					tmpV1.border = 1;
+					tmpV2.border = 1;
+				}
 				edgeVert.push_back(tmpV1);
 				edgeVert.push_back(tmpV2);
 			}
@@ -262,6 +277,14 @@ public:
 				edgeIdx.push_back(newIdx + 1);
 				Vertex tmpV1 = Vertex(he2->prevVer, id);
 				Vertex tmpV2 = Vertex(he2->nextVer, id);
+				if (he2->sym != nullptr) {
+					tmpV1.symFaceNor = he2->sym->prevVer->faceNor;
+					tmpV2.symFaceNor = tmpV1.symFaceNor;
+				}
+				else {
+					tmpV1.border = 1;
+					tmpV2.border = 1;
+				}
 				edgeVert.push_back(tmpV1);
 				edgeVert.push_back(tmpV2);
 			}
@@ -271,16 +294,24 @@ public:
 				edgeIdx.push_back(newIdx + 1);
 				Vertex tmpV1 = Vertex(he3->prevVer, id);
 				Vertex tmpV2 = Vertex(he3->nextVer, id);
+				if (he3->sym != nullptr) {
+					tmpV1.symFaceNor = he3->sym->prevVer->faceNor;
+					tmpV2.symFaceNor = tmpV1.symFaceNor;
+				}
+				else {
+					tmpV1.border = 1;
+					tmpV2.border = 1;
+				}
 				edgeVert.push_back(tmpV1);
 				edgeVert.push_back(tmpV2);
 			}
-		}
+		};
 	};
 
 	struct Mesh {
 		std::vector<uint32_t> index{};
 		std::vector<uPtr<Vertex>> vertices1{};  //simple vertices, merged using position
-		std::vector<Vertex> vertices2{};  //complex vertices, used for final rendering
+		std::vector<uPtr<Vertex>> vertices2{};  //complex vertices, used for final rendering
 		std::vector<uPtr<FaceConnectToVertex>> facesConnectToVertex{};
 		std::vector<uPtr<HalfEdge>> halfEdges{};
 		std::vector<uPtr<Face>> faces{};
@@ -356,31 +387,31 @@ public:
 					Vertex* v1 = vertices1[idx1 + vertexBuffersSize1].get();
 					Vertex* v2 = vertices1[idx2 + vertexBuffersSize1].get();
 					Vertex* v3 = vertices1[idx3 + vertexBuffersSize1].get();
-					uPtr<HalfEdge> he1 = mkU<HalfEdge>(v1, v2);
-					uPtr<HalfEdge> he2 = mkU<HalfEdge>(v2, v3);
-					uPtr<HalfEdge> he3 = mkU<HalfEdge>(v3, v1);
 					FaceConnectToVertex* ftv1 = facesConnectToVertex[idx1 + vertexBuffersSize1].get();
 					FaceConnectToVertex* ftv2 = facesConnectToVertex[idx2 + vertexBuffersSize1].get();
 					FaceConnectToVertex* ftv3 = facesConnectToVertex[idx3 + vertexBuffersSize1].get();
-					Vertex v1fin(v1, faceID);
-					Vertex v2fin(v2, faceID);
-					Vertex v3fin(v3, faceID);
+					uPtr<Vertex> v1fin = mkU<Vertex>(v1, faceID);
+					uPtr<Vertex> v2fin = mkU<Vertex>(v2, faceID);
+					uPtr<Vertex> v3fin = mkU<Vertex>(v3, faceID);
+					uPtr<HalfEdge> he1 = mkU<HalfEdge>(v1fin.get(), v2fin.get());
+					uPtr<HalfEdge> he2 = mkU<HalfEdge>(v2fin.get(), v3fin.get());
+					uPtr<HalfEdge> he3 = mkU<HalfEdge>(v3fin.get(), v1fin.get());
 					ftv1->addFace(faceID);
 					ftv2->addFace(faceID);
 					ftv3->addFace(faceID);
 					uPtr<Face> f = mkU<Face>(objectID, faceID, ftv1, ftv2, ftv3, he1.get(), he2.get(), he3.get());
 					glm::vec3 faceNor = glm::normalize(glm::cross(v3->position - v2->position, v1->position - v2->position));
 					//glm::vec3 faceNor = glm::normalize((v1->normal + v2->normal + v3->normal) / 3.f);
-					v1fin.normal = v1->normal;
-					v2fin.normal = v2->normal;
-					v3fin.normal = v3->normal;
+					v1fin->faceNor = faceNor;
+					v2fin->faceNor = faceNor;
+					v3fin->faceNor = faceNor;
 					faceNors.push_back(glm::vec4(faceNor, 1));
 					index.push_back(vertexBuffersSize2 + indexCnt++);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
-					vertices2.push_back(v1fin);
-					vertices2.push_back(v2fin);
-					vertices2.push_back(v3fin);
+					vertices2.push_back(std::move(v1fin));
+					vertices2.push_back(std::move(v2fin));
+					vertices2.push_back(std::move(v3fin));
 					f->normal = faceNor;
 					faces.push_back(std::move(f));
 
@@ -433,8 +464,8 @@ public:
 				}
 				for (int i = facesSize; i < faces.size(); ++i) {
 					faces[i]->getAllNeighborFaces();
-					faces[i]->getAllBorderEdges(edgeIdx, edgeVert);
-					//faces[i]->getAllEdges(edgeIdx, edgeVert);
+					//faces[i]->getAllBorderEdges(edgeIdx, edgeVert);
+					faces[i]->getAllEdges(edgeIdx, edgeVert);
 					neighborFacesData.insert(neighborFacesData.end(), faces[i]->neighborFaces.begin(), faces[i]->neighborFaces.end());
 				}
 				facesSize = faces.size();
@@ -443,6 +474,13 @@ public:
 				indexBuffersSize = index.size();
 				++objectID;
 
+			}
+
+			//store vertices2's data
+			std::vector<Vertex> vertices2Data;
+			for (auto& ver : vertices2) {
+				Vertex tmpVer(ver.get());
+				vertices2Data.push_back(tmpVer);
 			}
 
 			size_t vertexBufferSize = vertexBuffersSize2 * sizeof(Vertex);
@@ -471,7 +509,7 @@ public:
 				vertexBufferSize,
 				&vertexStaging.buffer,
 				&vertexStaging.memory,
-				vertices2.data()));
+				vertices2Data.data()));
 			// Index data
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -759,7 +797,7 @@ public:
 		camera.movementSpeed = 80.f;
 		camera.position = { 0.f, 80.f, -350.f };
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
-		camera.setPerspective(60.0f, (float)width / (float)height, 0.01f, 2560.0f);
+		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 1000.0f);
 	}
 
 	~VulkanExample()
@@ -1258,14 +1296,17 @@ public:
 
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 
+		VkClearValue clearValues[1];
+		clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+
 		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
 		renderPassBeginInfo.renderPass = edgeFrameBuf.renderPass;
 		renderPassBeginInfo.framebuffer = edgeFrameBuf.frameBuffer;
 		renderPassBeginInfo.renderArea.extent.width = edgeFrameBuf.width;
 		renderPassBeginInfo.renderArea.extent.height = edgeFrameBuf.height;
 		//diff: render pass don't have any clear values
-		renderPassBeginInfo.clearValueCount = 0;
-		renderPassBeginInfo.pClearValues = nullptr;
+		renderPassBeginInfo.clearValueCount = 1;
+		renderPassBeginInfo.pClearValues = clearValues;
 
 		// Add memory barrier between render passes
 		VkImageMemoryBarrier colorBarrier = {};
@@ -1346,6 +1387,8 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
 		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_screen_debug", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_brake", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/5f_cube_smooth", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/test", vulkanDevice, queue, glTFLoadingFlags);
@@ -1582,7 +1625,9 @@ public:
 		pipelineCI.pVertexInputState = &pipelineVertexInputStateCreateInfo;
 		// Vertex input state from glTF model for pipeline rendering models
 		//pipelineCI.pVertexInputState = vkglTF::Vertex::getPipelineVertexInputState({ vkglTF::VertexComponent::Position, vkglTF::VertexComponent::UV, vkglTF::VertexComponent::Color, vkglTF::VertexComponent::Normal, vkglTF::VertexComponent::Tangent });
-		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+		
+		//cullMode should change to no culling, so back face can also get into depth attachment.
+		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
 		// Offscreen pipeline
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
@@ -1806,11 +1851,11 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Line", "Test1", "Test2"});
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Edge", "EdgeUV", "Test1", "Test2"});
 			ImGui::InputInt("Stride", &singleStride);
 			ImGui::DragFloat("DepthFactor", &depthFactor, 0.1f, 0.f, 100.f);
-			overlay->sliderInt("U", &uFactor, 0, 100);
-			overlay->sliderInt("V", &vFactor, 0, 100);
+			overlay->sliderInt("U", &uFactor, 1, 100);
+			overlay->sliderInt("V", &vFactor, 1, 100);
 		}
 	}
 };

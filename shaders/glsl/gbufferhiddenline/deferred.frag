@@ -130,9 +130,9 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 	vec3 nor = vec3(faceNor[faceIdx]);
 	float checkVal1 = dot(nor, negViewDir);
 	float checkVal2 = 1.f;
-	if(checkVal1 <= 0.f){
-		return true;
-	}
+//	if(checkVal1 <= 0.f){
+//		return true;
+//	}
 	for(int i = -1; i <= 1; ++i){
 		for(int j = -1; j <= 1; ++j){
 			if((i == 0) && (j == 0)){
@@ -154,11 +154,12 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 					if(haveThisNeighbor){
 						continue;
 					}else{
-						//check neighbor for this pixel
+						//check neighbor for this pixel  (center_uv)
 						for(int k = faceIdxStart; k < faceIdxStart + neighborFaceCnt; ++k){
 							int neighborFaceIdx = objFaceInfo + faceData[k];
 							vec3 neighborNor = vec3(faceNor[neighborFaceIdx]);
 							checkVal2 = dot(neighborNor, negViewDir);
+							//if it has one neighbor face's normal dot with camera direction is negative
 							if(checkVal2 <= 0.f){
 								shouldColor = true;
 								return shouldColor;
@@ -180,10 +181,10 @@ bool grid_3x3_2(vec2 center_uv, vec2 tex_offset){
 						vec3 nor2 = vec3(faceNor[faceIdx2]);
 						vec3 negViewDir2 = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * curr_screen_uv, -1));
 						checkVal2 = dot(nor2, negViewDir2);
-						if(checkVal2 <= 0.f){
-							shouldColor = true;
-							return shouldColor;
-						}
+//						if(checkVal2 <= 0.f){
+//							shouldColor = true;
+//							return shouldColor;
+//						}
 						for(int k = faceIdxStart2; k < faceIdxStart2 + neighborFaceCnt2; ++k){
 							int neighborFaceIdx = objFaceInfo + faceData[k];
 							vec3 neighborNor = vec3(faceNor[neighborFaceIdx]);
@@ -299,6 +300,7 @@ vec3 case5(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
+//LineFaceNor
 vec3 case6(int size, vec2 center_uv, vec2 tex_offset){
 	int objectID = texture(samplerAlbedo, center_uv).r;  
 	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
@@ -311,9 +313,9 @@ vec3 case6(int size, vec2 center_uv, vec2 tex_offset){
 		vec2 screen_uv = center_uv * 2 -1;
 		screen_uv.y = - screen_uv.y;
 		vec3 screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * screen_uv, -1));
-		if(dot(screen_normal, normalTex) <= 0.f){
-			return vec3(1);
-		}
+//		if(dot(screen_normal, normalTex) <= 0.f){
+//			return vec3(1);
+//		}
 	}
 	for(int i = -size; i <= size; ++i){
 		for(int j = -size; j <= size; ++j){
@@ -332,9 +334,9 @@ vec3 case6(int size, vec2 center_uv, vec2 tex_offset){
 				vec2 curr_screen_uv = currUV * 2 -1;
 				curr_screen_uv.y = -curr_screen_uv.y;
 				vec3 curr_screen_normal = mat3(ubo.camViewTr) * -normalize(vec3(screen_length * curr_screen_uv, -1));
-				if(dot(curr_normal_tex, curr_screen_normal) <= 0.f){
-					return vec3(1);
-				}
+//				if(dot(curr_normal_tex, curr_screen_normal) <= 0.f){
+//					return vec3(1);
+//				}
 			}
 		}
 	}
@@ -509,10 +511,62 @@ vec3 case9(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 }
 
 vec3 case10(int size, vec2 inUV, vec2 tex_offset){
-	return texture(samplerEdge, inUV).rgb;
+	vec3 center_edge =  texture(samplerEdge, inUV).rgb;
+	if(center_edge == vec3(1)){
+		return vec3(1);
+	}
+	int objectID = texture(samplerAlbedo, inUV).r;  
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				continue;
+			}
+			int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+			if(abs(currID - objectID) > 0){
+				return vec3(1);
+			}
+		}
+	}
+	return vec3(0);
 }
 
-vec3 case11(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case11(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
+	vec3 center_edge =  texture(samplerEdge, inUV).rgb;
+	if(center_edge == vec3(1)){
+		return vec3(1);
+	}
+	int objectID = texture(samplerAlbedo, inUV).r; 
+	vec2 uvVal = vec2(texture(samplerposition, inUV).a, texture(samplerNormal, inUV).a);
+	float uDiv = 1.f / uFactor;
+	float vDiv = 1.f / vFactor;
+	int uSlot = int(uvVal.x / uDiv);
+	int vSlot = int(uvVal.y / vDiv);
+	bool noObj = true;
+	for(int i = -size; i <= size; ++i){
+		for(int j = -size; j <= size; ++j){
+			if((i == 0) && (j == 0)){
+				continue;
+			}
+			int currID = texture(samplerAlbedo, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).r;
+			if(abs(currID - objectID) > 0){
+				return vec3(1);
+			}else{
+				if((currID == -1) || (objectID) == -1){
+					continue;
+				}
+				vec2 currUVVal = vec2(texture(samplerposition, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).a, texture(samplerNormal, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).a);
+				int currUSlot = int(currUVVal.x / uDiv);
+				int currVSlot = int(currUVVal.y / vDiv);
+				if(((currUSlot - uSlot) > 0) || ((currVSlot - vSlot) > 0)){
+					return vec3(1);
+				}
+			}
+		}
+	}
+	return vec3(0);
+}
+
+vec3 case12(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -529,7 +583,7 @@ vec3 case11(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
-vec3 case12(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case13(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -559,6 +613,13 @@ void main()
 	int faceID = texture(samplerAlbedo, inUV).g; 
 	vec2 tex_offset = 1.f / textureSize(samplerAlbedo, 0); // gets size of single texel
 	int size = ubo.singleStride;
+
+	vec3 finalCol = vec3(0);
+	vec2 uv1 = inUV - (tex_offset / 2.f);
+	vec2 uv2 = uv1 + vec2(tex_offset.x, 0);
+	vec2 uv3 = uv1 + vec2(0, tex_offset.y);
+	vec2 uv4 = uv1 + tex_offset;
+
 	// Debug display
 	if (ubo.displayDebugTarget > 0) {
 		switch (ubo.displayDebugTarget) {
@@ -588,6 +649,7 @@ void main()
 				//outFragcolor.rgb = vec3(inUV.x, inUV.y, 0);
 				break;
 			case 3: 
+				//LineWire
 //				for(int i = -size; i <= size; ++i){
 //					for(int j = -size; j <= size; ++j){
 //						if((i == 0) && (j == 0)){
@@ -607,11 +669,6 @@ void main()
 //					}
 //				}
 //				outFragcolor.rgb = vec3(0);
-				vec3 finalCol = vec3(0);
-				vec2 uv1 = inUV - (tex_offset / 2.f);
-				vec2 uv2 = uv1 + vec2(tex_offset.x, 0);
-				vec2 uv3 = uv1 + vec2(0, tex_offset.y);
-				vec2 uv4 = uv1 + tex_offset;
 				finalCol += case3(size, uv1, tex_offset);
 				finalCol += case3(size, uv2, tex_offset);
 				finalCol += case3(size, uv3, tex_offset);
@@ -619,6 +676,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 4: 
+				//LineObj
 //				for(int i = -size; i <= size; ++i){
 //					for(int j = -size; j <= size; ++j){
 //						if((i == 0) && (j == 0)){
@@ -632,11 +690,6 @@ void main()
 //					}
 //				}
 //				outFragcolor.rgb = vec3(0);
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
 				finalCol += case4(size, uv1, tex_offset);
 				finalCol += case4(size, uv2, tex_offset);
 				finalCol += case4(size, uv3, tex_offset);
@@ -644,6 +697,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 5:
+				//LineFace
 //			    bool inObj = false;
 //				int neighborFaceCnt = 0;
 //				int faceIdxStart = 0;
@@ -682,11 +736,6 @@ void main()
 //					}
 //				}
 //				outFragcolor.rgb = vec3(0);
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
 				finalCol += case5(size, uv1, tex_offset);
 				finalCol += case5(size, uv2, tex_offset);
 				finalCol += case5(size, uv3, tex_offset);
@@ -694,11 +743,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 6:
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
+				//LineFaceNor
 				finalCol += case6(size, uv1, tex_offset);
 				finalCol += case6(size, uv2, tex_offset);
 				finalCol += case6(size, uv3, tex_offset);
@@ -706,11 +751,6 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 7:
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
 				finalCol += case7(size, uv1, tex_offset);
 				finalCol += case7(size, uv2, tex_offset);
 				finalCol += case7(size, uv3, tex_offset);
@@ -718,11 +758,6 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 8:
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
 				finalCol += case8(size, uv1, tex_offset);
 				finalCol += case8(size, uv2, tex_offset);
 				finalCol += case8(size, uv3, tex_offset);
@@ -730,11 +765,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 9:
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
+				//isoparametric Line
 				finalCol += case9(size, uv1, tex_offset, ubo.uFactor, ubo.vFactor);
 				finalCol += case9(size, uv2, tex_offset, ubo.uFactor, ubo.vFactor);
 				finalCol += case9(size, uv3, tex_offset, ubo.uFactor, ubo.vFactor);
@@ -742,11 +773,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 10:
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
+				//Edge
 				finalCol += case10(size, uv1, tex_offset);
 				finalCol += case10(size, uv2, tex_offset);
 				finalCol += case10(size, uv3, tex_offset);
@@ -754,27 +781,25 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 11:
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
-				finalCol += case11(size, uv1, tex_offset);
-				finalCol += case11(size, uv2, tex_offset);
-				finalCol += case11(size, uv3, tex_offset);
-				finalCol += case11(size, uv4, tex_offset);
+				//Edge UV
+				finalCol += case11(size, uv1, tex_offset, ubo.uFactor, ubo.vFactor);
+				finalCol += case11(size, uv2, tex_offset, ubo.uFactor, ubo.vFactor);
+				finalCol += case11(size, uv3, tex_offset, ubo.uFactor, ubo.vFactor);
+				finalCol += case11(size, uv4, tex_offset, ubo.uFactor, ubo.vFactor);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 12:
-				finalCol = vec3(0);
-				uv1 = inUV - (tex_offset / 2.f);
-				uv2 = uv1 + vec2(tex_offset.x, 0);
-				uv3 = uv1 + vec2(0, tex_offset.y);
-				uv4 = uv1 + tex_offset;
 				finalCol += case12(size, uv1, tex_offset);
 				finalCol += case12(size, uv2, tex_offset);
 				finalCol += case12(size, uv3, tex_offset);
 				finalCol += case12(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 13:
+				finalCol += case13(size, uv1, tex_offset);
+				finalCol += case13(size, uv2, tex_offset);
+				finalCol += case13(size, uv3, tex_offset);
+				finalCol += case13(size, uv4, tex_offset);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 		}		

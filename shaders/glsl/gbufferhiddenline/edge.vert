@@ -14,11 +14,19 @@ layout (location = 3) in vec3 inSymFaceNor;
 layout (location = 4) in vec2 inUV;
 layout (location = 5) in int inObjectID;
 layout (location = 6) in int inFaceID;
+layout (location = 7) in int inBorder;
 
 layout (location = 0) out vec3 outPos;
 layout (location = 1) out vec3 outNormal;
-layout (location = 2) out flat int outObjectID;
-layout (location = 3) out flat int outFaceID;
+layout (location = 2) out vec3 outFaceNor;
+layout (location = 3) out vec3 outSymFaceNor;
+//flat won't be interpolated, it will choose a provoking vertex for all primitives
+//for example, Vertex's id is flat int, ver1.id = 0, ver2.id = 1, ver3.id = 2
+//in fragment shader, all fragment of this triangle will have a id of 2, 
+//since ver2(the last vertex) is the provoking vertex here.
+layout (location = 4) out flat int outObjectID;
+layout (location = 5) out flat int outFaceID;
+layout (location = 6) out flat int outBorder;
 
 void main() 
 {
@@ -41,11 +49,27 @@ void main()
 	
 	//move all vertices towards camera a small amount.
 	//vec3 closerViewPos = viewPos - normalize(viewPos) * 0.01;
+	
 	vec3 closerViewPos = viewPos;
 
 	gl_Position = ubo.projection * vec4(closerViewPos,1);
 	outPos = closerViewPos;
 	outNormal = inNormal;
+	outFaceNor = mat3(ubo.view) * inFaceNor;
+	outSymFaceNor = mat3(ubo.view) * inSymFaceNor;
+
+	if((length(inFaceNor) == 0.f) || (length(inSymFaceNor) == 0.f)){
+		outBorder = inBorder;
+	}else{
+		float checkVal1 = dot(mat3(ubo.view) * inFaceNor, normalize(closerViewPos));
+		float checkVal2 = dot(mat3(ubo.view) * inSymFaceNor, normalize(closerViewPos));
+		if((checkVal1 * checkVal2) <= 0.0f){
+			outBorder = 1;
+		}else{
+			outBorder = inBorder;
+		}
+	}
+
 	outObjectID = inObjectID;
 	outFaceID = inFaceID;
 }

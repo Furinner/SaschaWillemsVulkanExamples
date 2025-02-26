@@ -15,6 +15,7 @@
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
 #include <memory>
+#include <limits>
 #define DLF 1
 
 #define MAX_NEIGHBOR_FACE_COUNT 50
@@ -24,9 +25,8 @@
 
 class VulkanExample : public VulkanExampleBase
 {
-
 	template<typename T>
-	static inline bool fequal(T a, T b, T epsilon = 0.0001) {
+	static inline bool fequal(T a, T b, T epsilon = std::numeric_limits<float>::min()) {
 		if (a == b) {
 			// Shortcut
 			return true;
@@ -341,7 +341,7 @@ public:
 				std::unordered_map<std::string, HalfEdge*> symHEs;
 				std::vector<std::vector<int>> neighborFaces;
 				for (int i = 0; i < vertexBuffer.size(); ++i) {
-					vertexBuffer[i].pos *= 100.f;
+					vertexBuffer[i].pos *= 10.f;
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
 					glm::vec2 uv = vertexBuffer[i].uv;
@@ -405,6 +405,12 @@ public:
 					v1fin->faceNor = faceNor;
 					v2fin->faceNor = faceNor;
 					v3fin->faceNor = faceNor;
+					glm::vec2 uv1 = vertexBuffer[indexBuffers[objectID][i]].uv;
+					glm::vec2 uv2 = vertexBuffer[indexBuffers[objectID][i + 1]].uv;
+					glm::vec2 uv3 = vertexBuffer[indexBuffers[objectID][i + 2]].uv;
+					v1fin->uv = uv1;
+					v2fin->uv = uv2;
+					v3fin->uv = uv3;
 					faceNors.push_back(glm::vec4(faceNor, 1));
 					index.push_back(vertexBuffersSize2 + indexCnt++);
 					index.push_back(vertexBuffersSize2 + indexCnt++);
@@ -794,10 +800,10 @@ public:
 		/*camera.position = { 2.15f, 0.3f, -8.75f };
 		camera.setRotation(glm::vec3(-0.75f, 12.5f, 0.0f));
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);*/
-		camera.movementSpeed = 80.f;
-		camera.position = { 0.f, 80.f, -350.f };
+		camera.movementSpeed = 5.f;
+		camera.position = { 0.f, 3.f, -15.f };
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
-		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 1000.0f);
+		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
 	}
 
 	~VulkanExample()
@@ -1387,7 +1393,8 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy1", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_screen_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_brake", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);

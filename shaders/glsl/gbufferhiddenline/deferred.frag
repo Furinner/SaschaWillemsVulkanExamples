@@ -478,6 +478,7 @@ vec3 case8(int size, vec2 center_uv, vec2 tex_offset){
 }
 
 vec3 case9(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
+	//isoparametric line
 	int objectID = texture(samplerAlbedo, inUV).r;  
 	int faceID = texture(samplerAlbedo, inUV).g;  
 	vec2 uvVal = vec2(texture(samplerposition, inUV).a, texture(samplerNormal, inUV).a);
@@ -511,6 +512,7 @@ vec3 case9(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 }
 
 vec3 case10(int size, vec2 inUV, vec2 tex_offset){
+	//edge
 	vec3 center_edge =  texture(samplerEdge, inUV).rgb;
 	if(center_edge == vec3(1)){
 		return vec3(1);
@@ -531,6 +533,7 @@ vec3 case10(int size, vec2 inUV, vec2 tex_offset){
 }
 
 vec3 case11(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
+	//edge UV
 	vec3 center_edge =  texture(samplerEdge, inUV).rgb;
 	if(center_edge == vec3(1)){
 		return vec3(1);
@@ -557,7 +560,7 @@ vec3 case11(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 				vec2 currUVVal = vec2(texture(samplerposition, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).a, texture(samplerNormal, inUV + vec2(tex_offset.x * i, tex_offset.y * j)).a);
 				int currUSlot = int(currUVVal.x / uDiv);
 				int currVSlot = int(currUVVal.y / vDiv);
-				if(((currUSlot - uSlot) > 0) || ((currVSlot - vSlot) > 0)){
+				if((abs(currUSlot - uSlot) > 0) || (abs(currVSlot - vSlot) > 0)){
 					return vec3(1);
 				}
 			}

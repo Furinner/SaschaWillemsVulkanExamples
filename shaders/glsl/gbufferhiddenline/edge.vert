@@ -23,7 +23,7 @@ layout (location = 3) out vec3 outSymFaceNor;
 //flat won't be interpolated, it will choose a provoking vertex for all primitives
 //for example, Vertex's id is flat int, ver1.id = 0, ver2.id = 1, ver3.id = 2
 //in fragment shader, all fragment of this triangle will have a id of 2, 
-//since ver2(the last vertex) is the provoking vertex here.
+//since ver3(the last vertex) is the provoking vertex here.
 layout (location = 4) out flat int outObjectID;
 layout (location = 5) out flat int outFaceID;
 layout (location = 6) out flat int outBorder;
@@ -58,12 +58,12 @@ void main()
 	outFaceNor = mat3(ubo.view) * inFaceNor;
 	outSymFaceNor = mat3(ubo.view) * inSymFaceNor;
 
-	if((length(inFaceNor) == 0.f) || (length(inSymFaceNor) == 0.f)){
+	if(inBorder == 1){
 		outBorder = inBorder;
 	}else{
 		float checkVal1 = dot(mat3(ubo.view) * inFaceNor, normalize(closerViewPos));
 		float checkVal2 = dot(mat3(ubo.view) * inSymFaceNor, normalize(closerViewPos));
-		if((checkVal1 * checkVal2) <= 0.0f){
+		if((checkVal1 * checkVal2) <= 0){
 			outBorder = 1;
 		}else{
 			outBorder = inBorder;

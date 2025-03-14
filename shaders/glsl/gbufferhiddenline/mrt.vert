@@ -8,6 +8,7 @@ layout (location = 4) in vec2 inUV;
 layout (location = 5) in int inObjectID;
 layout (location = 6) in int inFaceID;
 layout (location = 7) in int inBorder;
+layout (location = 8) in int inHeID;
 
 layout (binding = 0) uniform UBO 
 {

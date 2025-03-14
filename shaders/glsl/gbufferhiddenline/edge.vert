@@ -15,6 +15,7 @@ layout (location = 4) in vec2 inUV;
 layout (location = 5) in int inObjectID;
 layout (location = 6) in int inFaceID;
 layout (location = 7) in int inBorder;
+layout (location = 8) in int inHeID;
 
 layout (location = 0) out vec3 outPos;
 layout (location = 1) out vec3 outNormal;
@@ -27,6 +28,7 @@ layout (location = 3) out vec3 outSymFaceNor;
 layout (location = 4) out flat int outObjectID;
 layout (location = 5) out flat int outFaceID;
 layout (location = 6) out flat int outBorder;
+layout (location = 7) out flat int outHeID;
 
 void main() 
 {
@@ -72,4 +74,5 @@ void main()
 
 	outObjectID = inObjectID;
 	outFaceID = inFaceID;
+	outHeID = inHeID;
 }

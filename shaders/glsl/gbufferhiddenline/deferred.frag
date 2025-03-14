@@ -3,7 +3,8 @@
 layout (binding = 1) uniform sampler2D samplerposition;
 layout (binding = 2) uniform sampler2D samplerNormal;
 layout (binding = 3) uniform isampler2D samplerAlbedo;
-layout (binding = 8) uniform sampler2D samplerEdge;
+layout (binding = 8) uniform isampler2D samplerEdge;
+layout (binding = 9) uniform sampler2D samplerLockedEdge;
 
 layout (location = 0) in vec2 inUV;
 
@@ -513,8 +514,8 @@ vec3 case9(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 
 vec3 case10(int size, vec2 inUV, vec2 tex_offset){
 	//edge
-	vec3 center_edge =  texture(samplerEdge, inUV).rgb;
-	if(center_edge == vec3(1)){
+	ivec3 center_edge =  texture(samplerEdge, inUV).rgb;
+	if(center_edge.b == 1){
 		return vec3(1);
 	}
 	int objectID = texture(samplerAlbedo, inUV).r;  
@@ -534,8 +535,8 @@ vec3 case10(int size, vec2 inUV, vec2 tex_offset){
 
 vec3 case11(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 	//edge UV
-	vec3 center_edge =  texture(samplerEdge, inUV).rgb;
-	if(center_edge == vec3(1)){
+	ivec3 center_edge =  texture(samplerEdge, inUV).rgb;
+	if(center_edge.b == 1){
 		return vec3(1);
 	}
 	int objectID = texture(samplerAlbedo, inUV).r; 
@@ -569,7 +570,25 @@ vec3 case11(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 	return vec3(0);
 }
 
-vec3 case12(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case12(int size, vec2 inUV, vec2 tex_offset){
+	//edgePure
+	ivec3 center_edge =  texture(samplerEdge, inUV).rgb;
+	if(center_edge.b == 1){
+		return vec3(1);
+	}
+
+	return vec3(0);
+
+}
+
+vec3 case13(int size, vec2 inUV, vec2 tex_offset){
+	//LockedEdge
+	vec3 center_edge =  texture(samplerLockedEdge, inUV).rgb;
+	return center_edge;
+
+}
+
+vec3 case14(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -586,7 +605,7 @@ vec3 case12(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
-vec3 case13(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case15(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -792,6 +811,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 12:
+				//Edge Pure
 				finalCol += case12(size, uv1, tex_offset);
 				finalCol += case12(size, uv2, tex_offset);
 				finalCol += case12(size, uv3, tex_offset);
@@ -803,6 +823,20 @@ void main()
 				finalCol += case13(size, uv2, tex_offset);
 				finalCol += case13(size, uv3, tex_offset);
 				finalCol += case13(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 14:
+				finalCol += case14(size, uv1, tex_offset);
+				finalCol += case14(size, uv2, tex_offset);
+				finalCol += case14(size, uv3, tex_offset);
+				finalCol += case14(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 15:
+				finalCol += case15(size, uv1, tex_offset);
+				finalCol += case15(size, uv2, tex_offset);
+				finalCol += case15(size, uv3, tex_offset);
+				finalCol += case15(size, uv4, tex_offset);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 		}		

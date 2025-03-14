@@ -753,6 +753,7 @@ void VulkanExampleBase::drawUI(const VkCommandBuffer commandBuffer)
 void VulkanExampleBase::prepareFrame()
 {
 	// Acquire the next image from the swap chain
+	// change currentBuffer to next frame buffer
 	VkResult result = swapChain.acquireNextImage(semaphores.presentComplete, currentBuffer);
 	// Recreate the swapchain if it's no longer compatible with the surface (OUT_OF_DATE)
 	// SRS - If no longer optimal (VK_SUBOPTIMAL_KHR), wait until submitFrame() in case number of swapchain images will change on resize

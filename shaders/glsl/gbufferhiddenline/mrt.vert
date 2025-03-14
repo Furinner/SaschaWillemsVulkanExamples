@@ -39,7 +39,7 @@ void main()
 	//outNormal = mNormal * normalize(inNormal);	
 	//outNormal = mat3(ubo.view) * normalize(inNormal);
 	outNormal = inNormal;
-	outCameraPos = vec3(-ubo.model[3]);
+	outCameraPos = vec3(-ubo.view[2]);
 	outObjectID = inObjectID;
 	outFaceID = inFaceID;
 	outUV = inUV;

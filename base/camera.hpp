@@ -15,8 +15,6 @@
 class Camera
 {
 private:
-	float fov;
-	float znear, zfar;
 
 	void updateViewMatrix()
 	{
@@ -51,6 +49,11 @@ private:
 		}
 	};
 public:
+	float fov;
+	float znear, zfar;
+	float orthoLeft, orthoRight, orthoBottom, orthoTop;
+	float aspect;
+	bool orthographic = false;
 	enum CameraType { lookat, firstperson };
 	CameraType type = CameraType::lookat;
 
@@ -99,19 +102,27 @@ public:
 		this->zfar = zfar;
 		matrices.perspective = glm::perspective(glm::radians(fov), aspect, znear, zfar);
 		if (flipY) {
-			matrices.perspective[1][1] *= -1.0f;
+			//matrices.perspective[1][1] *= -1.0f;
 		}
 		if (matrices.view != currentMatrix) {
 			updated = true;
 		}
 	};
 
+	void updatePerspective(float fov, float aspect, float znear, float zfar) {
+		this->fov = fov;
+		this->fov = fov;
+		this->znear = znear;
+		this->zfar = zfar;
+		matrices.perspective = glm::perspective(glm::radians(fov), aspect, znear, zfar);
+	}
+
 	void updateAspectRatio(float aspect)
 	{
 		glm::mat4 currentMatrix = matrices.perspective;
 		matrices.perspective = glm::perspective(glm::radians(fov), aspect, znear, zfar);
 		if (flipY) {
-			matrices.perspective[1][1] *= -1.0f;
+			//matrices.perspective[1][1] *= -1.0f;
 		}
 		if (matrices.view != currentMatrix) {
 			updated = true;
@@ -148,6 +159,29 @@ public:
 		updateViewMatrix();
 	}
 
+	void magnify(short wheelDelta) {
+		if (orthographic) {
+			wheelDelta = -wheelDelta;
+			float btm = (orthoBottom + orthoTop) / 2.f;
+			float lfm = (orthoLeft + orthoRight) / 2.f;
+			orthoTop += (float)wheelDelta * 0.0005f;
+			orthoBottom -= (float)wheelDelta * 0.0005f;
+			orthoRight += (float)wheelDelta * 0.0005f * aspect;
+			orthoLeft -= (float)wheelDelta * 0.0005f * aspect;
+			if (orthoTop <= btm) {
+				orthoTop = 0.f;
+				orthoBottom = 0.f;
+			}
+			if (orthoRight <= lfm) {
+				orthoRight = 0.f;
+				orthoLeft = 0.f;
+			}
+		}
+		else {
+			translate(getCamFront() * (float)wheelDelta * 0.005f);
+		}
+	}
+
 	void setRotationSpeed(float rotationSpeed)
 	{
 		this->rotationSpeed = rotationSpeed;
@@ -156,6 +190,15 @@ public:
 	void setMovementSpeed(float movementSpeed)
 	{
 		this->movementSpeed = movementSpeed;
+	}
+
+	glm::vec3 getCamFront() {
+		glm::vec3 camFront;
+		camFront.x = -cos(glm::radians(rotation.x)) * sin(glm::radians(rotation.y));
+		camFront.y = sin(glm::radians(rotation.x));
+		camFront.z = cos(glm::radians(rotation.x)) * cos(glm::radians(rotation.y));
+		camFront = glm::normalize(camFront);
+		return camFront;
 	}
 
 	void update(float deltaTime)

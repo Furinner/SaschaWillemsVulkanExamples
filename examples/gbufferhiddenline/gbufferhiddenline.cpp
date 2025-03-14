@@ -88,7 +88,7 @@ public:
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
 		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), uniqueID(ver->uniqueID), faceID(faceID) {};
-		Vertex(Vertex* ver): position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
+		Vertex(Vertex* ver) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
 
 		bool operator==(const Vertex& other) const {
 			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
@@ -169,7 +169,7 @@ public:
 		Vertex* prevVer;
 		Vertex* nextVer;
 		HalfEdge* sym = nullptr;
-		HalfEdge( int id, Vertex* prevVer, Vertex* nextVer) : id(id), prevVer(prevVer), nextVer(nextVer) {};
+		HalfEdge(int id, Vertex* prevVer, Vertex* nextVer) : id(id), prevVer(prevVer), nextVer(nextVer) {};
 		void setSym(HalfEdge* sym) {
 			this->sym = sym;
 			sym->sym = this;
@@ -188,9 +188,9 @@ public:
 		HalfEdge* he3;
 		int neighborFaceCnt = 0;
 		std::vector<int> neighborFaces = {};
-		Face(int objectID, int id, FaceConnectToVertex* v1, FaceConnectToVertex* v2, FaceConnectToVertex* v3, HalfEdge* he1, HalfEdge* he2, HalfEdge* he3) 
+		Face(int objectID, int id, FaceConnectToVertex* v1, FaceConnectToVertex* v2, FaceConnectToVertex* v3, HalfEdge* he1, HalfEdge* he2, HalfEdge* he3)
 			:objectID(objectID), id(id), v1(v1), v2(v2), v3(v3), he1(he1), he2(he2), he3(he3) {};
-		
+
 		void getAllNeighborFaces() {
 			for (auto v1tmp : v1->neighborFaceIDs) {
 				if (v1tmp != id) {
@@ -444,7 +444,7 @@ public:
 					f->normal = faceNor;
 					faces.push_back(std::move(f));
 
-					std::array<HalfEdge*, 3> hes = { he1.get(), he2.get(), he3.get()};
+					std::array<HalfEdge*, 3> hes = { he1.get(), he2.get(), he3.get() };
 					for (auto currHe : hes) {
 						Vertex* ver1 = currHe->prevVer;
 						Vertex* ver2 = currHe->nextVer;
@@ -707,14 +707,14 @@ public:
 				for (int x = 0; x < width; ++x) {
 					int index = (y * width + x) * 4;
 
-					int32_t objID = edgePixels[index];    
-					int32_t heID = edgePixels[index + 1]; 
-					int32_t color = edgePixels[index + 2]; 
-					int32_t a = edgePixels[index + 3]; 
+					int32_t objID = edgePixels[index];
+					int32_t heID = edgePixels[index + 1];
+					int32_t color = edgePixels[index + 2];
+					int32_t a = edgePixels[index + 3];
 					if (color == 1) {
 						auto it = lineToDraw.find(objID);
 						if (it == lineToDraw.end()) {
-							lineToDraw[objID] = std::unordered_set<int32_t>{heID};
+							lineToDraw[objID] = std::unordered_set<int32_t>{ heID };
 						}
 						else {
 							lineToDraw[objID].insert(heID);
@@ -798,6 +798,7 @@ public:
 	//
 	//self-added
 	float fov = 60.f;
+	float oldFov = fov;
 	/*float pixelLengthY = (glm::tan(glm::radians(fov / 2.f)) / (height / 2.f));
 	float pixelLengthX = pixelLengthY * ((float)width / (float)height);*/
 	float halfScreenHeightY = glm::tan(glm::radians(fov / 2.f));
@@ -809,15 +810,7 @@ public:
 	int vFactor = 1;
 	bool lockedView = false;
 	bool prevLockedView = false;
-	//perspective camera parameter
-	float zNear = 0.0001f;
-	float zFar = 100.f;
-	//orthographic camera parameter
-	float orthoLeft = -4.f;
-	float orthoRight = 4.f;
-	float orthoBottom = -4.f;
-	float orthoTop = 4.f;
-	bool orthographic = false;
+	
 
 	struct {
 		struct {
@@ -858,12 +851,14 @@ public:
 		float depthFactor = 1.f;
 		int uFactor = 1;
 		int vFactor = 1;
+		bool orthographic = false;
 	} uniformDataComposition;
 
 	struct UniformDataEdge {
 		glm::mat4 projection;
 		glm::mat4 model;
 		glm::mat4 view;
+		bool orthographic;
 	} uniformDataEdge;
 
 	struct UniformDataLockedEdge {
@@ -942,8 +937,19 @@ public:
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);*/
 		camera.movementSpeed = 3.f;
 		camera.position = { 0.f, 3.f, -15.f };
+		//perspective camera parameter
+		camera.fov = 60.f;
+		camera.znear = 0.01f;
+		camera.zfar = 256.0f;
+		camera.aspect = (float)width / (float)height;
+		//orthographic camera parameter
+		camera.orthoLeft = -4.f;
+		camera.orthoRight = 4.f;
+		camera.orthoBottom = camera.orthoLeft * height / width;
+		camera.orthoTop = camera.orthoRight * height / width;
+		camera.orthographic = false;
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
-		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
+		camera.setPerspective(60.f, (float)width / (float)height, 0.01f, 256.0f);
 	}
 
 	~VulkanExample()
@@ -1331,7 +1337,7 @@ public:
 		dependencies[2].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 		dependencies[2].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
 		dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-		
+
 		dependencies[1].srcSubpass = 0;
 		dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
 		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -1656,7 +1662,7 @@ public:
 		if (lockedEdgeCmdBuffer == VK_NULL_HANDLE) {
 			lockedEdgeCmdBuffer = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
 		}
-		
+
 		VkSemaphoreCreateInfo semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
 		VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &lockedEdgeSemaphore));
 
@@ -1694,7 +1700,7 @@ public:
 		vkCmdDraw(lockedEdgeCmdBuffer, 0, 1, 0, 0);
 
 		vkCmdEndRenderPass(lockedEdgeCmdBuffer);
-		
+
 
 		VK_CHECK_RESULT(vkEndCommandBuffer(lockedEdgeCmdBuffer));
 	}
@@ -1715,10 +1721,11 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug2", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/pixels_debug", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug3", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/pixels_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/torus", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_screen_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_brake", vulkanDevice, queue, glTFLoadingFlags);
@@ -1730,6 +1737,9 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/quad", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cube", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
+		//view independent
+		//fitting, 只是显示，不用精确。
+		//遗传，启发式。
 	}
 
 	//Final Composition Command Buffer
@@ -1904,7 +1914,7 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.floor, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.floor.normalMap.descriptor)
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
-	
+
 		// Edge
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.edge));
 		writeDescriptorSets = {
@@ -1975,7 +1985,7 @@ public:
 		pipelineCI.pVertexInputState = &pipelineVertexInputStateCreateInfo;
 		// Vertex input state from glTF model for pipeline rendering models
 		//pipelineCI.pVertexInputState = vkglTF::Vertex::getPipelineVertexInputState({ vkglTF::VertexComponent::Position, vkglTF::VertexComponent::UV, vkglTF::VertexComponent::Color, vkglTF::VertexComponent::Normal, vkglTF::VertexComponent::Tangent });
-		
+
 		//cullMode should change to no culling, so back face can also get into depth attachment.
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
@@ -2034,11 +2044,11 @@ public:
 		// Edge vertex shader
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.edge, sizeof(UniformDataEdge)))
 
-		// Locked Edge vertex shader
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.lockedEdge, sizeof(UniformDataLockedEdge)))
+			// Locked Edge vertex shader
+			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.lockedEdge, sizeof(UniformDataLockedEdge)))
 
-		// Deferred fragment shader
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.composition, sizeof(UniformDataComposition)));
+			// Deferred fragment shader
+			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.composition, sizeof(UniformDataComposition)));
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.offscreen.map());
@@ -2061,11 +2071,11 @@ public:
 	// Update matrices used for the offscreen rendering of the scene
 	void updateUniformBufferOffscreen()
 	{
-		if (orthographic) {
-			uniformDataOffscreen.projection = glm::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, zNear, zFar);
+		if (camera.orthographic) {
+			uniformDataOffscreen.projection = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
 		}
 		else {
-			uniformDataOffscreen.projection = glm::perspective(glm::radians(fov), (float)width / (float)height, zNear, zFar);
+			uniformDataOffscreen.projection = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, camera.znear, camera.zfar);
 		}
 		uniformDataOffscreen.view = camera.matrices.view;
 		uniformDataOffscreen.model = glm::mat4(1.0f);
@@ -2073,23 +2083,26 @@ public:
 	}
 
 	void updateUniformBufferEdge() {
-		if (orthographic) {
-			uniformDataEdge.projection = glm::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, zNear, zFar);
+		if (camera.orthographic) {
+			uniformDataEdge.projection = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
 		}
 		else {
-			uniformDataEdge.projection = glm::perspective(glm::radians(fov), (float)width / (float)height, zNear, zFar);
+			uniformDataEdge.projection = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, camera.znear, camera.zfar);
+			//uniformDataEdge.projection = camera.matrices.perspective;
 		}
 		uniformDataEdge.view = camera.matrices.view;
 		uniformDataEdge.model = glm::mat4(1.0f);
+		uniformDataEdge.orthographic = camera.orthographic;
 		memcpy(uniformBuffers.edge.mapped, &uniformDataEdge, sizeof(UniformDataEdge));
 	}
 
 	void updateUniformBufferLockedEdge() {
-		if (orthographic) {
-			uniformDataLockedEdge.projection = glm::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, zNear, zFar);
+		if (camera.orthographic) {
+			uniformDataLockedEdge.projection = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
 		}
 		else {
-			uniformDataLockedEdge.projection = glm::perspective(glm::radians(fov), (float)width / (float)height, zNear, zFar);
+			uniformDataLockedEdge.projection = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, camera.znear, camera.zfar);
+			//uniformDataLockedEdge.projection = camera.matrices.perspective;
 		}
 		uniformDataLockedEdge.view = camera.matrices.view;
 		uniformDataLockedEdge.model = glm::mat4(1.0f);
@@ -2153,6 +2166,7 @@ public:
 		uniformDataComposition.depthFactor = depthFactor;
 		uniformDataComposition.uFactor = uFactor;
 		uniformDataComposition.vFactor = vFactor;
+		uniformDataComposition.orthographic = camera.orthographic;
 		memcpy(uniformBuffers.composition.mapped, &uniformDataComposition, sizeof(UniformDataComposition));
 	}
 
@@ -2182,7 +2196,7 @@ public:
 
 	void copyGPUtoCPU(uint32_t width, uint32_t height, VkImage image, VkBuffer dstBuffer) {
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
-		
+
 		VkBufferImageCopy region = {};
 		region.bufferOffset = 0;
 		region.bufferRowLength = 0;
@@ -2348,6 +2362,7 @@ public:
 		VulkanExampleBase::submitFrame();
 	}
 
+
 	virtual void render()
 	{
 		if (!prepared)
@@ -2362,20 +2377,20 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Edge", "EdgeUV", "EdgePure", "LockedEdge","Test1", "Test2"});
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Edge", "EdgeUV", "EdgePure", "LockedEdge","Test1", "Test2" });
 			ImGui::InputInt("Stride", &singleStride);
 			ImGui::DragFloat("DepthFactor", &depthFactor, 0.1f, 0.f, 100.f);
 			overlay->sliderInt("U", &uFactor, 1, 100);
 			overlay->sliderInt("V", &vFactor, 1, 100);
 			overlay->text("Camera Parameters");
-			overlay->sliderFloat("fov", &fov, 10.f, 80.f);
-			overlay->sliderFloat("zNear", &zNear, 0.000001f, 0.5f);
-			overlay->sliderFloat("zFar", &zFar, 50.f, 500.f);
-			overlay->sliderFloat("left", &orthoLeft, -10.f, -0.5f);
-			overlay->sliderFloat("right", &orthoRight, 0.5f, 10.f);
-			overlay->sliderFloat("bottom", &orthoBottom, -10.f, -0.5f);
-			overlay->sliderFloat("top", &orthoTop, 0.5f, 10.f);
-			overlay->checkBox("Orthographic", &orthographic);
+			overlay->sliderFloat("fov", &camera.fov, 10.f, 80.f);
+			overlay->sliderFloat("zNear", &camera.znear, 0.000001f, 0.5f);
+			overlay->sliderFloat("zFar", &camera.zfar, 50.f, 500.f);
+			overlay->sliderFloat("left", &camera.orthoLeft, -10.f, -0.5f);
+			overlay->sliderFloat("right", &camera.orthoRight, 0.5f, 10.f);
+			overlay->sliderFloat("bottom", &camera.orthoBottom, -10.f, -0.5f);
+			overlay->sliderFloat("top", &camera.orthoTop, 0.5f, 10.f);
+			overlay->checkBox("Orthographic", &camera.orthographic);
 			lockedView = overlay->button("LockedView");
 		}
 	}

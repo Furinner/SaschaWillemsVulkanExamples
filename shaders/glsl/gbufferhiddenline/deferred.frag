@@ -27,6 +27,7 @@ layout (binding = 4) uniform UBO
 	float depthFactor;
 	int uFactor;
 	int vFactor;
+	bool orthographic;
 } ubo;
 
 layout (binding = 5) buffer FaceInfo

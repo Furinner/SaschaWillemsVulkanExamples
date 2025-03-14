@@ -42,7 +42,8 @@ void main()
 	else
 		color = color * 0.2;
 	color = vec3(mix(color, vec3(dot(vec3(0.2126,0.7152,0.0722), color)), 0.1));	
-	outPosition = vec4(inWorldPos,inUV.x);
+	//outPosition = vec4(inWorldPos,inUV.x);
+	outPosition = vec4(inCameraPos,inUV.x);
 	outNormal = vec4(inNormal, inUV.y);
 	outAlbedo.r = inObjectID;
 	outAlbedo.g = inFaceID;

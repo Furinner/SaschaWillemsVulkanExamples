@@ -5,6 +5,7 @@ layout (binding = 0) uniform UBO
 	mat4 projection;
 	mat4 model;
 	mat4 view;
+	bool orthographic;
 } ubo;
 
 layout (location = 0) in vec3 inPos;
@@ -60,12 +61,21 @@ void main()
 	outFaceNor = mat3(ubo.view) * inFaceNor;
 	outSymFaceNor = mat3(ubo.view) * inSymFaceNor;
 
+	vec3 pixelNor;
+	if(ubo.orthographic){
+		pixelNor = vec3(0.f, 0.f, -1.f);
+		//pixelNor = normalize(closerViewPos);
+	}else{
+		pixelNor = normalize(closerViewPos);
+		//pixelNor = -mat3(ubo.view)[2];
+	}
+
 	if(inBorder == 1){
 		outBorder = inBorder;
 	}else{
-		float checkVal1 = dot(mat3(ubo.view) * inFaceNor, normalize(closerViewPos));
-		float checkVal2 = dot(mat3(ubo.view) * inSymFaceNor, normalize(closerViewPos));
-		if((checkVal1 * checkVal2) <= 0){
+		float checkVal1 = dot(mat3(ubo.view) * inFaceNor, pixelNor);
+		float checkVal2 = dot(mat3(ubo.view) * inSymFaceNor, pixelNor);
+		if((checkVal1 * checkVal2) <= 0.f){
 			outBorder = 1;
 		}else{
 			outBorder = inBorder;

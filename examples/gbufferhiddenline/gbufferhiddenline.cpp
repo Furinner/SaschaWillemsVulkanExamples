@@ -1721,12 +1721,12 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug2", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug3", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/pixels_debug", vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/torus", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/torus", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_screen_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_brake", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
@@ -1736,10 +1736,12 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/three_tri", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/quad", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cube", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/282", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/wrong_linewidth", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/sphere_bump", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		//view independent
-		//fitting, 只是显示，不用精确。
-		//遗传，启发式。
+		
 	}
 
 	//Final Composition Command Buffer
@@ -2017,7 +2019,7 @@ public:
 		colorBlendState.attachmentCount = static_cast<uint32_t>(blendAttachmentStates2.size());
 		colorBlendState.pAttachments = blendAttachmentStates2.data();
 		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-		rasterizationState.lineWidth = 5.f;
+		rasterizationState.lineWidth = 100.f;
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
@@ -2028,7 +2030,7 @@ public:
 
 
 		colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
-		rasterizationState.lineWidth = 5.f;
+		rasterizationState.lineWidth = 100.f;
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = lockedEdgeFrameBuf.renderPass;

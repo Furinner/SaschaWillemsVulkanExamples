@@ -5,7 +5,7 @@ layout (binding = 0) uniform UBO
 	mat4 projection;
 	mat4 model;
 	mat4 view;
-	bool orthographic;
+	int orthographic;
 } ubo;
 
 layout (location = 0) in vec3 inPos;
@@ -62,7 +62,7 @@ void main()
 	outSymFaceNor = mat3(ubo.view) * inSymFaceNor;
 
 	vec3 pixelNor;
-	if(ubo.orthographic){
+	if(bool(ubo.orthographic)){
 		pixelNor = vec3(0.f, 0.f, -1.f);
 		//pixelNor = normalize(closerViewPos);
 	}else{

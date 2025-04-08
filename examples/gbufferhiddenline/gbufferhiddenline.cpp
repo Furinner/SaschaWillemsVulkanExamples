@@ -88,6 +88,7 @@ public:
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
 		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), uniqueID(ver->uniqueID), faceID(faceID) {};
+		Vertex(glm::vec3 position) :position(position) {};
 		Vertex(Vertex* ver) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
 
 		bool operator==(const Vertex& other) const {
@@ -701,7 +702,7 @@ public:
 		}
 
 		void analyzeEdgePixels(vks::VulkanDevice* device, int32_t height, int32_t width, VkQueue transferQueue) {
-			std::unordered_map<int32_t, std::unordered_set<int32_t>> lineToDraw;
+			std::unordered_map<int32_t, std::unordered_set<int32_t>> edgeList;
 			edgePixels = static_cast<int32_t*>(edgePixelsRawData);
 			for (int y = 0; y < height; ++y) {
 				for (int x = 0; x < width; ++x) {
@@ -712,12 +713,12 @@ public:
 					int32_t color = edgePixels[index + 2];
 					int32_t a = edgePixels[index + 3];
 					if (color == 1) {
-						auto it = lineToDraw.find(objID);
-						if (it == lineToDraw.end()) {
-							lineToDraw[objID] = std::unordered_set<int32_t>{ heID };
+						auto it = edgeList.find(objID);
+						if (it == edgeList.end()) {
+							edgeList[objID] = std::unordered_set<int32_t>{ heID };
 						}
 						else {
-							lineToDraw[objID].insert(heID);
+							edgeList[objID].insert(heID);
 						}
 					}
 				}
@@ -729,7 +730,7 @@ public:
 				VkBuffer buffer;
 				VkDeviceMemory memory;
 			} vertexStaging, indexStaging;
-			for (const auto& pair : lineToDraw) {
+			for (const auto& pair : edgeList) {
 				for (const auto& heID : pair.second) {
 					finVer.push_back(Vertex(halfEdges[pair.first][heID]->prevVer));
 					finVer.push_back(Vertex(halfEdges[pair.first][heID]->nextVer));
@@ -786,7 +787,205 @@ public:
 			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
 		}
+
+		void analyzeEdgePixels2(vks::VulkanDevice* device, int32_t height, int32_t width, VkQueue transferQueue, const Camera& camera) {
+			std::unordered_map<int32_t, std::unordered_set<int32_t>> edgeList;
+			edgePixels = static_cast<int32_t*>(edgePixelsRawData);
+			for (int y = 0; y < height; ++y) {
+				for (int x = 0; x < width; ++x) {
+					int index = (y * width + x) * 4;
+
+					int32_t objID = edgePixels[index];
+					int32_t heID = edgePixels[index + 1];
+					int32_t color = edgePixels[index + 2];
+					int32_t a = edgePixels[index + 3];
+					if (color == 1) {
+						auto it = edgeList.find(objID);
+						if (it == edgeList.end()) {
+							edgeList[objID] = std::unordered_set<int32_t>{ heID };
+						}
+						else {
+							edgeList[objID].insert(heID);
+						}
+					}
+				}
+			}
+			std::vector<Vertex> finVer;
+			std::vector<int> finIdx;
+			int idx = 0;
+			struct StagingBuffer {
+				VkBuffer buffer;
+				VkDeviceMemory memory;
+			} vertexStaging, indexStaging;
+			//scan-convert
+			glm::mat4 persp = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
+			glm::mat4 view = camera.matrices.view;
+			for (const auto& pair : edgeList) {
+				for (const auto& heID : pair.second) {
+					Vertex v1 = halfEdges[pair.first][heID]->prevVer;
+					Vertex v2 = halfEdges[pair.first][heID]->nextVer;
+					glm::vec4 v1Per = persp * view * glm::vec4(v1.position, 1);
+					glm::vec4 v2Per = persp * view * glm::vec4(v2.position, 1);
+					glm::vec3 v1Scr = glm::vec3(v1Per.x / v1Per.w, v1Per.y / v1Per.w, v1Per.z / v1Per.w);
+					glm::vec3 v2Scr = glm::vec3(v2Per.x / v2Per.w, v2Per.y / v2Per.w, v2Per.z / v2Per.w);
+					std::vector<Vertex> currSegments = scanConvert(v1Scr, v2Scr, height, width, pair.first, heID);
+					for (auto& ver : currSegments) {
+						finVer.push_back(ver);
+						finIdx.push_back(idx++);
+					}
+				}
+			}
+			lockedEdgeIdxCnt = idx;
+			vkDestroyBuffer(device->logicalDevice, lockedEdgeVertBuffer.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, lockedEdgeVertBuffer.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, lockedEdgeIdxBuffer.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, lockedEdgeIdxBuffer.memory, nullptr);
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				finVer.size() * sizeof(Vertex),
+				&vertexStaging.buffer,
+				&vertexStaging.memory,
+				finVer.data()));
+			// Index data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				finIdx.size() * sizeof(int),
+				&indexStaging.buffer,
+				&indexStaging.memory,
+				finIdx.data()));
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				finVer.size() * sizeof(Vertex),
+				&lockedEdgeVertBuffer.buffer,
+				&lockedEdgeVertBuffer.memory));
+			// Index buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				finIdx.size() * sizeof(int),
+				&lockedEdgeIdxBuffer.buffer,
+				&lockedEdgeIdxBuffer.memory));
+
+			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+			VkBufferCopy copyRegion = {};
+
+			copyRegion.size = finVer.size() * sizeof(Vertex);
+			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, lockedEdgeVertBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = finIdx.size() * sizeof(int);
+			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, lockedEdgeIdxBuffer.buffer, 1, &copyRegion);
+			device->flushCommandBuffer(copyCmd, transferQueue, true);
+
+			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
+		}
+
+		std::vector<Vertex> scanConvert(glm::vec3 v1Scr, glm::vec3 v2Scr, int32_t height, int32_t width, int objID, int heID) {
+			glm::vec3 v1Pix = glm::vec3(((v1Scr.x * 0.5f) + 0.5f) * width, ((v1Scr.y * 0.5f) + 0.5f) * height, v1Scr.z);
+			glm::vec3 v1Pix0 = glm::vec3(v1Pix.x, v1Pix.y, 0);
+			glm::vec3 v2Pix = glm::vec3(((v2Scr.x * 0.5f) + 0.5f) * width, ((v2Scr.y * 0.5f) + 0.5f) * height, v2Scr.z);
+			glm::vec3 v2Pix0 = glm::vec3(v2Pix.x, v2Pix.y, 0);
+			glm::vec3 v13D = halfEdges[objID][heID]->prevVer->position;
+			glm::vec3 v23D = halfEdges[objID][heID]->nextVer->position;
+			int x0 = std::floor(v1Pix.x);
+			int x1 = std::floor(v2Pix.x);
+			int y0 = std::floor(v1Pix.y);
+			int y1 = std::floor(v2Pix.y);
+
+			int dx = abs(x1 - x0);
+			int dy = abs(y1 - y0);
+			int sx = (x0 < x1) ? 1 : -1;
+			int sy = (y0 < y1) ? 1 : -1;
+
+			int err = dx - dy;
+			glm::vec3 offset = glm::normalize(glm::cross(glm::vec3(0, 0, 1), v2Pix0 - v1Pix0));
+			int segment = 0;
+			bool preVis = false;
+			bool pass = false;
+			std::vector<Vertex> segments = {};
+			glm::vec2 orig = glm::vec2(x0, y0);
+			glm::vec2 whole = glm::vec2(x1 - x0, y1 - y0);
+			glm::vec3 start;
+			glm::vec3 end;
+			int stride = 1;
+
+			while (true) {
+				if (x0 >= 0 && x0 < width && y0 >= 0 && y0 < height) {
+					int index = ((height - y0 - 1) * width + x0) * 4;
+					int32_t checkObjID = edgePixels[index];
+					int32_t checkHeID = edgePixels[index + 1];
+					int32_t checkColor = edgePixels[index + 2];
+					pass = false;
+					if ((checkObjID != objID) || (checkHeID != heID)) {
+						for (int i = -stride; i <= stride; ++i) {
+							for (int j = -stride; j <= stride; ++j) {
+								if ((i == 0) && (j == 0)) {
+									continue;
+								}
+								int tempx0 = x0 + i;
+								int tempy0 = y0 + j;
+								int tempIndex = ((height - tempy0 - 1) * width + tempx0) * 4;
+								int32_t checkObjID_temp = edgePixels[tempIndex];
+								int32_t checkHeID_temp = edgePixels[tempIndex + 1];
+								int32_t checkColor_temp = edgePixels[tempIndex + 2];
+								if ((checkObjID_temp == objID) && (checkHeID_temp == heID)) {
+									pass = true;
+									break;
+								}
+							}
+						};
+					}
+					else {
+						pass = true;
+					}
+					if (!pass) {
+						segment++;
+					}
+				}
+				if (preVis != pass) {
+					int debug = 1;
+					if (preVis == false) {
+						//starting point
+						float t = glm::dot(glm::vec2(x0, y0) - orig, glm::normalize(whole)) / glm::length(whole);
+						start = glm::mix(v13D, v23D, t);
+						segments.push_back(Vertex(start));
+					}
+					else {
+						//end point
+						float t = glm::dot(glm::vec2(x0, y0) - orig, glm::normalize(whole)) / glm::length(whole);
+						end = glm::mix(v13D, v23D, t);
+						segments.push_back(Vertex(end));
+					}
+					preVis = pass;
+				}
+
+				if ((x0 == x1) && (y0 == y1)) {
+					if (preVis == true) {
+						//float t = glm::dot(glm::vec2(x0, y0) - orig, whole) / glm::length(whole);
+						end = glm::mix(v13D, v23D, 1.f);
+						segments.push_back(Vertex(end));
+					}
+					break;
+				}
+				int e2 = 2 * err;
+				if (e2 > -dy) {
+					err -= dy;
+					x0 += sx;
+				}
+				if (e2 < dx) {
+					err += dx;
+					y0 += sy;
+				}
+			}
+			return segments;
+		}
 	};
+
 	struct PushValue {
 		int max_neighbor_cnt = MAX_NEIGHBOR_FACE_COUNT;
 		float screenHalfLengthX;
@@ -851,14 +1050,15 @@ public:
 		float depthFactor = 1.f;
 		int uFactor = 1;
 		int vFactor = 1;
-		bool orthographic = false;
+		int orthographic = false;
 	} uniformDataComposition;
 
 	struct UniformDataEdge {
 		glm::mat4 projection;
 		glm::mat4 model;
 		glm::mat4 view;
-		bool orthographic;
+		//using bool here need to alignas
+		int orthographic = false;
 	} uniformDataEdge;
 
 	struct UniformDataLockedEdge {
@@ -2340,8 +2540,9 @@ public:
 			changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
 			copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
 			vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
-			mesh.analyzeEdgePixels(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue);
+			mesh.analyzeEdgePixels2(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue, camera);
 			rebuildLockedEdgeCommandBuffer();
+			lockedView = false;
 		}
 
 		submitInfo.pWaitSemaphores = &edgeSemaphore;

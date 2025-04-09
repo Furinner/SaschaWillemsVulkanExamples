@@ -917,11 +917,16 @@ public:
 			while (true) {
 				if (x0 >= 0 && x0 < width && y0 >= 0 && y0 < height) {
 					int index = ((height - y0 - 1) * width + x0) * 4;
-					int32_t checkObjID = edgePixels[index];
-					int32_t checkHeID = edgePixels[index + 1];
-					int32_t checkColor = edgePixels[index + 2];
 					pass = false;
-					if ((checkObjID != objID) || (checkHeID != heID)) {
+					if ((index >= 0) && (index < 4 * width * height)) {
+						int32_t checkObjID = edgePixels[index];
+						int32_t checkHeID = edgePixels[index + 1];
+						int32_t checkColor = edgePixels[index + 2];
+						if ((checkObjID == objID) && (checkHeID == heID)) {
+							pass = true;
+						}
+					}
+					if (!pass) {
 						for (int i = -stride; i <= stride; ++i) {
 							for (int j = -stride; j <= stride; ++j) {
 								if ((i == 0) && (j == 0)) {
@@ -930,6 +935,10 @@ public:
 								int tempx0 = x0 + i;
 								int tempy0 = y0 + j;
 								int tempIndex = ((height - tempy0 - 1) * width + tempx0) * 4;
+								if ((tempIndex < 0) || (tempIndex >= 4 * width * height)) {
+									continue;
+								}
+								
 								int32_t checkObjID_temp = edgePixels[tempIndex];
 								int32_t checkHeID_temp = edgePixels[tempIndex + 1];
 								int32_t checkColor_temp = edgePixels[tempIndex + 2];
@@ -939,12 +948,6 @@ public:
 								}
 							}
 						};
-					}
-					else {
-						pass = true;
-					}
-					if (!pass) {
-						segment++;
 					}
 				}
 				if (preVis != pass) {
@@ -1922,11 +1925,12 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_lowpoly", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug2", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug3", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/pixels_debug", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/torus", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/torus", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_screen_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_brake", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
@@ -1939,6 +1943,7 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/282", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/wrong_linewidth", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/sphere_bump", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_cube", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		//view independent
 		
@@ -2219,7 +2224,7 @@ public:
 		colorBlendState.attachmentCount = static_cast<uint32_t>(blendAttachmentStates2.size());
 		colorBlendState.pAttachments = blendAttachmentStates2.data();
 		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-		rasterizationState.lineWidth = 3.f;
+		rasterizationState.lineWidth = 100.f;
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
@@ -2230,7 +2235,7 @@ public:
 
 
 		colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
-		rasterizationState.lineWidth = 3.f;
+		rasterizationState.lineWidth = 100.f;
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = lockedEdgeFrameBuf.renderPass;

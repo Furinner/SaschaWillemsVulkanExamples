@@ -817,13 +817,13 @@ void main()
 				finalCol += case12(size, uv2, tex_offset);
 				finalCol += case12(size, uv3, tex_offset);
 				finalCol += case12(size, uv4, tex_offset);
-				//outFragcolor.rgb = finalCol / 4.f;
+				outFragcolor.rgb = finalCol / 4.f;
 				ivec3 center_edge =  texture(samplerEdge, inUV/2.f).rgb;
-				if(center_edge.b == 1){
-					outFragcolor.rgb = vec3(1);
-				}else{
-					outFragcolor.rgb = vec3(0);
-				}
+//				if(center_edge.b == 1){
+//					outFragcolor.rgb = vec3(1);
+//				}else{
+//					outFragcolor.rgb = vec3(0);
+//				}
 				break;
 			case 13:
 				finalCol += case13(size, uv1, tex_offset);

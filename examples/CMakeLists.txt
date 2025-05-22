@@ -157,6 +157,7 @@ set(EXAMPLES
 	shadowmapping
 	shadowmappingomni
 	shadowmappingcascade
+	silhouettetest
 	specializationconstants
 	sphericalenvmapping
 	ssao

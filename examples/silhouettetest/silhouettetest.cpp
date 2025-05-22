@@ -363,7 +363,7 @@ public:
 				std::unordered_map<std::string, HalfEdge*> symHEs;
 				std::vector<std::vector<int>> neighborFaces;
 				for (int i = 0; i < vertexBuffer.size(); ++i) {
-					vertexBuffer[i].pos *= 5.f;
+					vertexBuffer[i].pos *= 20.f;
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
 					glm::vec2 uv = vertexBuffer[i].uv;
@@ -789,7 +789,7 @@ public:
 		}
 
 		void analyzeEdgePixels2(vks::VulkanDevice* device, int32_t height, int32_t width, VkQueue transferQueue, const Camera& camera) {
-			std::unordered_map<int32_t, std::unordered_set<int32_t>> edgeList;
+			/*std::unordered_map<int32_t, std::unordered_set<int32_t>> edgeList;
 			edgePixels = static_cast<int32_t*>(edgePixelsRawData);
 			for (int y = 0; y < height; ++y) {
 				for (int x = 0; x < width; ++x) {
@@ -809,7 +809,7 @@ public:
 						}
 					}
 				}
-			}
+			}*/
 			std::vector<Vertex> finVer;
 			std::vector<int> finIdx;
 			int idx = 0;
@@ -818,7 +818,7 @@ public:
 				VkDeviceMemory memory;
 			} vertexStaging, indexStaging;
 			//scan-convert
-			glm::mat4 persp = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
+			/*glm::mat4 persp = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
 			glm::mat4 view = camera.matrices.view;
 			for (const auto& pair : edgeList) {
 				for (const auto& heID : pair.second) {
@@ -831,6 +831,28 @@ public:
 					std::vector<Vertex> currSegments = scanConvert(v1Scr, v2Scr, height, width, pair.first, heID);
 					for (auto& ver : currSegments) {
 						finVer.push_back(ver);
+						finIdx.push_back(idx++);
+					}
+				}
+			}*/
+			glm::mat4 view = camera.matrices.view;
+			for (auto& halfEdge : halfEdges) {
+				for (auto& he : halfEdge) {
+					//boundary edge
+					if (he->sym == nullptr) {
+						finVer.push_back(Vertex(he->prevVer));
+						finVer.push_back(Vertex(he->nextVer));
+						finIdx.push_back(idx++);
+						finIdx.push_back(idx++);
+						continue;
+					}
+					//silhouette
+					float faceNorView = glm::dot(view * glm::vec4(he->prevVer->faceNor,0), glm::vec4(0,0,-1,0));
+					float symFaceNorView = glm::dot(view * glm::vec4(he->sym->prevVer->faceNor, 0), glm::vec4(0,0,-1,0));
+					if ((faceNorView * symFaceNorView) <= 0.f) {
+						finVer.push_back(Vertex(he->prevVer));
+						finVer.push_back(Vertex(he->nextVer));
+						finIdx.push_back(idx++);
 						finIdx.push_back(idx++);
 					}
 				}
@@ -1943,7 +1965,11 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/282", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/wrong_linewidth", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/sphere_bump", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_cube", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_cube", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/finger", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/patch_bump", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/classic_patch1", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/patch_bump2", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		//view independent
 		
@@ -2226,7 +2252,7 @@ public:
 		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 		rasterizationState.lineWidth = 5.f;
 		depthStencilState.depthWriteEnable = VK_FALSE;
-		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+		depthStencilState.depthTestEnable = VK_FALSE;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -2236,6 +2262,8 @@ public:
 
 		colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
 		rasterizationState.lineWidth = 5.f;
+		depthStencilState.depthWriteEnable = VK_FALSE;
+		depthStencilState.depthTestEnable = VK_FALSE;
 		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = lockedEdgeFrameBuf.renderPass;

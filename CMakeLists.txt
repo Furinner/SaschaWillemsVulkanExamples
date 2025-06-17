@@ -1,7 +1,7 @@
 # Copyright (C) 2016-2023 by Sascha Willems - www.saschawillems.de
 # This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 
-cmake_minimum_required(VERSION 3.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 set(NAME vulkanExamples)

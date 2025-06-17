@@ -127,6 +127,7 @@ set(EXAMPLES
 	multithreading
 	multiview
 	negativeviewportheight	
+	occ
 	occlusionquery
 	offscreen
 	oit

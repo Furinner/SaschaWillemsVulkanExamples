@@ -1,4 +1,4 @@
-/*
+﻿/*
 * Vulkan Example - Deferred shading with multiple render targets (aka G-Buffer) example
 *
 * This samples shows how to do deferred rendering. Unlike forward rendering, different components like
@@ -17,7 +17,45 @@
 #include <memory>
 #include <limits>
 #include <unordered_set>
-//#include <BRepPrimAPI_MakeBox.hxx>
+#include <STEPControl_Reader.hxx>
+#include <TopoDS.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx>
+#include <TopoDS_Shape.hxx>
+#include <TopoDS_Solid.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Wire.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopLoc_Location.hxx>
+#include <Geom_Surface.hxx>
+#include <Geom_BSplineSurface.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <Geom_Curve.hxx>                 // 曲线基类
+#include <Geom2d_Line.hxx>
+#include <Geom2d_TrimmedCurve.hxx>
+#include <GeomAdaptor_Curve.hxx>
+#include <GeomAdaptor_Surface.hxx>
+#include <GeomAPI.hxx>  
+#include <gp_Pnt.hxx>                     // 点类
+#include <Standard_Real.hxx>             // 实数类型
+#include <TColgp_Array1OfPnt.hxx>        // 点数组（可选）
+#include <BRepLib.hxx>
+#include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <BRepClass_FaceClassifier.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <ShapeFix_Edge.hxx>
+#include <Poly_Triangulation.hxx>
+#include <GCPnts_QuasiUniformDeflection.hxx>
+#include <ShapeAnalysis_Edge.hxx>
+#include <iostream>
+
 #define DLF 1
 
 #define MAX_NEIGHBOR_FACE_COUNT 50
@@ -88,6 +126,7 @@ public:
 		alignas(4) int uniqueID; //unique id in obj
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
+		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID, int faceID) :position(position), normal(normal), uv(uv), objectID(objectID), faceID(faceID) {};
 		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), uniqueID(ver->uniqueID), faceID(faceID) {};
 		Vertex(glm::vec3 position) :position(position) {};
 		Vertex(Vertex* ver) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
@@ -683,6 +722,231 @@ public:
 			vkFreeMemory(device->logicalDevice, edgeIdxStaging.memory, nullptr);
 		}
 
+		void setBuffers(vks::VulkanDevice* device, VkQueue transferQueue, std::vector<Vertex>& verticesData, std::vector<int>& idxData, std::vector<std::vector<glm::vec3>> boundaryPoints, std::vector<std::vector<glm::vec3>> uvParametricPoints) {
+			for (auto& idx : idxData) {
+				index.push_back((uint32_t)idx);
+			}
+			size_t vertexBufferSize = verticesData.size() * sizeof(Vertex);
+			//size_t vertexBufferSize = vertexBuffersSize * (2 * sizeof(glm::vec3) + sizeof(int));
+			size_t indexBufferSize = idxData.size() * sizeof(uint32_t);
+			size_t faceInfoSize = verticesData.size() * sizeof(int);
+			size_t faceDataSize = verticesData.size() * sizeof(int);
+			size_t faceNorSize = verticesData.size() * sizeof(glm::vec4);
+			
+			std::vector<int> empty_vec1(verticesData.size(), 0);
+			std::vector<glm::vec4> empty_vec2(verticesData.size(), glm::vec4(0));
+			objFaceCnt = empty_vec1;
+			neighborFacesData = empty_vec1;
+			faceNors = empty_vec2;
+			edgeVert.clear();
+			edgeIdx.clear();
+			int edgeIdxCnt = 0;
+			for (auto& boundaryPointsPerEdge : boundaryPoints) {
+				for (int i = 0; i < boundaryPointsPerEdge.size(); ++i) {
+					float t = (float)i / (float)boundaryPointsPerEdge.size();
+					glm::vec3 color = glm::mix(glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), t);
+					//glm::vec3 color = glm::vec3(0, 0, 0); //red color for boundary edges
+					if (i == 0) {
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
+						edgeIdx.push_back(edgeIdxCnt++);
+					}
+					else if (i == boundaryPointsPerEdge.size() - 1) {
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
+						edgeIdx.push_back(edgeIdxCnt++);
+					}
+					else {
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
+						edgeIdx.push_back(edgeIdxCnt++);
+						edgeIdx.push_back(edgeIdxCnt++);
+					}
+				}
+			}
+			for (auto& uvPointsPerEdge : uvParametricPoints) {
+				if (uvPointsPerEdge.size() <= 1) {
+					continue;
+				}
+				for (int i = 0; i < uvPointsPerEdge.size(); ++i) {
+					if (i == 0) {
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+						edgeIdx.push_back(edgeIdxCnt++);
+					}
+					else if (i == uvPointsPerEdge.size() - 1) {
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+						edgeIdx.push_back(edgeIdxCnt++);
+					}
+					else {
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+						edgeIdx.push_back(edgeIdxCnt++);
+						edgeIdx.push_back(edgeIdxCnt++);
+					}
+				}
+			}
+			size_t edgeVertSize = edgeVert.size() * sizeof(Vertex);
+			size_t edgeIdxSize = edgeIdx.size() * sizeof(int);
+
+			struct StagingBuffer {
+				VkBuffer buffer;
+				VkDeviceMemory memory;
+			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging, edgeVertStaging, edgeIdxStaging;
+
+			// Create staging buffers
+			// Vertex data
+			//has to transfer from std::vector<uPtr<Vertex>> to std::vector<Vertex>, since uPtr vector is not contiguous like Vertex vector.
+			/*std::vector<Vertex> verticesData{};
+			for (auto& verData : vertices) {
+				verticesData.push_back(Vertex(verData->position, verData->normal, verData->objectID));
+			}*/
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				vertexBufferSize,
+				&vertexStaging.buffer,
+				&vertexStaging.memory,
+				verticesData.data()));
+			// Index data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				indexBufferSize,
+				&indexStaging.buffer,
+				&indexStaging.memory,
+				idxData.data()));
+			// Neighbor Face Info
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				faceInfoSize,
+				&faceInfoStaging.buffer,
+				&faceInfoStaging.memory,
+				objFaceCnt.data()));
+			// Neighbor Face Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				faceDataSize,
+				&faceDataStaging.buffer,
+				&faceDataStaging.memory,
+				neighborFacesData.data()));
+			//Face Nor Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				faceNorSize,
+				&faceNorStaging.buffer,
+				&faceNorStaging.memory,
+				faceNors.data()));
+			//Edge Vert Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				edgeVertSize,
+				&edgeVertStaging.buffer,
+				&edgeVertStaging.memory,
+				edgeVert.data()));
+			//Edge Idx Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				edgeIdxSize,
+				&edgeIdxStaging.buffer,
+				&edgeIdxStaging.memory,
+				edgeIdx.data()));
+			//
+			// Create device local buffers
+			// Vertex buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				vertexBufferSize,
+				&verticesBuffer.buffer,
+				&verticesBuffer.memory));
+			// Index buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				indexBufferSize,
+				&idxBuffer.buffer,
+				&idxBuffer.memory));
+			// Face Info
+			//this buffer creation method is different from the one above
+			//this one will create a default descriptor for you
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				&faceInfoBuffer,
+				faceInfoSize));
+			// Face Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				&faceDataBuffer,
+				faceDataSize));
+			//Face Nor
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				&faceNorBuffer,
+				faceNorSize));
+			// Edge Vert Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				edgeVertSize,
+				&edgeVertBuffer.buffer,
+				&edgeVertBuffer.memory));
+			// Edge Idx Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				edgeIdxSize,
+				&edgeIdxBuffer.buffer,
+				&edgeIdxBuffer.memory));
+			// Copy from staging buffers
+			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+
+			VkBufferCopy copyRegion = {};
+
+			copyRegion.size = vertexBufferSize;
+			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, verticesBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = indexBufferSize;
+			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, idxBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = faceInfoSize;
+			vkCmdCopyBuffer(copyCmd, faceInfoStaging.buffer, faceInfoBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = faceDataSize;
+			vkCmdCopyBuffer(copyCmd, faceDataStaging.buffer, faceDataBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = faceNorSize;
+			vkCmdCopyBuffer(copyCmd, faceNorStaging.buffer, faceNorBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = edgeVertSize;
+			vkCmdCopyBuffer(copyCmd, edgeVertStaging.buffer, edgeVertBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = edgeIdxSize;
+			vkCmdCopyBuffer(copyCmd, edgeIdxStaging.buffer, edgeIdxBuffer.buffer, 1, &copyRegion);
+
+			device->flushCommandBuffer(copyCmd, transferQueue, true);
+
+			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, faceInfoStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, faceInfoStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, faceDataStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, faceDataStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, faceNorStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, faceNorStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, edgeVertStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, edgeVertStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, edgeIdxStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, edgeIdxStaging.memory, nullptr);
+		}
+
 		void bindBuffers(VkCommandBuffer commandBuffer) {
 			const VkDeviceSize offsets[1] = { 0 };
 			vkCmdBindVertexBuffers(commandBuffer, 0, 1, &verticesBuffer.buffer, offsets);
@@ -813,7 +1077,7 @@ public:
 			}*/
 			std::vector<Vertex> finVer;
 			std::vector<int> finIdx;
-			int idx = 0;
+			//int idx = 0;
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
@@ -836,33 +1100,36 @@ public:
 					}
 				}
 			}*/
-			glm::mat4 view = camera.matrices.view;
-			for (auto& halfEdge : halfEdges) {
-				for (auto& he : halfEdge) {
-					//boundary edge
-					if (he->sym == nullptr) {
-						finVer.push_back(Vertex(he->prevVer));
-						finVer.push_back(Vertex(he->nextVer));
-						finIdx.push_back(idx++);
-						finIdx.push_back(idx++);
-						continue;
-					}
-					//silhouette
-					float faceNorView = glm::dot(view * glm::vec4(he->prevVer->faceNor,0), glm::vec4(0,0,-1,0));
-					float symFaceNorView = glm::dot(view * glm::vec4(he->sym->prevVer->faceNor, 0), glm::vec4(0,0,-1,0));
-					if ((faceNorView * symFaceNorView) <= 0.f) {
-						finVer.push_back(Vertex(he->prevVer));
-						finVer.push_back(Vertex(he->nextVer));
-						finIdx.push_back(idx++);
-						finIdx.push_back(idx++);
-					}
-				}
-			}
-			lockedEdgeIdxCnt = idx;
+			//glm::mat4 view = camera.matrices.view;
+			//for (auto& halfEdge : halfEdges) {
+			//	for (auto& he : halfEdge) {
+			//		//boundary edge
+			//		if (he->sym == nullptr) {
+			//			finVer.push_back(Vertex(he->prevVer));
+			//			finVer.push_back(Vertex(he->nextVer));
+			//			finIdx.push_back(idx++);
+			//			finIdx.push_back(idx++);
+			//			continue;
+			//		}
+			//		//silhouette
+			//		float faceNorView = glm::dot(view * glm::vec4(he->prevVer->faceNor,0), glm::vec4(0,0,-1,0));
+			//		float symFaceNorView = glm::dot(view * glm::vec4(he->sym->prevVer->faceNor, 0), glm::vec4(0,0,-1,0));
+			//		if ((faceNorView * symFaceNorView) <= 0.f) {
+			//			finVer.push_back(Vertex(he->prevVer));
+			//			finVer.push_back(Vertex(he->nextVer));
+			//			finIdx.push_back(idx++);
+			//			finIdx.push_back(idx++);
+			//		}
+			//	}
+			//}
+			//lockedEdgeIdxCnt = idx;
 			vkDestroyBuffer(device->logicalDevice, lockedEdgeVertBuffer.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, lockedEdgeVertBuffer.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, lockedEdgeIdxBuffer.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, lockedEdgeIdxBuffer.memory, nullptr);
+			finVer = edgeVert;
+			finIdx = edgeIdx;
+			lockedEdgeIdxCnt = edgeIdx.size();
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -1965,16 +2232,378 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cube", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/282", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/wrong_linewidth", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/sphere_bump", vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_cube", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/sphere_bump", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_cube", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/finger", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/patch_bump", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/classic_patch1", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/patch_bump2", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/singular_patch1", vulkanDevice, queue, glTFLoadingFlags);
-		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
+		//mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		//view independent
-		
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/usb-charger-with-detachable-us-plug-1.snapshot.37/3D CAD Files/apple_12w_usb_charger_us_plug.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/soft-drink-glass-cup-300ml-10oz-1.snapshot.16/3D CAD Files/casablanca_water_glass_300ml.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/agv-robot-arm-1.snapshot.3/AGV Robot Arm.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/013-housing-013-hsg-1.snapshot.10/013-hsg_thread.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/kibri-37033-chalet-beckenried-1.snapshot.1/Kibri 37033 Chalet Beckenried/Kibri 37033 Chalet Beckenried.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/piper-j-3-cub-editable-and-scalable-kit-123-parts-1.snapshot.7/Piper J3-CUB WWII_5.STEP";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/sheet-metal-tool-holder-ac-apm-v4-1.snapshot.5/AC-APM-V4.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/yak-3-rc-1.snapshot.6/YAK 3 SKRZYDLO L.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/electric-plane-airbus-is-nervous-1.snapshot.1/204-00-00.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/plastic-part-00-1.snapshot.2/Plastic Part 00.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/e-bobber-v2-concept-1.snapshot.15/E-Bobber V2 concept.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/forked-drop-down-longboard-1.snapshot.3/Forked Drop-Down Longboard.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/mesa-table-2.snapshot.1/MESA.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/escritorio-desk-2.snapshot.1/ESCRITORIO.stp";
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/Jeep sheet metal.STEP";
+		//用于测试trim curve等等
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/ff1-flying-formula-1-1.snapshot.1/3.stp";
+		//大部分完美，有些curve没trim掉
+		const char* filename = "D:/Program Files/Google/Chrome/Downloads/Extra-230-50ccm_1.stp";
+		// 轮椅
+		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/COMPLETA.STEP";
+		STEPControl_Reader reader;
+		IFSelect_ReturnStatus status = reader.ReadFile(filename);
+		if (status == IFSelect_RetDone) {
+			// 转换所有根，nbr为Number of roots transferred。
+			Standard_Integer nbr = reader.TransferRoots();
+
+			// 获取转换后的形状
+			TopoDS_Shape shape = reader.OneShape();
+			//为整个形状或单个边构建 3D 几何
+			BRepLib::BuildCurves3d(shape);
+			
+			// Traverse all faces
+			int nurbsCount = 0;
+			for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next()) {
+				TopoDS_Face face = TopoDS::Face(exp.Current());
+				for (TopExp_Explorer exp(face, TopAbs_EDGE); exp.More(); exp.Next()) {
+					TopoDS_Edge edge = TopoDS::Edge(exp.Current());
+
+					Standard_Real first, last;
+					Handle(Geom2d_Curve) c2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
+
+					// c2d 是参数空间中的边界线，可以用来分析或绘制UV图
+				}
+
+
+				// Get the geometric surface of the face
+				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+
+				// Check if it's a BSpline surface (NURBS)
+				Handle(Geom_BSplineSurface) bspline = Handle(Geom_BSplineSurface)::DownCast(surface);
+				if (!bspline.IsNull()) {
+					nurbsCount++;
+
+					int bsplineU = bspline->UDegree();
+					int bsplineV = bspline->VDegree();
+					int bsplineUKnots = bspline->NbUKnots();
+					int bsplineVKnots = bspline->NbVKnots();
+					std::cout << "Found NURBS surface #" << nurbsCount << std::endl;
+					std::cout << "  UDegree: " << bspline->UDegree() << std::endl;
+					std::cout << "  VDegree: " << bspline->VDegree() << std::endl;
+					std::cout << "  Num UKnots: " << bspline->NbUKnots() << std::endl;
+					std::cout << "  Num VKnots: " << bspline->NbVKnots() << std::endl;
+					std::cout << "  Num Control Points: ("
+						<< bspline->NbUPoles() << ", "
+						<< bspline->NbVPoles() << ")" << std::endl;
+
+
+				}
+			}
+
+			// 创建面与边之间的反向索引：Edge → [Faces]
+			TopTools_IndexedDataMapOfShapeListOfShape edgeToFacesMap;
+			TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeToFacesMap);
+
+			// 遍历边，找出哪些边被多个面共享
+			for (int i = 1; i <= edgeToFacesMap.Extent(); ++i) {
+				const TopoDS_Edge& edge = TopoDS::Edge(edgeToFacesMap.FindKey(i));
+				const TopTools_ListOfShape& faceList = edgeToFacesMap.FindFromIndex(i);
+
+				if (faceList.Extent() > 1) {
+					std::cout << "Edge is shared by " << faceList.Extent() << " faces." << std::endl;
+
+					int nurbsFaceCount = 0;
+					for (TopTools_ListIteratorOfListOfShape it(faceList); it.More(); it.Next()) {
+						TopoDS_Face face = TopoDS::Face(it.Value());
+						Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
+						if (!surf.IsNull()) {
+							Handle(Geom_BSplineSurface) bs = Handle(Geom_BSplineSurface)::DownCast(surf);
+							if (!bs.IsNull()) {
+								nurbsFaceCount++;
+							}
+						}
+					}
+
+					if (nurbsFaceCount >= 2) {
+						std::cout << "  ⮑ At least two of them are NURBS surfaces." << std::endl;
+					}
+				}
+			}
+
+			//Rendering
+			// 对整个模型进行离散化（细分）
+			BRepMesh_IncrementalMesh mesher(shape, 1); // 0.001是线性公差（越小越精细）
+
+			// 遍历所有的面并访问三角剖分
+			int objID = 0;
+			int idx = 0;
+			std::vector<Vertex> verticesData;
+			std::vector<int> idxData;
+			for (TopExp_Explorer faceExp(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
+				TopoDS_Face face = TopoDS::Face(faceExp.Current());
+				TopLoc_Location loc;
+				Handle(Poly_Triangulation) triangulation = BRep_Tool::Triangulation(face, loc);
+				int faceID = 0;
+				if (!triangulation.IsNull()) {
+					const Poly_Array1OfTriangle& triangles = triangulation->Triangles();
+					std::vector<glm::vec3> positions;
+					std::vector<glm::vec3> normals;
+					std::vector<glm::vec2> uvs;
+					std::vector<int> indices;
+					for (int i = 1; i <= triangulation->NbNodes(); ++i) {
+						positions.push_back(glm::vec3(triangulation->Node(i).X(), triangulation->Node(i).Y(), triangulation->Node(i).Z()));
+						if (triangulation->HasNormals()) {
+							normals.push_back(glm::vec3(triangulation->Normal(i).X(), triangulation->Normal(i).Y(), triangulation->Normal(i).Z()));
+						}
+						else {
+							normals.push_back(glm::vec3(0));
+						}
+						uvs.push_back(glm::vec2(triangulation->UVNode(i).X(), triangulation->UVNode(i).Y()));
+					}
+					for (int i = triangles.Lower(); i <= triangles.Upper(); ++i) {
+						int n1, n2, n3; //node indices
+						triangles(i).Get(n1, n2, n3);
+						--n1;
+						--n2;
+						--n3;
+						if (triangulation->HasNormals()) {
+							normals[n1] = glm::normalize(normals[n1]);
+							normals[n2] = glm::normalize(normals[n2]);
+							normals[n3] = glm::normalize(normals[n3]);
+						}
+						else {
+							glm::vec3 v1 = positions[n2] - positions[n1];
+							glm::vec3 v2 = positions[n3] - positions[n1];
+							glm::vec3 normal = glm::normalize(glm::cross(v1, v2));
+							normals[n1] = normal;
+							normals[n2] = normal;
+							normals[n3] = normal;
+						}
+						Vertex ver1(positions[n1], normals[n1], uvs[n1], objID, faceID);
+						Vertex ver2(positions[n2], normals[n2], uvs[n2], objID, faceID);
+						Vertex ver3(positions[n3], normals[n3], uvs[n3], objID, faceID);
+						verticesData.push_back(ver1);
+						verticesData.push_back(ver2);
+						verticesData.push_back(ver3);
+						idxData.push_back(idx++);
+						idxData.push_back(idx++);
+						idxData.push_back(idx++);
+						++faceID;
+					}
+					++objID;
+				}
+			}
+
+			int nullCurve3d = 0;
+			int nullCurve2d = 0;
+			int build3dCurveFailed = 0;
+			int fixAndAdd3dCurve = 0;
+			//boundary curves
+			std::vector<std::vector<glm::vec3>> boundaryPoints;
+			TopExp_Explorer faceExp;
+			for (faceExp.Init(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
+				TopoDS_Face face = TopoDS::Face(faceExp.Current());
+
+				TopExp_Explorer wireExp;
+				for (wireExp.Init(face, TopAbs_WIRE); wireExp.More(); wireExp.Next()) {
+					TopoDS_Wire wire = TopoDS::Wire(wireExp.Current());
+
+					//使用WireExplorer会正确按照拓扑顺序遍历wire的edge。
+					BRepTools_WireExplorer exp(wire);
+					for (; exp.More(); exp.Next()) {
+						// e 是接续关系正确的下一条边
+						const TopoDS_Edge& edgeTmp = exp.Current();
+						TopoDS_Edge edge = TopoDS::Edge(edgeTmp);
+
+						//ShapeAnalysis_Edge用于调整每条边的参数走向，使其符合拓扑定义的方向
+						ShapeAnalysis_Edge saEdge;
+						Standard_Real first, last;
+						Handle(Geom_Curve) curve3d = BRep_Tool::Curve(edge, first, last);
+						Handle(Geom2d_Curve) curve2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
+						if (curve3d.IsNull()) {
+							Handle(Geom2d_Curve) curve2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
+							if (curve2d.IsNull()) {
+								continue;
+							}
+							if (!BRepLib::BuildCurves3d(edge)) {
+								ShapeFix_Edge fixEdge;
+								if (!fixEdge.FixAddCurve3d(edge)) {
+									continue;
+								}
+							}
+							curve3d = BRep_Tool::Curve(edge, first, last);
+							/*if (curve3d.IsNull()) {
+								continue;
+							}*/
+						}
+						
+						Standard_Real realFirst, realLast;
+						saEdge.Curve3d(edge, curve3d, realFirst, realLast, Standard_True);
+						/*if (realFirst > realLast) {
+							edge.Reverse();
+							saEdge.Curve3d(edge, curve3d, realFirst, realLast, Standard_True);
+							curve3d->Reverse();
+						};*/
+						if (edge.Orientation() == TopAbs_REVERSED) {
+							edge.Reverse();
+							saEdge.Curve3d(edge, curve3d, realFirst, realLast, Standard_True);
+							curve3d->Reverse();
+						};
+						Standard_Real deflection = 1e-3; // 控制细分精度
+
+						
+
+						//Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+
+						//TopoDS_Edge edge2dOnSurf = BRepBuilderAPI_MakeEdge(curve2d, surface);
+						/*if (!BRepLib::BuildCurves3d(edge)) {
+							continue;
+						}*/
+
+
+						//拿到NURBS
+						Handle(Geom_BSplineCurve) bs;
+						if (bs = Handle(Geom_BSplineCurve)::DownCast(curve3d)) {
+							// 直接使用 bs
+							TColgp_Array1OfPnt poles(1, bs->NbPoles());
+							TColStd_Array1OfReal w(1, bs->NbPoles());
+							TColStd_Array1OfReal k(1, bs->NbKnots());
+							TColStd_Array1OfInteger m(1, bs->NbKnots());
+
+							bs->Poles(poles);
+							bs->Weights(w);
+							bs->Knots(k);
+							bs->Multiplicities(m);
+
+							std::vector<glm::vec3> ctrlPts;
+							for (Standard_Integer i = poles.Lower(); i <= poles.Upper(); ++i) {
+								gp_Pnt p = poles(i);
+								ctrlPts.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
+							}
+
+							std::vector<double> weights;
+							for (Standard_Integer i = w.Lower(); i <= w.Upper(); ++i) {
+								weights.push_back(double(w(i)));
+							}
+
+							std::vector<double> knots;
+							for (Standard_Integer i = k.Lower(); i <= k.Upper(); ++i) {
+								knots.push_back(double(k(i)));
+							}
+
+							std::vector<double> mults;
+							for (Standard_Integer i = m.Lower(); i <= m.Upper(); ++i) {
+								mults.push_back(double(m(i)));
+							}
+
+							int degree;
+							degree = bs->Degree();
+
+							gp_Pnt start = bs->Value(realFirst);
+							gp_Pnt end = bs->Value(realLast);
+
+							//GeomAdaptor_Curve不允许uFirst大于uLast。
+							GeomAdaptor_Curve adaptor(bs, realFirst, realLast);
+							GCPnts_QuasiUniformDeflection discretizer(adaptor, deflection);
+							std::vector<glm::vec3> boundaryPointsForCurrEdge;
+							for (Standard_Integer i = 1; i <= discretizer.NbPoints(); ++i) {
+								boundaryPointsForCurrEdge.push_back(glm::vec3(discretizer.Value(i).X(), discretizer.Value(i).Y(), discretizer.Value(i).Z()));
+							}
+							boundaryPoints.push_back(boundaryPointsForCurrEdge);
+
+						}
+					}
+
+				}
+			}
+
+			//uv parametric points
+			int uNum = 3; //num of u curves in middle
+			int vNum = 3;
+			std::vector<std::vector<glm::vec3>> uvParametricPoints;
+			for (faceExp.Init(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
+				TopoDS_Face face = TopoDS::Face(faceExp.Current());
+				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+
+				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
+					Handle(Geom_BSplineSurface) bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
+
+					Standard_Real u1, u2, v1, v2;
+					bsplineSurf->Bounds(u1, u2, v1, v2);
+					if ((bsplineSurf->IsUPeriodic()) || (bsplineSurf->IsVPeriodic())) {
+						continue;
+					}
+					
+					float uStep = (u2 - u1) / (uNum + 1);
+					float vStep = (v2 - v1) / (vNum + 1);
+					Standard_Real deflection = 1e-3;
+
+					for (int i = 1; i <= vNum; ++i) {
+						Handle(Geom_Curve) vIsoCurve = bsplineSurf->VIso(v1 + vStep * i);
+						Handle(Geom_BSplineCurve) vNurbsCurve = Handle(Geom_BSplineCurve)::DownCast(vIsoCurve);
+						if (vNurbsCurve.IsNull()) {
+							continue;
+						};
+						GeomAdaptor_Curve adaptor(vNurbsCurve);
+						assert(vNurbsCurve->FirstParameter() < vNurbsCurve->LastParameter());
+						GCPnts_QuasiUniformDeflection discretizer(adaptor, deflection, vNurbsCurve->FirstParameter(), vNurbsCurve->LastParameter());
+						if (!discretizer.IsDone()) {
+							continue;
+						}
+						std::vector<glm::vec3> uvPointsForCurrEdge;
+						for (Standard_Integer i = 1; i <= discretizer.NbPoints(); ++i) {
+							const gp_Pnt& pt = discretizer.Value(i);
+							BRepClass_FaceClassifier classifier(face, pt, 1e-6);
+							if ((classifier.State() == TopAbs_IN) || (classifier.State() == TopAbs_ON)) {
+								uvPointsForCurrEdge.push_back(glm::vec3(discretizer.Value(i).X(), discretizer.Value(i).Y(), discretizer.Value(i).Z()));
+							}
+							//uvPointsForCurrEdge.push_back(glm::vec3(discretizer.Value(i).X(), discretizer.Value(i).Y(), discretizer.Value(i).Z()));
+						}
+						uvParametricPoints.push_back(uvPointsForCurrEdge);
+					}
+
+					for (int i = 1; i <= uNum; ++i) {
+						Handle(Geom_Curve) uIsoCurve = bsplineSurf->UIso(u1 + uStep * i);
+						Handle(Geom_BSplineCurve) uNurbsCurve = Handle(Geom_BSplineCurve)::DownCast(uIsoCurve);
+						if(uNurbsCurve.IsNull()) {
+							continue;
+						};
+						GeomAdaptor_Curve adaptor(uNurbsCurve);
+						assert(uNurbsCurve->FirstParameter() < uNurbsCurve->LastParameter());
+						GCPnts_QuasiUniformDeflection discretizer(adaptor, deflection, uNurbsCurve->FirstParameter(), uNurbsCurve->LastParameter());
+						if (!discretizer.IsDone()) {
+							continue;
+						}
+						std::vector<glm::vec3> uvPointsForCurrEdge;
+						for (Standard_Integer i = 1; i <= discretizer.NbPoints(); ++i) {
+							//Standard_Real test = discretizer.Parameter(i);
+							const gp_Pnt& pt = discretizer.Value(i);
+							BRepClass_FaceClassifier classifier(face, pt, 1e-6);
+							if ((classifier.State() == TopAbs_IN) || (classifier.State() == TopAbs_ON)) {
+								uvPointsForCurrEdge.push_back(glm::vec3(discretizer.Value(i).X(), discretizer.Value(i).Y(), discretizer.Value(i).Z()));
+							}
+							//uvPointsForCurrEdge.push_back(glm::vec3(discretizer.Value(i).X(), discretizer.Value(i).Y(), discretizer.Value(i).Z()));
+						}
+						uvParametricPoints.push_back(uvPointsForCurrEdge);
+					}
+				}
+			}
+
+			mesh.setBuffers(vulkanDevice, queue, verticesData, idxData, boundaryPoints, uvParametricPoints);
+
+		}
 	}
 
 	//Final Composition Command Buffer
@@ -2201,8 +2830,8 @@ public:
 
 		// Final fullscreen composition pass pipeline
 		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occ/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occ/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		// Empty vertex input state, vertices are generated by the vertex shader
 		VkPipelineVertexInputStateCreateInfo emptyInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
 		pipelineCI.pVertexInputState = &emptyInputState;
@@ -2225,8 +2854,8 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
 		// Offscreen pipeline
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occ/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occ/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 
 		// Separate render pass
 		pipelineCI.renderPass = offScreenFrameBuf.renderPass;
@@ -2254,8 +2883,8 @@ public:
 		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 		rasterizationState.lineWidth = 5.f;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occ/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occ/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = edgeFrameBuf.renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.edge));
 
@@ -2264,8 +2893,8 @@ public:
 		rasterizationState.lineWidth = 5.f;
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		depthStencilState.depthTestEnable = VK_FALSE;
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occ/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occ/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = lockedEdgeFrameBuf.renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.lockedEdge));
 	}
@@ -2499,7 +3128,7 @@ public:
 	void prepare()
 	{
 #if DLF
-		std::string glslToSpvBat = getShadersPath() + "gbufferhiddenline/glsltospv.bat " + getShadersPath() + "gbufferhiddenline";
+		std::string glslToSpvBat = getShadersPath() + "occ/glsltospv.bat " + getShadersPath() + "occ";
 		system(glslToSpvBat.c_str());
 		camera.flipY = true;
 #endif
@@ -2570,9 +3199,9 @@ public:
 		//}
 		if (lockedView) {
 			vkDeviceWaitIdle(device);
-			changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
-			copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
-			vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
+			//changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
+			//copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
+			//vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
 			mesh.analyzeEdgePixels2(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue, camera);
 			rebuildLockedEdgeCommandBuffer();
 			lockedView = false;

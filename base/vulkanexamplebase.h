@@ -151,6 +151,7 @@ protected:
 		VkSemaphore presentComplete;
 		// Command buffer submission and execution
 		VkSemaphore renderComplete;
+		VkSemaphore edgeComplete;
 	} semaphores;
 	std::vector<VkFence> waitFences;
 	bool requiresStencil{ false };

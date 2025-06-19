@@ -39,6 +39,29 @@ function(buildExample EXAMPLE_NAME)
 		add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
 		target_link_libraries(${EXAMPLE_NAME} base )
 	endif(WIN32)
+	# OCC lib
+	file(GLOB LIB_FILES "../external/occt_vc14-64-combined/occt_vc14-64/win64/vc14/lib/*.lib")
+	foreach(LIB ${LIB_FILES})
+		target_link_libraries(${EXAMPLE_NAME} ${LIB})
+	endforeach()
+
+	# OCC dll
+	file(GLOB DLL_FILES "../external/occt_vc14-64-combined/occt_vc14-64/win64/vc14/bin/*.dll")
+	foreach(DLL ${DLL_FILES})
+		add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DLL}" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
+	endforeach()
+
+	# OCC 3rd party dll
+	file(GLOB DLL_FILES "../external/occt_vc14-64-combined/3rdparty-vc14-64/ffmpeg-3.3.4-64/bin/*.dll")
+	foreach(DLL ${DLL_FILES})
+		add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DLL}" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
+	endforeach()
+		
+	add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../external/occt_vc14-64-combined/3rdparty-vc14-64/jemalloc-vc14-64/bin/jemalloc.dll" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
+	add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../external/occt_vc14-64-combined/3rdparty-vc14-64/tbb-2021.13.0-x64/bin/tbb12.dll" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
+	add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../external/occt_vc14-64-combined/3rdparty-vc14-64/freeimage-3.18.0-x64/bin/FreeImage.dll" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
+	add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../external/occt_vc14-64-combined/3rdparty-vc14-64/freetype-2.13.3-x64/bin/freetype.dll" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
+	add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../external/occt_vc14-64-combined/3rdparty-vc14-64/openvr-1.14.15-64/bin/win64/openvr_api.dll" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
 
 	file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 	set_target_properties(${EXAMPLE_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)

@@ -17,8 +17,9 @@ layout (location = 6) in int inFaceID;
 layout (location = 7) in int inBorder;
 layout (location = 8) in int inHeID;
 
+layout (location = 0) out vec3 outNormal;
 void main() 
 {
 	gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
-
+	outNormal = inNormal;
 }

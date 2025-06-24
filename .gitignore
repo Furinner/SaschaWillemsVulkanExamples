@@ -204,7 +204,7 @@ FakesAssemblies/
 !data/models/voyager/*.obj
 
 # DLLs in bin
-# !bin/*.dll
+!bin/*.dll
 
 # Android validation layer libraries
 android/layers/*/*.so

@@ -56,6 +56,7 @@
 #include <ShapeAnalysis_Edge.hxx>
 #include <iostream>
 
+
 #define DLF 1
 
 #define MAX_NEIGHBOR_FACE_COUNT 50
@@ -375,6 +376,11 @@ public:
 		std::vector<glm::vec4> faceNors{};
 		std::vector<int> edgeIdx{};
 		std::vector<Vertex> edgeVert{};
+		std::vector<int> unchangedEdgeIdx{};
+		std::vector<Vertex> unchangedEdgeVert{};
+		std::vector<glm::vec3> silhouettePoints;
+		std::vector<Vertex> finEdgeVer;
+		std::vector<int> finEdgeIdx;
 		vks::Buffer verticesBuffer;
 		vks::Buffer idxBuffer;
 		vks::Buffer faceInfoBuffer;
@@ -722,7 +728,7 @@ public:
 			vkFreeMemory(device->logicalDevice, edgeIdxStaging.memory, nullptr);
 		}
 
-		void setBuffers(vks::VulkanDevice* device, VkQueue transferQueue, std::vector<Vertex>& verticesData, std::vector<int>& idxData, std::vector<std::vector<glm::vec3>> boundaryPoints, std::vector<std::vector<glm::vec3>> uvParametricPoints) {
+		void setBuffers(vks::VulkanDevice* device, VkQueue transferQueue, std::vector<Vertex>& verticesData, std::vector<int>& idxData, std::vector<std::vector<glm::vec3>>& boundaryPoints, std::vector<std::vector<glm::vec3>>& uvParametricPoints, std::vector<glm::vec3>& silhouettePoints, std::vector<glm::vec3>& silhouettePointsDebug) {
 			for (auto& idx : idxData) {
 				index.push_back((uint32_t)idx);
 			}
@@ -783,13 +789,22 @@ public:
 					}
 				}
 			}
+
+			unchangedEdgeVert = edgeVert;
+			unchangedEdgeIdx = edgeIdx;
+
+			for(auto& silhouettePoint : silhouettePoints) {
+				edgeVert.push_back(Vertex(silhouettePoint, glm::vec3(0,0,1), glm::vec2(0), 0));
+				edgeIdx.push_back(edgeIdxCnt++);
+			}
+
 			size_t edgeVertSize = edgeVert.size() * sizeof(Vertex);
 			size_t edgeIdxSize = edgeIdx.size() * sizeof(int);
 
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
-			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging, edgeVertStaging, edgeIdxStaging;
+			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging, edgeVertStaging, edgeIdxStaging, lockedEdgeVertStaging, lockedEdgeIdxStaging;
 
 			// Create staging buffers
 			// Vertex data
@@ -853,6 +868,22 @@ public:
 				&edgeIdxStaging.buffer,
 				&edgeIdxStaging.memory,
 				edgeIdx.data()));
+			//L Edge Vert Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				edgeVertSize,
+				&lockedEdgeVertStaging.buffer,
+				&lockedEdgeVertStaging.memory,
+				edgeVert.data()));
+			//L Edge Idx Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				edgeIdxSize,
+				&lockedEdgeIdxStaging.buffer,
+				&lockedEdgeIdxStaging.memory,
+				edgeIdx.data()));
 			//
 			// Create device local buffers
 			// Vertex buffer
@@ -903,6 +934,20 @@ public:
 				edgeIdxSize,
 				&edgeIdxBuffer.buffer,
 				&edgeIdxBuffer.memory));
+			// Edge Vert Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				edgeVertSize,
+				&lockedEdgeVertBuffer.buffer,
+				&lockedEdgeVertBuffer.memory));
+			// Edge Idx Data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				edgeIdxSize,
+				&lockedEdgeIdxBuffer.buffer,
+				&lockedEdgeIdxBuffer.memory));
 			// Copy from staging buffers
 			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 
@@ -929,8 +974,14 @@ public:
 			copyRegion.size = edgeIdxSize;
 			vkCmdCopyBuffer(copyCmd, edgeIdxStaging.buffer, edgeIdxBuffer.buffer, 1, &copyRegion);
 
-			device->flushCommandBuffer(copyCmd, transferQueue, true);
+			copyRegion.size = edgeVertSize;
+			vkCmdCopyBuffer(copyCmd, lockedEdgeVertStaging.buffer, lockedEdgeVertBuffer.buffer, 1, &copyRegion);
 
+			copyRegion.size = edgeIdxSize;
+			vkCmdCopyBuffer(copyCmd, lockedEdgeIdxStaging.buffer, lockedEdgeIdxBuffer.buffer, 1, &copyRegion);
+
+			device->flushCommandBuffer(copyCmd, transferQueue, true);
+			lockedEdgeIdxCnt = edgeIdx.size();
 			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
@@ -945,6 +996,10 @@ public:
 			vkFreeMemory(device->logicalDevice, edgeVertStaging.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, edgeIdxStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, edgeIdxStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, lockedEdgeVertStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, lockedEdgeVertStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, lockedEdgeIdxStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, lockedEdgeIdxStaging.memory, nullptr);
 		}
 
 		void bindBuffers(VkCommandBuffer commandBuffer) {
@@ -1075,8 +1130,6 @@ public:
 					}
 				}
 			}*/
-			std::vector<Vertex> finVer;
-			std::vector<int> finIdx;
 			//int idx = 0;
 			struct StagingBuffer {
 				VkBuffer buffer;
@@ -1127,46 +1180,71 @@ public:
 			vkFreeMemory(device->logicalDevice, lockedEdgeVertBuffer.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, lockedEdgeIdxBuffer.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, lockedEdgeIdxBuffer.memory, nullptr);
-			finVer = edgeVert;
-			finIdx = edgeIdx;
-			lockedEdgeIdxCnt = edgeIdx.size();
+			vkDestroyBuffer(device->logicalDevice, edgeVertBuffer.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, edgeVertBuffer.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, edgeIdxBuffer.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, edgeIdxBuffer.memory, nullptr);
+			finEdgeVer.clear();
+			finEdgeIdx.clear();
+			finEdgeVer = unchangedEdgeVert;
+			finEdgeIdx = unchangedEdgeIdx;
+			for(int i = 0; i < silhouettePoints.size(); ++i) {
+				finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(0, 0, 1), glm::vec2(0), 0));
+				finEdgeIdx.push_back(i + unchangedEdgeIdx.size());
+			}
+			lockedEdgeIdxCnt = finEdgeIdx.size();
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				finVer.size() * sizeof(Vertex),
+				finEdgeVer.size() * sizeof(Vertex),
 				&vertexStaging.buffer,
 				&vertexStaging.memory,
-				finVer.data()));
+				finEdgeVer.data()));
 			// Index data
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				finIdx.size() * sizeof(int),
+				finEdgeIdx.size() * sizeof(int),
 				&indexStaging.buffer,
 				&indexStaging.memory,
-				finIdx.data()));
+				finEdgeIdx.data()));
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				finVer.size() * sizeof(Vertex),
+				finEdgeVer.size() * sizeof(Vertex),
 				&lockedEdgeVertBuffer.buffer,
 				&lockedEdgeVertBuffer.memory));
 			// Index buffer
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				finIdx.size() * sizeof(int),
+				finEdgeIdx.size() * sizeof(int),
 				&lockedEdgeIdxBuffer.buffer,
 				&lockedEdgeIdxBuffer.memory));
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				finEdgeVer.size() * sizeof(Vertex),
+				&edgeVertBuffer.buffer,
+				&edgeVertBuffer.memory));
+			// Index buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				finEdgeIdx.size() * sizeof(int),
+				&edgeIdxBuffer.buffer,
+				&edgeIdxBuffer.memory));
 
 			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 			VkBufferCopy copyRegion = {};
 
-			copyRegion.size = finVer.size() * sizeof(Vertex);
+			copyRegion.size = finEdgeVer.size() * sizeof(Vertex);
 			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, lockedEdgeVertBuffer.buffer, 1, &copyRegion);
+			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, edgeVertBuffer.buffer, 1, &copyRegion);
 
-			copyRegion.size = finIdx.size() * sizeof(int);
+			copyRegion.size = finEdgeIdx.size() * sizeof(int);
 			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, lockedEdgeIdxBuffer.buffer, 1, &copyRegion);
+			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, edgeIdxBuffer.buffer, 1, &copyRegion);
 			device->flushCommandBuffer(copyCmd, transferQueue, true);
 
 			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
@@ -1277,6 +1355,279 @@ public:
 			}
 			return segments;
 		}
+
+		void calculateSilhouette(TopoDS_Shape& shape, Camera& camera) {
+			TopExp_Explorer faceExp;
+			silhouettePoints.clear();
+			for (faceExp.Init(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
+				TopoDS_Face face = TopoDS::Face(faceExp.Current());
+				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+				//silhouette
+				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
+					Handle(Geom_BSplineSurface) bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
+					/*int bsplineU = bsplineSurf->UDegree();
+					int bsplineV = bsplineSurf->VDegree();
+					int bsplineUKnots = bsplineSurf->NbUKnots();
+					int bsplineVKnots = bsplineSurf->NbVKnots();
+					std::cout << "  UDegree: " << bsplineSurf->UDegree() << std::endl;
+					std::cout << "  VDegree: " << bsplineSurf->VDegree() << std::endl;
+					std::cout << "  Num UKnots: " << bsplineSurf->NbUKnots() << std::endl;
+					std::cout << "  Num VKnots: " << bsplineSurf->NbVKnots() << std::endl;
+					std::cout << "  Num Control Points: ("
+						<< bsplineSurf->NbUPoles() << ", "
+						<< bsplineSurf->NbVPoles() << ")" << std::endl;*/
+					Standard_Real u1, u2, v1, v2;
+					bsplineSurf->Bounds(u1, u2, v1, v2);
+					if ((bsplineSurf->IsUPeriodic()) || (bsplineSurf->IsVPeriodic())) {
+						continue;
+					}
+					const int divide = 40;
+					double uStep = (u2 - u1) / ((double)divide);
+					double vStep = (v2 - v1) / ((double)divide);
+					std::array<std::array<float, (divide + 1)>, (divide + 1)> silhouetteNorsArray;
+					std::array<std::array<bool, (divide + 1)>, (divide + 1)> silhouetteBoolsArray;
+					std::array<std::array<glm::vec3, (divide + 1)>, (divide + 1)> silhouettePointsArray;
+					glm::vec3 cameraNor = glm::vec3(0.f, 0.f, -1.f);
+					for (int i = 0; i <= divide; ++i) {
+						Standard_Real u = u1 + double(i) * uStep;
+						for (int j = 0; j <= divide; ++j) {
+							Standard_Real v = v1 + double(j) * vStep;
+							gp_Pnt pt{};
+							gp_Vec pu{};
+							gp_Vec pv{};
+							bsplineSurf->D1(u, v, pt, pu, pv);
+							BRepClass_FaceClassifier classifier(face, pt, 1e-6);
+							if ((classifier.State() == TopAbs_IN) || (classifier.State() == TopAbs_ON)) {
+								gp_Vec norGp = pu.Crossed(pv);
+								glm::vec3 nor = glm::normalize(glm::vec3(norGp.X(), norGp.Y(), norGp.Z()));
+								silhouetteNorsArray[i][j] = glm::dot(glm::mat3(camera.matrices.view) * nor, glm::vec3(0, 0, -1));
+								silhouettePointsArray[i][j] = glm::vec3(pt.X(), pt.Y(), pt.Z());
+								silhouetteBoolsArray[i][j] = true;
+							}
+							else {
+								silhouetteBoolsArray[i][j] = false;
+							}
+						}
+					}
+					//marching squares
+					for (int i = 0; i < divide; ++i) {
+						for (int j = 0; j < divide; ++j) {
+							glm::vec3 p1 = silhouettePointsArray[i][j];
+							glm::vec3 p2 = silhouettePointsArray[i + 1][j];
+							glm::vec3 p3 = silhouettePointsArray[i][j + 1];
+							glm::vec3 p4 = silhouettePointsArray[i + 1][j + 1];
+							float n1 = silhouetteNorsArray[i][j];
+							float n2 = silhouetteNorsArray[i + 1][j];
+							float n3 = silhouetteNorsArray[i][j + 1];
+							float n4 = silhouetteNorsArray[i + 1][j + 1];
+							bool b1 = silhouetteBoolsArray[i][j];
+							bool b2 = silhouetteBoolsArray[i + 1][j];
+							bool b3 = silhouetteBoolsArray[i][j + 1];
+							bool b4 = silhouetteBoolsArray[i + 1][j + 1];
+							if (!b1 || !b2 || !b3 || !b4) {
+								continue;
+							}
+							//tri 1
+							if ((n1 == 0.f) && (n2 == 0.f)) {
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(p2);
+							}
+							if ((n2 == 0.f) && (n3 == 0.f)) {
+								silhouettePoints.push_back(p2);
+								silhouettePoints.push_back(p3);
+							}
+							if ((n1 == 0.f) && (n3 == 0.f)) {
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(p3);
+							}
+							//0zf
+							if ((n1 == 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//0fz
+							if ((n1 == 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//z0f
+							if ((n1 > 0.f) && (n2 == 0.f) && (n3 < 0.f)) {
+								float t13 = n1 / (n1 - n3);
+								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+								silhouettePoints.push_back(p2);
+							}
+							//f0z
+							if ((n1 < 0.f) && (n2 == 0.f) && (n3 > 0.f)) {
+								float t31 = n3 / (n3 - n1);
+								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+								silhouettePoints.push_back(p2);
+							}
+							//zf0
+							if ((n1 > 0.f) && (n2 < 0.f) && (n3 == 0.f)) {
+								float t12 = n1 / (n1 - n2);
+								silhouettePoints.push_back(p3);
+								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+							}
+							//fz0
+							if ((n1 < 0.f) && (n2 > 0.f) && (n3 == 0.f)) {
+								float t21 = n2 / (n2 - n1);
+								silhouettePoints.push_back(p3);
+								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+							}
+							//zff
+							if ((n1 > 0.f) && (n2 < 0.f) && (n3 < 0.f)) {
+								float t12 = n1 / (n1 - n2);
+								float t13 = n1 / (n1 - n3);
+								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+							}
+							//fzf
+							if ((n1 < 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
+								float t21 = n2 / (n2 - n1);
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//ffz
+							if ((n1 < 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
+								float t31 = n3 / (n3 - n1);
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//zzf
+							if ((n1 > 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
+								float t13 = n1 / (n1 - n3);
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//zfz
+							if ((n1 > 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
+								float t12 = n1 / (n1 - n2);
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//fzz
+							if ((n1 < 0.f) && (n2 > 0.f) && (n3 > 0.f)) {
+								float t21 = n2 / (n2 - n1);
+								float t31 = n3 / (n3 - n1);
+								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+							}
+							//tri 2
+							if ((n2 == 0.f) && (n3 == 0.f)) {
+								silhouettePoints.push_back(p2);
+								silhouettePoints.push_back(p3);
+							}
+							if ((n3 == 0.f) && (n4 == 0.f)) {
+								silhouettePoints.push_back(p3);
+								silhouettePoints.push_back(p4);
+							}
+							if ((n4 == 0.f) && (n2 == 0.f)) {
+								silhouettePoints.push_back(p2);
+								silhouettePoints.push_back(p4);
+							}
+							//0zf
+							if ((n2 == 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
+								float t34 = n3 / (n3 - n4);
+								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+								silhouettePoints.push_back(p2);
+							}
+							//0fz
+							if ((n2 == 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
+								float t43 = n4 / (n4 - n3);
+								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+								silhouettePoints.push_back(p2);
+							}
+							//z0f
+							if ((n2 > 0.f) && (n3 == 0.f) && (n4 < 0.f)) {
+								float t24 = n2 / (n2 - n4);
+								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+								silhouettePoints.push_back(p3);
+							}
+							//f0z
+							if ((n2 < 0.f) && (n3 == 0.f) && (n4 > 0.f)) {
+								float t42 = n4 / (n4 - n2);
+								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+								silhouettePoints.push_back(p3);
+							}
+							//zf0
+							if ((n2 > 0.f) && (n3 < 0.f) && (n4 == 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(p4);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//fz0
+							if ((n2 < 0.f) && (n3 > 0.f) && (n4 == 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(p4);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//zff
+							if ((n2 > 0.f) && (n3 < 0.f) && (n4 < 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								float t24 = n2 / (n2 - n4);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+							}
+							//fzf
+							if ((n2 < 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								float t34 = n3 / (n3 - n4);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+							}
+							//ffz
+							if ((n2 < 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
+								float t42 = n4 / (n4 - n2);
+								float t43 = n4 / (n4 - n3);
+								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+							}
+							//zzf
+							if ((n2 > 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
+								float t24 = n2 / (n2 - n4);
+								float t34 = n3 / (n3 - n4);
+								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+							}
+							//zfz
+							if ((n2 > 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								float t43 = n4 / (n4 - n3);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+							}
+							//fzz
+							if ((n2 < 0.f) && (n3 > 0.f) && (n4 > 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								float t42 = n4 / (n4 - n2);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+							}
+						}
+						/*for (int i = 0; i < divide; ++i) {
+							for (int j = 0; j < divide; ++j) {
+								glm::vec3 p1 = silhouettePointsArray[i][j];
+								glm::vec3 p2 = silhouettePointsArray[i + 1][j];
+								glm::vec3 p3 = silhouettePointsArray[i][j + 1];
+								glm::vec3 p4 = silhouettePointsArray[i + 1][j + 1];
+								silhouettePointsDebug.push_back(p1);
+								silhouettePointsDebug.push_back(p2);
+								silhouettePointsDebug.push_back(p2);
+								silhouettePointsDebug.push_back(p3);
+								silhouettePointsDebug.push_back(p3);
+								silhouettePointsDebug.push_back(p1);
+							}
+						}*/
+					}
+				}
+			}
+		}
 	};
 
 	struct PushValue {
@@ -1286,6 +1637,7 @@ public:
 
 	};
 	Mesh mesh;
+	TopoDS_Shape shape;
 	PushValue pushVal{};
 	//
 	//self-added
@@ -2151,6 +2503,90 @@ public:
 		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer));
 	}
 
+	void rebuildEdgeCommandBuffer()
+	{
+		vkResetCommandBuffer(edgeCmdBuffer, 0);
+
+		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+
+		VkClearValue clearValues[1];
+		clearValues[0].color.int32[0] = -1;
+		clearValues[0].color.int32[1] = -1;
+		clearValues[0].color.int32[2] = 0;
+		clearValues[0].color.int32[3] = 0;
+
+		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+		renderPassBeginInfo.renderPass = edgeFrameBuf.renderPass;
+		renderPassBeginInfo.framebuffer = edgeFrameBuf.frameBuffer;
+		renderPassBeginInfo.renderArea.extent.width = edgeFrameBuf.width;
+		renderPassBeginInfo.renderArea.extent.height = edgeFrameBuf.height;
+		//diff: render pass don't have any clear values
+		renderPassBeginInfo.clearValueCount = 1;
+		renderPassBeginInfo.pClearValues = clearValues;
+
+		// Add memory barrier between render passes
+		VkImageMemoryBarrier colorBarrier = {};
+		colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+		colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		colorBarrier.image = offScreenFrameBuf.albedo.image;
+		colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		colorBarrier.subresourceRange.baseMipLevel = 0;
+		colorBarrier.subresourceRange.levelCount = 1;
+		colorBarrier.subresourceRange.baseArrayLayer = 0;
+		colorBarrier.subresourceRange.layerCount = 1;
+
+		VkImageMemoryBarrier positionBarrier = {};
+		positionBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		positionBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		positionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+		positionBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		positionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		positionBarrier.image = offScreenFrameBuf.position.image;
+		positionBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		positionBarrier.subresourceRange.baseMipLevel = 0;
+		positionBarrier.subresourceRange.levelCount = 1;
+		positionBarrier.subresourceRange.baseArrayLayer = 0;
+		positionBarrier.subresourceRange.layerCount = 1;
+
+		VkImageMemoryBarrier barriers[] = { colorBarrier, positionBarrier };
+
+		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer, &cmdBufInfo));
+
+		vkCmdPipelineBarrier(
+			edgeCmdBuffer,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			2, barriers
+		);
+
+		vkCmdBeginRenderPass(edgeCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkViewport viewport = vks::initializers::viewport((float)edgeFrameBuf.width, -(float)edgeFrameBuf.height, 0.0f, 1.0f);
+		viewport.x = 0;
+		viewport.y = (float)edgeFrameBuf.height;
+		vkCmdSetViewport(edgeCmdBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor = vks::initializers::rect2D(edgeFrameBuf.width, edgeFrameBuf.height, 0, 0);
+		vkCmdSetScissor(edgeCmdBuffer, 0, 1, &scissor);
+
+		vkCmdBindPipeline(edgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.edge);
+
+		vkCmdBindDescriptorSets(edgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.edge, 0, nullptr);
+		mesh.bindLineBuffers(edgeCmdBuffer);
+		vkCmdDrawIndexed(edgeCmdBuffer, mesh.edgeIdx.size(), 1, 0, 0, 0);
+		//vkCmdDraw(edgeCmdBuffer, 2, 1, 0, 0);
+
+		vkCmdEndRenderPass(edgeCmdBuffer);
+
+		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer));
+	}
+
 	void buildLockedEdgeCommandBuffer() {
 		if (lockedEdgeCmdBuffer == VK_NULL_HANDLE) {
 			lockedEdgeCmdBuffer = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
@@ -2189,8 +2625,8 @@ public:
 		vkCmdBindPipeline(lockedEdgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.lockedEdge);
 
 		vkCmdBindDescriptorSets(lockedEdgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.lockedEdge, 0, nullptr);
-
-		vkCmdDraw(lockedEdgeCmdBuffer, 0, 1, 0, 0);
+		mesh.bindLockedEdgeBuffers(lockedEdgeCmdBuffer);
+		vkCmdDrawIndexed(lockedEdgeCmdBuffer, mesh.lockedEdgeIdxCnt, 1, 0, 0, 0);
 
 		vkCmdEndRenderPass(lockedEdgeCmdBuffer);
 
@@ -2259,7 +2695,9 @@ public:
 		//用于测试trim curve等等
 		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/ff1-flying-formula-1-1.snapshot.1/3.stp";
 		//大部分完美，有些curve没trim掉
-		const char* filename = "D:/Program Files/Google/Chrome/Downloads/Extra-230-50ccm_1.stp";
+		//const char* filename = (getAssetPath() + "models/stp/Extra-230-50ccm/Extra-230-50ccm_5.stp").c_str();
+		std::string filenameTmp = getAssetPath() + "models/stp/Extra-230-50ccm/Extra-230-50ccm_8.stp";
+		const char* filename = filenameTmp.c_str();
 		// 轮椅
 		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/COMPLETA.STEP";
 		STEPControl_Reader reader;
@@ -2269,82 +2707,82 @@ public:
 			Standard_Integer nbr = reader.TransferRoots();
 
 			// 获取转换后的形状
-			TopoDS_Shape shape = reader.OneShape();
+			shape = reader.OneShape();
 			//为整个形状或单个边构建 3D 几何
 			BRepLib::BuildCurves3d(shape);
 			
 			// Traverse all faces
-			int nurbsCount = 0;
-			for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next()) {
-				TopoDS_Face face = TopoDS::Face(exp.Current());
-				for (TopExp_Explorer exp(face, TopAbs_EDGE); exp.More(); exp.Next()) {
-					TopoDS_Edge edge = TopoDS::Edge(exp.Current());
+			//int nurbsCount = 0;
+			//for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next()) {
+			//	TopoDS_Face face = TopoDS::Face(exp.Current());
+			//	for (TopExp_Explorer exp(face, TopAbs_EDGE); exp.More(); exp.Next()) {
+			//		TopoDS_Edge edge = TopoDS::Edge(exp.Current());
 
-					Standard_Real first, last;
-					Handle(Geom2d_Curve) c2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
+			//		Standard_Real first, last;
+			//		Handle(Geom2d_Curve) c2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
 
-					// c2d 是参数空间中的边界线，可以用来分析或绘制UV图
-				}
-
-
-				// Get the geometric surface of the face
-				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
-
-				// Check if it's a BSpline surface (NURBS)
-				Handle(Geom_BSplineSurface) bspline = Handle(Geom_BSplineSurface)::DownCast(surface);
-				if (!bspline.IsNull()) {
-					nurbsCount++;
-
-					int bsplineU = bspline->UDegree();
-					int bsplineV = bspline->VDegree();
-					int bsplineUKnots = bspline->NbUKnots();
-					int bsplineVKnots = bspline->NbVKnots();
-					std::cout << "Found NURBS surface #" << nurbsCount << std::endl;
-					std::cout << "  UDegree: " << bspline->UDegree() << std::endl;
-					std::cout << "  VDegree: " << bspline->VDegree() << std::endl;
-					std::cout << "  Num UKnots: " << bspline->NbUKnots() << std::endl;
-					std::cout << "  Num VKnots: " << bspline->NbVKnots() << std::endl;
-					std::cout << "  Num Control Points: ("
-						<< bspline->NbUPoles() << ", "
-						<< bspline->NbVPoles() << ")" << std::endl;
+			//		// c2d 是参数空间中的边界线，可以用来分析或绘制UV图
+			//	}
 
 
-				}
-			}
+			//	// Get the geometric surface of the face
+			//	Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
 
-			// 创建面与边之间的反向索引：Edge → [Faces]
-			TopTools_IndexedDataMapOfShapeListOfShape edgeToFacesMap;
-			TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeToFacesMap);
+			//	// Check if it's a BSpline surface (NURBS)
+			//	Handle(Geom_BSplineSurface) bspline = Handle(Geom_BSplineSurface)::DownCast(surface);
+			//	if (!bspline.IsNull()) {
+			//		nurbsCount++;
 
-			// 遍历边，找出哪些边被多个面共享
-			for (int i = 1; i <= edgeToFacesMap.Extent(); ++i) {
-				const TopoDS_Edge& edge = TopoDS::Edge(edgeToFacesMap.FindKey(i));
-				const TopTools_ListOfShape& faceList = edgeToFacesMap.FindFromIndex(i);
+			//		int bsplineU = bspline->UDegree();
+			//		int bsplineV = bspline->VDegree();
+			//		int bsplineUKnots = bspline->NbUKnots();
+			//		int bsplineVKnots = bspline->NbVKnots();
+			//		std::cout << "Found NURBS surface #" << nurbsCount << std::endl;
+			//		std::cout << "  UDegree: " << bspline->UDegree() << std::endl;
+			//		std::cout << "  VDegree: " << bspline->VDegree() << std::endl;
+			//		std::cout << "  Num UKnots: " << bspline->NbUKnots() << std::endl;
+			//		std::cout << "  Num VKnots: " << bspline->NbVKnots() << std::endl;
+			//		std::cout << "  Num Control Points: ("
+			//			<< bspline->NbUPoles() << ", "
+			//			<< bspline->NbVPoles() << ")" << std::endl;
 
-				if (faceList.Extent() > 1) {
-					std::cout << "Edge is shared by " << faceList.Extent() << " faces." << std::endl;
 
-					int nurbsFaceCount = 0;
-					for (TopTools_ListIteratorOfListOfShape it(faceList); it.More(); it.Next()) {
-						TopoDS_Face face = TopoDS::Face(it.Value());
-						Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
-						if (!surf.IsNull()) {
-							Handle(Geom_BSplineSurface) bs = Handle(Geom_BSplineSurface)::DownCast(surf);
-							if (!bs.IsNull()) {
-								nurbsFaceCount++;
-							}
-						}
-					}
+			//	}
+			//}
 
-					if (nurbsFaceCount >= 2) {
-						std::cout << "  ⮑ At least two of them are NURBS surfaces." << std::endl;
-					}
-				}
-			}
+			//// 创建面与边之间的反向索引：Edge → [Faces]
+			//TopTools_IndexedDataMapOfShapeListOfShape edgeToFacesMap;
+			//TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeToFacesMap);
+
+			//// 遍历边，找出哪些边被多个面共享
+			//for (int i = 1; i <= edgeToFacesMap.Extent(); ++i) {
+			//	const TopoDS_Edge& edge = TopoDS::Edge(edgeToFacesMap.FindKey(i));
+			//	const TopTools_ListOfShape& faceList = edgeToFacesMap.FindFromIndex(i);
+
+			//	if (faceList.Extent() > 1) {
+			//		std::cout << "Edge is shared by " << faceList.Extent() << " faces." << std::endl;
+
+			//		int nurbsFaceCount = 0;
+			//		for (TopTools_ListIteratorOfListOfShape it(faceList); it.More(); it.Next()) {
+			//			TopoDS_Face face = TopoDS::Face(it.Value());
+			//			Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
+			//			if (!surf.IsNull()) {
+			//				Handle(Geom_BSplineSurface) bs = Handle(Geom_BSplineSurface)::DownCast(surf);
+			//				if (!bs.IsNull()) {
+			//					nurbsFaceCount++;
+			//				}
+			//			}
+			//		}
+
+			//		if (nurbsFaceCount >= 2) {
+			//			std::cout << "  ⮑ At least two of them are NURBS surfaces." << std::endl;
+			//		}
+			//	}
+			//}
 
 			//Rendering
 			// 对整个模型进行离散化（细分）
-			BRepMesh_IncrementalMesh mesher(shape, 1); // 0.001是线性公差（越小越精细）
+			BRepMesh_IncrementalMesh mesher(shape, 0.1); // 0.001是线性公差（越小越精细）
 
 			// 遍历所有的面并访问三角剖分
 			int objID = 0;
@@ -2410,12 +2848,17 @@ public:
 			int nullCurve2d = 0;
 			int build3dCurveFailed = 0;
 			int fixAndAdd3dCurve = 0;
-			//boundary curves
+
 			std::vector<std::vector<glm::vec3>> boundaryPoints;
+			std::vector<std::vector<glm::vec3>> uvParametricPoints;
+			std::vector<glm::vec3> silhouettePoints;
+			std::vector<glm::vec3> silhouettePointsDebug;
+
 			TopExp_Explorer faceExp;
 			for (faceExp.Init(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
 				TopoDS_Face face = TopoDS::Face(faceExp.Current());
 
+				//boundary curves
 				TopExp_Explorer wireExp;
 				for (wireExp.Init(face, TopAbs_WIRE); wireExp.More(); wireExp.Next()) {
 					TopoDS_Wire wire = TopoDS::Wire(wireExp.Current());
@@ -2427,13 +2870,11 @@ public:
 						const TopoDS_Edge& edgeTmp = exp.Current();
 						TopoDS_Edge edge = TopoDS::Edge(edgeTmp);
 
-						//ShapeAnalysis_Edge用于调整每条边的参数走向，使其符合拓扑定义的方向
-						ShapeAnalysis_Edge saEdge;
 						Standard_Real first, last;
+						Standard_Real first2d, last2d;
 						Handle(Geom_Curve) curve3d = BRep_Tool::Curve(edge, first, last);
-						Handle(Geom2d_Curve) curve2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
+						Handle(Geom2d_Curve) curve2d = BRep_Tool::CurveOnSurface(edge, face, first2d, last2d);
 						if (curve3d.IsNull()) {
-							Handle(Geom2d_Curve) curve2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
 							if (curve2d.IsNull()) {
 								continue;
 							}
@@ -2449,6 +2890,8 @@ public:
 							}*/
 						}
 						
+						//ShapeAnalysis_Edge用于调整每条边的参数走向，使其符合拓扑定义的方向
+						ShapeAnalysis_Edge saEdge;
 						Standard_Real realFirst, realLast;
 						saEdge.Curve3d(edge, curve3d, realFirst, realLast, Standard_True);
 						/*if (realFirst > realLast) {
@@ -2477,7 +2920,7 @@ public:
 						Handle(Geom_BSplineCurve) bs;
 						if (bs = Handle(Geom_BSplineCurve)::DownCast(curve3d)) {
 							// 直接使用 bs
-							TColgp_Array1OfPnt poles(1, bs->NbPoles());
+							/*TColgp_Array1OfPnt poles(1, bs->NbPoles());
 							TColStd_Array1OfReal w(1, bs->NbPoles());
 							TColStd_Array1OfReal k(1, bs->NbKnots());
 							TColStd_Array1OfInteger m(1, bs->NbKnots());
@@ -2512,7 +2955,7 @@ public:
 							degree = bs->Degree();
 
 							gp_Pnt start = bs->Value(realFirst);
-							gp_Pnt end = bs->Value(realLast);
+							gp_Pnt end = bs->Value(realLast);*/
 
 							//GeomAdaptor_Curve不允许uFirst大于uLast。
 							GeomAdaptor_Curve adaptor(bs, realFirst, realLast);
@@ -2527,14 +2970,9 @@ public:
 					}
 
 				}
-			}
-
-			//uv parametric points
-			int uNum = 3; //num of u curves in middle
-			int vNum = 3;
-			std::vector<std::vector<glm::vec3>> uvParametricPoints;
-			for (faceExp.Init(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
-				TopoDS_Face face = TopoDS::Face(faceExp.Current());
+				//uv parametric points
+				int uNum = 2; //num of u curves in middle
+				int vNum = 2;
 				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
 
 				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
@@ -2545,9 +2983,9 @@ public:
 					if ((bsplineSurf->IsUPeriodic()) || (bsplineSurf->IsVPeriodic())) {
 						continue;
 					}
-					
-					float uStep = (u2 - u1) / (uNum + 1);
-					float vStep = (v2 - v1) / (vNum + 1);
+
+					double uStep = (u2 - u1) / (uNum + 1);
+					double vStep = (v2 - v1) / (vNum + 1);
 					Standard_Real deflection = 1e-3;
 
 					for (int i = 1; i <= vNum; ++i) {
@@ -2577,7 +3015,7 @@ public:
 					for (int i = 1; i <= uNum; ++i) {
 						Handle(Geom_Curve) uIsoCurve = bsplineSurf->UIso(u1 + uStep * i);
 						Handle(Geom_BSplineCurve) uNurbsCurve = Handle(Geom_BSplineCurve)::DownCast(uIsoCurve);
-						if(uNurbsCurve.IsNull()) {
+						if (uNurbsCurve.IsNull()) {
 							continue;
 						};
 						GeomAdaptor_Curve adaptor(uNurbsCurve);
@@ -2599,9 +3037,274 @@ public:
 						uvParametricPoints.push_back(uvPointsForCurrEdge);
 					}
 				}
+
+				//silhouette
+				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
+					Handle(Geom_BSplineSurface) bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
+					/*int bsplineU = bsplineSurf->UDegree();
+					int bsplineV = bsplineSurf->VDegree();
+					int bsplineUKnots = bsplineSurf->NbUKnots();
+					int bsplineVKnots = bsplineSurf->NbVKnots();
+					std::cout << "  UDegree: " << bsplineSurf->UDegree() << std::endl;
+					std::cout << "  VDegree: " << bsplineSurf->VDegree() << std::endl;
+					std::cout << "  Num UKnots: " << bsplineSurf->NbUKnots() << std::endl;
+					std::cout << "  Num VKnots: " << bsplineSurf->NbVKnots() << std::endl;
+					std::cout << "  Num Control Points: ("
+						<< bsplineSurf->NbUPoles() << ", "
+						<< bsplineSurf->NbVPoles() << ")" << std::endl;*/
+					Standard_Real u1, u2, v1, v2;
+					bsplineSurf->Bounds(u1, u2, v1, v2);
+					if ((bsplineSurf->IsUPeriodic()) || (bsplineSurf->IsVPeriodic())) {
+						continue;
+					}
+					const int divide = 40;
+					double uStep = (u2 - u1) / ((double)divide);
+					double vStep = (v2 - v1) / ((double)divide);
+					std::array<std::array<float, (divide + 1)>, (divide + 1)> silhouetteNorsArray;
+					std::array<std::array<bool, (divide + 1)>, (divide + 1)> silhouetteBoolsArray;
+					std::array<std::array<glm::vec3, (divide + 1)>, (divide + 1)> silhouettePointsArray;
+					glm::vec3 cameraNor = glm::vec3(0.f, 0.f, -1.f);
+					for (int i = 0; i <= divide; ++i) {
+						Standard_Real u = u1 + double(i) * uStep;
+						for(int j = 0; j <= divide; ++j) {
+							Standard_Real v = v1 + double(j) * vStep;
+							gp_Pnt pt{};
+							gp_Vec pu{};
+							gp_Vec pv{};
+							bsplineSurf->D1(u, v, pt, pu, pv);
+							BRepClass_FaceClassifier classifier(face, pt, 1e-6);
+							if ((classifier.State() == TopAbs_IN) || (classifier.State() == TopAbs_ON)) {
+								gp_Vec norGp = pu.Crossed(pv);
+								glm::vec3 nor = glm::normalize(glm::vec3(norGp.X(),norGp.Y(),norGp.Z()));
+								silhouetteNorsArray[i][j] = glm::dot(glm::mat3(camera.matrices.view)*nor, glm::vec3(0, 0, -1));
+								silhouettePointsArray[i][j] = glm::vec3(pt.X(), pt.Y(), pt.Z());
+								silhouetteBoolsArray[i][j] = true;
+							}
+							else {
+								silhouetteBoolsArray[i][j] = false;
+							}
+						}
+					}
+					//marching squares
+					for(int i = 0; i < divide; ++i) {
+						for(int j = 0; j < divide; ++j) {
+							glm::vec3 p1 = silhouettePointsArray[i][j];
+							glm::vec3 p2 = silhouettePointsArray[i + 1][j];
+							glm::vec3 p3 = silhouettePointsArray[i][j + 1];
+							glm::vec3 p4 = silhouettePointsArray[i + 1][j + 1];
+							float n1 = silhouetteNorsArray[i][j];
+							float n2 = silhouetteNorsArray[i + 1][j];
+							float n3 = silhouetteNorsArray[i][j + 1];
+							float n4 = silhouetteNorsArray[i + 1][j + 1];
+							bool b1 = silhouetteBoolsArray[i][j];
+							bool b2 = silhouetteBoolsArray[i + 1][j];
+							bool b3 = silhouetteBoolsArray[i][j + 1];
+							bool b4 = silhouetteBoolsArray[i + 1][j + 1];
+							if (!b1 || !b2 || !b3 || !b4) {
+								continue;
+							}
+							//tri 1
+							if ((n1 == 0.f) && (n2 == 0.f)) {
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(p2);
+							}
+							if ((n2 == 0.f) && (n3 == 0.f)) {
+								silhouettePoints.push_back(p2);
+								silhouettePoints.push_back(p3);
+							}
+							if ((n1 == 0.f) && (n3 == 0.f)) {
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(p3);
+							}
+							//0zf
+							if ((n1 == 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//0fz
+							if((n1 == 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(p1);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//z0f
+							if((n1 > 0.f) && (n2 == 0.f) && (n3 < 0.f)) {
+								float t13 = n1 / (n1 - n3);
+								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+								silhouettePoints.push_back(p2);
+							}
+							//f0z
+							if ((n1 < 0.f) && (n2 == 0.f) && (n3 > 0.f)) {
+								float t31 = n3 / (n3 - n1);
+								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+								silhouettePoints.push_back(p2);
+							}
+							//zf0
+							if((n1 > 0.f) && (n2 < 0.f) && (n3 == 0.f)) {
+								float t12 = n1 / (n1 - n2);
+								silhouettePoints.push_back(p3);
+								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+							}
+							//fz0
+							if((n1 < 0.f) && (n2 > 0.f) && (n3 == 0.f)) {
+								float t21 = n2 / (n2 - n1);
+								silhouettePoints.push_back(p3);
+								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+							}
+							//zff
+							if ((n1 > 0.f) && (n2 < 0.f) && (n3 < 0.f)) {
+								float t12 = n1 / (n1 - n2);
+								float t13 = n1 / (n1 - n3);
+								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+							}
+							//fzf
+							if ((n1 < 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
+								float t21 = n2 / (n2 - n1);
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//ffz
+							if ((n1 < 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
+								float t31 = n3 / (n3 - n1);
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//zzf
+							if ((n1 > 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
+								float t13 = n1 / (n1 - n3);
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//zfz
+							if ((n1 > 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
+								float t12 = n1 / (n1 - n2);
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//fzz
+							if ((n1 < 0.f) && (n2 > 0.f) && (n3 > 0.f)) {
+								float t21 = n2 / (n2 - n1);
+								float t31 = n3 / (n3 - n1);
+								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+							}
+							//tri 2
+							if ((n2 == 0.f) && (n3 == 0.f)) {
+								silhouettePoints.push_back(p2);
+								silhouettePoints.push_back(p3);
+							}
+							if ((n3 == 0.f) && (n4 == 0.f)) {
+								silhouettePoints.push_back(p3);
+								silhouettePoints.push_back(p4);
+							}
+							if ((n4 == 0.f) && (n2 == 0.f)) {
+								silhouettePoints.push_back(p2);
+								silhouettePoints.push_back(p4);
+							}
+							//0zf
+							if((n2 == 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
+								float t34 = n3 / (n3 - n4);
+								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+								silhouettePoints.push_back(p2);
+							}
+							//0fz
+							if((n2 == 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
+								float t43 = n4 / (n4 - n3);
+								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+								silhouettePoints.push_back(p2);
+							}
+							//z0f
+							if((n2 > 0.f) && (n3 == 0.f) && (n4 < 0.f)) {
+								float t24 = n2 / (n2 - n4);
+								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+								silhouettePoints.push_back(p3);
+							}
+							//f0z
+							if((n2 < 0.f) && (n3 == 0.f) && (n4 > 0.f)) {
+								float t42 = n4 / (n4 - n2);
+								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+								silhouettePoints.push_back(p3);
+							}
+							//zf0
+							if((n2 > 0.f) && (n3 < 0.f) && (n4 == 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								silhouettePoints.push_back(p4);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+							}
+							//fz0
+							if((n2 < 0.f) && (n3 > 0.f) && (n4 == 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								silhouettePoints.push_back(p4);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+							}
+							//zff
+							if ((n2 > 0.f) && (n3 < 0.f) && (n4 < 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								float t24 = n2 / (n2 - n4);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+							}
+							//fzf
+							if ((n2 < 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								float t34 = n3 / (n3 - n4);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+							}
+							//ffz
+							if ((n2 < 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
+								float t42 = n4 / (n4 - n2);
+								float t43 = n4 / (n4 - n3);
+								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+							}
+							//zzf
+							if ((n2 > 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
+								float t24 = n2 / (n2 - n4);
+								float t34 = n3 / (n3 - n4);
+								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+							}
+							//zfz
+							if ((n2 > 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
+								float t23 = n2 / (n2 - n3);
+								float t43 = n4 / (n4 - n3);
+								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+							}
+							//fzz
+							if ((n2 < 0.f) && (n3 > 0.f) && (n4 > 0.f)) {
+								float t32 = n3 / (n3 - n2);
+								float t42 = n4 / (n4 - n2);
+								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+							}
+						}
+						/*for (int i = 0; i < divide; ++i) {
+							for (int j = 0; j < divide; ++j) {
+								glm::vec3 p1 = silhouettePointsArray[i][j];
+								glm::vec3 p2 = silhouettePointsArray[i + 1][j];
+								glm::vec3 p3 = silhouettePointsArray[i][j + 1];
+								glm::vec3 p4 = silhouettePointsArray[i + 1][j + 1];
+								silhouettePointsDebug.push_back(p1);
+								silhouettePointsDebug.push_back(p2);
+								silhouettePointsDebug.push_back(p2);
+								silhouettePointsDebug.push_back(p3);
+								silhouettePointsDebug.push_back(p3);
+								silhouettePointsDebug.push_back(p1);
+							}
+						}*/
+					}
+				}
 			}
 
-			mesh.setBuffers(vulkanDevice, queue, verticesData, idxData, boundaryPoints, uvParametricPoints);
+			mesh.setBuffers(vulkanDevice, queue, verticesData, idxData, boundaryPoints, uvParametricPoints, silhouettePoints, silhouettePointsDebug);
 
 		}
 	}
@@ -3202,7 +3905,9 @@ public:
 			//changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
 			//copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
 			//vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
+			mesh.calculateSilhouette(shape, camera);
 			mesh.analyzeEdgePixels2(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue, camera);
+			rebuildEdgeCommandBuffer();
 			rebuildLockedEdgeCommandBuffer();
 			lockedView = false;
 		}

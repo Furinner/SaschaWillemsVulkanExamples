@@ -20,7 +20,7 @@ private:
 	{
 		glm::mat4 currentMatrix = matrices.view;
 
-		glm::mat4 rotM = glm::mat4(1.0f);
+		/*glm::mat4 rotM = glm::mat4(1.0f);
 		glm::mat4 transM;
 
 		rotM = glm::rotate(rotM, glm::radians(rotation.x * (flipY ? -1.0f : 1.0f)), glm::vec3(1.0f, 0.0f, 0.0f));
@@ -42,8 +42,9 @@ private:
 			matrices.view = transM * rotM;
 		}
 
-		viewPos = glm::vec4(position, 0.0f) * glm::vec4(-1.0f, 1.0f, -1.0f, 1.0f);
+		viewPos = glm::vec4(position, 0.0f) * glm::vec4(-1.0f, 1.0f, -1.0f, 1.0f);*/
 
+		matrices.view = glm::lookAt(position, position + getCamFront(), glm::vec3(0, 1, 0));
 		if (matrices.view != currentMatrix) {
 			updated = true;
 		}
@@ -54,6 +55,9 @@ public:
 	float orthoLeft, orthoRight, orthoBottom, orthoTop;
 	float aspect;
 	bool orthographic = false;
+	//for debug
+	//left dx+, right dx-, up dy+£¬down dy-
+	//float dx, dy;
 	enum CameraType { lookat, firstperson };
 	CameraType type = CameraType::lookat;
 
@@ -193,12 +197,22 @@ public:
 	}
 
 	glm::vec3 getCamFront() {
-		glm::vec3 camFront;
-		camFront.x = -cos(glm::radians(rotation.x)) * sin(glm::radians(rotation.y));
+		glm::vec3 camFront;  //point at camera -z axis
+		camFront.x = cos(glm::radians(rotation.x)) * -sin(glm::radians(rotation.y));
 		camFront.y = sin(glm::radians(rotation.x));
-		camFront.z = cos(glm::radians(rotation.x)) * cos(glm::radians(rotation.y));
+		camFront.z = cos(glm::radians(rotation.x)) * -cos(glm::radians(rotation.y));
 		camFront = glm::normalize(camFront);
 		return camFront;
+	}
+
+	glm::vec3 getCamRight() {
+		//return glm::inverse(glm::mat3(matrices.view)) * glm::vec3(1, 0, 0);
+		return glm::normalize(glm::cross(getCamFront(), glm::vec3(0.0f, 1.0f, 0.0f)));
+	}
+
+	glm::vec3 getCamUp() {
+		//return glm::inverse(glm::mat3(matrices.view)) * glm::vec3(0, 1, 0);
+		return glm::cross(getCamRight(), getCamFront());
 	}
 
 	void update(float deltaTime)
@@ -208,11 +222,7 @@ public:
 		{
 			if (moving())
 			{
-				glm::vec3 camFront;
-				camFront.x = -cos(glm::radians(rotation.x)) * sin(glm::radians(rotation.y));
-				camFront.y = sin(glm::radians(rotation.x));
-				camFront.z = cos(glm::radians(rotation.x)) * cos(glm::radians(rotation.y));
-				camFront = glm::normalize(camFront);
+				glm::vec3 camFront = getCamFront();
 
 				float moveSpeed = deltaTime * movementSpeed;
 
@@ -243,11 +253,7 @@ public:
 			const float deadZone = 0.0015f;
 			const float range = 1.0f - deadZone;
 
-			glm::vec3 camFront;
-			camFront.x = -cos(glm::radians(rotation.x)) * sin(glm::radians(rotation.y));
-			camFront.y = sin(glm::radians(rotation.x));
-			camFront.z = cos(glm::radians(rotation.x)) * cos(glm::radians(rotation.y));
-			camFront = glm::normalize(camFront);
+			glm::vec3 camFront = getCamFront();
 
 			float moveSpeed = deltaTime * movementSpeed * 2.0f;
 			float rotSpeed = deltaTime * rotationSpeed * 50.0f;

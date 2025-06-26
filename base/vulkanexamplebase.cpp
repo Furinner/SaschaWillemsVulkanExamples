@@ -3258,7 +3258,7 @@ void VulkanExampleBase::handleMouseMove(int32_t x, int32_t y)
 	}
 
 	if (mouseState.buttons.left) {
-		camera.rotate(glm::vec3(dy * camera.rotationSpeed, -dx * camera.rotationSpeed, 0.0f));
+		camera.rotate(glm::vec3(dy * camera.rotationSpeed, dx * camera.rotationSpeed, 0.0f));
 		viewUpdated = true;
 	}
 	if (mouseState.buttons.right) {
@@ -3267,9 +3267,10 @@ void VulkanExampleBase::handleMouseMove(int32_t x, int32_t y)
 	}
 	if (mouseState.buttons.middle) {
 		//camera.translate(glm::mat3(camera.matrices.view) * glm::vec3(-dx * 0.05f, -dy * 0.05f, 0.0f));
-		camera.translate(dx * 0.05f * glm::mat3(camera.matrices.view) * glm::vec3(1, 0, 0));
-		camera.translate(-dy * 0.05f * glm::mat3(camera.matrices.view) * glm::vec3(0, 1, 0));
+		//camera.translate(dx * 0.05f * glm::mat3(camera.matrices.view) * glm::vec3(1, 0, 0));
+		//camera.translate(-dy * 0.05f * glm::mat3(camera.matrices.view) * glm::vec3(0, 1, 0));
 		//camera.translate(glm::vec3(-dx * 0.05f, -dy * 0.05f, 0.0f));
+		camera.translate(dx * 0.05f * camera.getCamRight() - dy * 0.05f * camera.getCamUp());
 		viewUpdated = true;
 	}
 	mouseState.position = glm::vec2((float)x, (float)y);

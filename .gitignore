@@ -241,3 +241,9 @@ android/.idea/**
 libs/vulkan/*.so
 
 .vscode/*
+
+# Un-ignore external folder and its subfolders
+!external/
+!external/**/
+# Un-ignore DLLs inside external/
+!external/**/*.dll

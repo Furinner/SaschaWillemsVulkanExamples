@@ -1771,7 +1771,7 @@ public:
 
 	VulkanExample() : VulkanExampleBase()
 	{
-		title = "Deferred shading";
+		title = "OCC";
 		camera.type = Camera::CameraType::firstperson;
 		camera.movementSpeed = 5.0f;
 #ifndef __ANDROID__
@@ -1781,7 +1781,7 @@ public:
 		camera.setRotation(glm::vec3(-0.75f, 12.5f, 0.0f));
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);*/
 		camera.movementSpeed = 3.f;
-		camera.position = { 0.f, 3.f, -15.f };
+		camera.position = { 0.f, 0.f, 150.f };
 		//perspective camera parameter
 		camera.fov = 60.f;
 		camera.znear = 0.01f;
@@ -3833,7 +3833,7 @@ public:
 #if DLF
 		std::string glslToSpvBat = getShadersPath() + "occ/glsltospv.bat " + getShadersPath() + "occ";
 		system(glslToSpvBat.c_str());
-		camera.flipY = true;
+		camera.flipY = false;
 #endif
 		VulkanExampleBase::prepare();
 		loadAssets();
@@ -3955,13 +3955,19 @@ public:
 			overlay->text("Camera Parameters");
 			overlay->sliderFloat("fov", &camera.fov, 10.f, 80.f);
 			overlay->sliderFloat("zNear", &camera.znear, 0.000001f, 0.5f);
-			overlay->sliderFloat("zFar", &camera.zfar, 50.f, 500.f);
+			overlay->sliderFloat("zFar", &camera.zfar, 50.f, 1000.f);
 			overlay->sliderFloat("left", &camera.orthoLeft, -10.f, -0.5f);
 			overlay->sliderFloat("right", &camera.orthoRight, 0.5f, 10.f);
 			overlay->sliderFloat("bottom", &camera.orthoBottom, -10.f, -0.5f);
 			overlay->sliderFloat("top", &camera.orthoTop, 0.5f, 10.f);
 			overlay->checkBox("Orthographic", &camera.orthographic);
 			lockedView = overlay->button("LockedView");
+			//overlay->text("CamPos: (%.3f, %.3f, %.3f)", camera.position.x, camera.position.y, camera.position.z);
+			//overlay->text("CamFront: (%.3f, %.3f, %.3f)", camera.getCamFront().x, camera.getCamFront().y, camera.getCamFront().z);
+			//overlay->text("CamUp: (%.3f, %.3f, %.3f)", camera.getCamUp().x, camera.getCamUp().y, camera.getCamUp().z);
+			//overlay->text("CamRight: (%.3f, %.3f, %.3f)", camera.getCamRight().x, camera.getCamRight().y, camera.getCamRight().z);
+			//glm::vec3 camRightCross = glm::normalize(glm::cross(camera.getCamFront(), glm::vec3(0.0f, 1.0f, 0.0f)));
+			//overlay->text("CamRightCross: (%.3f, %.3f, %.3f)", camRightCross.x, camRightCross.y, camRightCross.z);
 		}
 	}
 };

@@ -156,6 +156,7 @@ public:
 		alignas(4) int uniqueID; //unique id in obj
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
+		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID, int faceID, int border) :position(position), normal(normal), uv(uv), objectID(objectID), faceID(faceID), border(border) {};
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID, int faceID) :position(position), normal(normal), uv(uv), objectID(objectID), faceID(faceID) {};
 		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), uniqueID(ver->uniqueID), faceID(faceID) {};
 		Vertex(glm::vec3 position) :position(position) {};
@@ -785,16 +786,16 @@ public:
 					glm::vec3 color = glm::mix(glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), t);
 					//glm::vec3 color = glm::vec3(0, 0, 0); //red color for boundary edges
 					if (i == 0) {
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0, 0, 1));
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else if (i == boundaryPointsPerEdge.size() - 1) {
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0, 0, 1));
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else {
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0, 0, 1));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0, 0, 1));
 						edgeIdx.push_back(edgeIdxCnt++);
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
@@ -808,18 +809,18 @@ public:
 				float colorStep = (1 - colorMin) / (uvPointsPerEdge.size() - 1);
 				for (int i = 0; i < uvPointsPerEdge.size(); ++i) {
 					if (i == 0) {
-						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(colorMin), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(colorMin), glm::vec2(0), 0, 0, 1));
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else if (i == uvPointsPerEdge.size() - 1) {
-						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0, 0, 1));
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else {
 						float color1 = colorMin + colorStep * (i - 1);
 						float color2 = colorMin + colorStep * i;
-						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(color1), glm::vec2(0), 0));
-						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(color2), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(color1), glm::vec2(0), 0, 0, 1));
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(color2), glm::vec2(0), 0, 0, 1));
 						edgeIdx.push_back(edgeIdxCnt++);
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
@@ -834,15 +835,15 @@ public:
 			unchangedEdgeIdx = edgeIdx;
 
 			for(auto& silhouettePoint : silhouettePoints) {
-				edgeVert.push_back(Vertex(silhouettePoint, glm::vec3(0,0,1), glm::vec2(0), 0));
+				edgeVert.push_back(Vertex(silhouettePoint, glm::vec3(0,0,1), glm::vec2(0), 0, 0, 1));
 				edgeIdx.push_back(edgeIdxCnt++);
 			}
 			for (auto& silhouettePoint : silhouettePointsDebug) {
-				edgeVert.push_back(Vertex(silhouettePoint, glm::vec3(0, 0, 0.2), glm::vec2(0), 0));
+				edgeVert.push_back(Vertex(silhouettePoint, glm::vec3(1, 0, 1), glm::vec2(0), 1, 0, 1));
 				edgeIdx.push_back(edgeIdxCnt++);
 			}
 			for(auto& debugPoint : debugLines) {
-				edgeVert.push_back(Vertex(debugPoint, glm::vec3(1, 1, 0), glm::vec2(0), 0));
+				edgeVert.push_back(Vertex(debugPoint, glm::vec3(1, 1, 0), glm::vec2(0), 0, 0, 1));
 				edgeIdx.push_back(edgeIdxCnt++);
 			}
 
@@ -1237,11 +1238,11 @@ public:
 			finEdgeVer = unchangedEdgeVert;
 			finEdgeIdx = unchangedEdgeIdx;
 			for(int i = 0; i < silhouettePoints.size(); ++i) {
-				finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(0, 0, 1), glm::vec2(0), 0));
+				finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(0, 0, 1), glm::vec2(0), 0, 0, 1));
 				finEdgeIdx.push_back(i + unchangedEdgeIdx.size());
 			}
 			for (int i = 0; i < silhouettePointsDebug.size(); ++i) {
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(0, 0, 0.2), glm::vec2(0), 0));
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(1, 0, 1), glm::vec2(0), 1, 0, 1));
 				finEdgeIdx.push_back(finEdgeIdx.size());
 			}
 			lockedEdgeIdxCnt = finEdgeIdx.size();
@@ -1821,6 +1822,11 @@ public:
 		float screenHalfLengthY;
 
 	};
+
+	struct PushValue2 {
+		float color;
+	};
+
 	Mesh mesh;
 	TopoDS_Shape shape;
 	PushValue pushVal{};
@@ -1837,6 +1843,7 @@ public:
 	float depthFactor = 1.f;
 	int uFactor = 1;
 	int vFactor = 1;
+	float triColor = 0.2f;
 	bool lockedView = false;
 	bool prevLockedView = false;
 	
@@ -1895,6 +1902,7 @@ public:
 		glm::mat4 projection;
 		glm::mat4 model;
 		glm::mat4 view;
+		float color;
 	} uniformDataLockedEdge;
 
 	struct {
@@ -2297,6 +2305,11 @@ public:
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			&edgeFrameBuf.position);
 
+		createAttachment(
+			VK_FORMAT_R32G32B32A32_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&edgeFrameBuf.normal);
+
 		// Depth attachment
 
 		// Find a suitable depth format
@@ -2306,17 +2319,17 @@ public:
 
 
 		// Set up separate renderpass with references to the color and depth attachments
-		std::array<VkAttachmentDescription, 2> attachmentDescs = {};
+		std::array<VkAttachmentDescription, 3> attachmentDescs = {};
 
 		// Init attachment properties
-		for (uint32_t i = 0; i < 2; ++i)
+		for (uint32_t i = 0; i < 3; ++i)
 		{
 			//diff: edge should change loadOp to VK_ATTACHMENT_LOAD_OP_LOAD
 			attachmentDescs[i].samples = VK_SAMPLE_COUNT_1_BIT;
 			attachmentDescs[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 			attachmentDescs[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 			attachmentDescs[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			if (i == 1)
+			if (i == 2)
 			{
 				//diff: if share depth attachmentm, its initial layout should match the final layout
 				//of last depth attachment
@@ -2334,13 +2347,15 @@ public:
 
 		// Formats
 		attachmentDescs[0].format = edgeFrameBuf.position.format;
-		attachmentDescs[1].format = offScreenFrameBuf.depth.format;
+		attachmentDescs[1].format = edgeFrameBuf.normal.format;
+		attachmentDescs[2].format = offScreenFrameBuf.depth.format;
 
 		std::vector<VkAttachmentReference> colorReferences;
 		colorReferences.push_back({ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+		colorReferences.push_back({ 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
 
 		VkAttachmentReference depthReference = {};
-		depthReference.attachment = 1;
+		depthReference.attachment = 2;
 		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
 		VkSubpassDescription subpass = {};
@@ -2387,9 +2402,10 @@ public:
 
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &edgeFrameBuf.renderPass));
 
-		std::array<VkImageView, 2> attachments;
+		std::array<VkImageView, 3> attachments;
 		attachments[0] = edgeFrameBuf.position.view;
-		attachments[1] = offScreenFrameBuf.depth.view;
+		attachments[1] = edgeFrameBuf.normal.view;
+		attachments[2] = offScreenFrameBuf.depth.view;
 
 		VkFramebufferCreateInfo fbufCreateInfo = {};
 		fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -2610,11 +2626,12 @@ public:
 
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 
-		VkClearValue clearValues[1];
+		std::array<VkClearValue, 2> clearValues;
 		clearValues[0].color.int32[0] = -1;
 		clearValues[0].color.int32[1] = -1;
 		clearValues[0].color.int32[2] = 0;
 		clearValues[0].color.int32[3] = 0;
+		clearValues[1].color = { {0.0f, 0.0f, 0.0f, 0.0f} };
 
 		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
 		renderPassBeginInfo.renderPass = edgeFrameBuf.renderPass;
@@ -2622,8 +2639,10 @@ public:
 		renderPassBeginInfo.renderArea.extent.width = edgeFrameBuf.width;
 		renderPassBeginInfo.renderArea.extent.height = edgeFrameBuf.height;
 		//diff: render pass don't have any clear values
-		renderPassBeginInfo.clearValueCount = 1;
-		renderPassBeginInfo.pClearValues = clearValues;
+		/*renderPassBeginInfo.clearValueCount = 1;
+		renderPassBeginInfo.pClearValues = clearValues;*/
+		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassBeginInfo.pClearValues = clearValues.data();
 
 		// Add memory barrier between render passes
 		VkImageMemoryBarrier colorBarrier = {};
@@ -3030,7 +3049,7 @@ public:
 
 			//Rendering
 			// 对整个模型进行离散化（细分）
-			BRepMesh_IncrementalMesh mesher(shape, 0.1); // 0.001是线性公差（越小越精细）
+			BRepMesh_IncrementalMesh mesher(shape, 1e-1); // 0.001是线性公差（越小越精细）
 
 			// 遍历所有的面并访问三角剖分
 			int objID = 0;
@@ -4175,7 +4194,7 @@ public:
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 11),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 5);
@@ -4202,7 +4221,9 @@ public:
 			// Binding 8 : Edge texture target
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 8),
 			// Binding 9 : Locked Edge texture target
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 9)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 9),
+			// Binding 10: Edge texture target 2
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 10)
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
@@ -4236,6 +4257,12 @@ public:
 				edgeFrameBuf.position.view,
 				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+		VkDescriptorImageInfo texDescriptorEdge2 =
+			vks::initializers::descriptorImageInfo(
+				colorSampler,
+				edgeFrameBuf.normal.view,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
 		VkDescriptorImageInfo texDescriptorLockedEdge =
 			vks::initializers::descriptorImageInfo(
 				colorSampler,
@@ -4263,6 +4290,8 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8, &texDescriptorEdge),
 			// Binding 9 : Extra locked texture target
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9, &texDescriptorLockedEdge),
+			// Binding 10: Extra edge texture target 2
+			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10, &texDescriptorEdge2),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
@@ -4421,11 +4450,11 @@ public:
 		// Edge vertex shader
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.edge, sizeof(UniformDataEdge)))
 
-			// Locked Edge vertex shader
-			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.lockedEdge, sizeof(UniformDataLockedEdge)))
+		// Locked Edge vertex shader
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.lockedEdge, sizeof(UniformDataLockedEdge)))
 
-			// Deferred fragment shader
-			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.composition, sizeof(UniformDataComposition)));
+		// Deferred fragment shader
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.composition, sizeof(UniformDataComposition)));
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.offscreen.map());
@@ -4483,6 +4512,7 @@ public:
 		}
 		uniformDataLockedEdge.view = camera.matrices.view;
 		uniformDataLockedEdge.model = glm::mat4(1.0f);
+		uniformDataLockedEdge.color = triColor;
 		memcpy(uniformBuffers.lockedEdge.mapped, &uniformDataLockedEdge, sizeof(UniformDataLockedEdge));
 	}
 
@@ -4757,11 +4787,12 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Edge", "EdgeUV", "EdgePure", "LockedEdge", "HiddenLine", "Test1", "Test2" });
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Edge", "EdgeUV", "EdgePure", "LockedEdge", "LockedEdge2", "HiddenLine", "Test1", "Test2" });
 			ImGui::InputInt("Stride", &singleStride);
 			ImGui::DragFloat("DepthFactor", &depthFactor, 0.1f, 0.f, 100.f);
 			overlay->sliderInt("U", &uFactor, 1, 100);
 			overlay->sliderInt("V", &vFactor, 1, 100);
+			overlay->sliderFloat("triColor", &triColor, 0.0, 1.0);
 			overlay->text("Camera Parameters");
 			overlay->sliderFloat("fov", &camera.fov, 10.f, 80.f);
 			overlay->sliderFloat("zNear", &camera.znear, 0.000001f, 0.5f);

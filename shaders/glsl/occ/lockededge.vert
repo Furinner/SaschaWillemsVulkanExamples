@@ -5,6 +5,7 @@ layout (binding = 0) uniform UBO
 	mat4 projection;
 	mat4 model;
 	mat4 view;
+	float colorIntensity;
 } ubo;
 
 layout (location = 0) in vec3 inPos;
@@ -18,8 +19,12 @@ layout (location = 7) in int inBorder;
 layout (location = 8) in int inHeID;
 
 layout (location = 0) out vec3 outNormal;
+layout (location = 1) out flat int outObjectID;
+layout (location = 2) out float outColorIntensity;
 void main() 
 {
 	gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
 	outNormal = inNormal;
+	outObjectID = inObjectID;
+	outColorIntensity = ubo.colorIntensity;
 }

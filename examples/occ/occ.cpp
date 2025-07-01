@@ -14,6 +14,8 @@
 
 #include "vulkanexamplebase.h"
 #include "VulkanglTFModel.h"
+#include <algorithm>
+#include <vector>
 #include <memory>
 #include <limits>
 #include <unordered_set>
@@ -34,12 +36,19 @@
 #include <Geom_Surface.hxx>
 #include <Geom_BSplineSurface.hxx>
 #include <Geom_BSplineCurve.hxx>
+#include <Geom_Line.hxx>
+#include <Geom_BezierCurve.hxx>
+#include <Geom_Circle.hxx>
+#include <Geom2d_BSplineCurve.hxx>
 #include <Geom_Curve.hxx>                 // 曲线基类
 #include <Geom2d_Line.hxx>
 #include <Geom2d_TrimmedCurve.hxx>
+#include <Geom2dAPI_InterCurveCurve.hxx>
 #include <GeomAdaptor_Curve.hxx>
 #include <GeomAdaptor_Surface.hxx>
 #include <GeomAPI.hxx>  
+#include <GeomLProp_SLProps.hxx>
+#include <Geom2dLProp_CLProps2d.hxx>
 #include <gp_Pnt.hxx>                     // 点类
 #include <Standard_Real.hxx>             // 实数类型
 #include <TColgp_Array1OfPnt.hxx>        // 点数组（可选）
@@ -66,21 +75,41 @@
 
 class VulkanExample : public VulkanExampleBase
 {
+	//template<typename T>
+	//static inline bool fequal(T a, T b, T epsilon = std::numeric_limits<float>::min()) {
+	//	if (a == b) {
+	//		// Shortcut
+	//		return true;
+	//	}
+
+	//	const T diff = std::abs(a - b);
+	//	if (a * b == 0) {
+	//		// a or b or both are zero; relative error is not meaningful here
+	//		return diff < (epsilon* epsilon);
+	//	}
+
+	//	return diff / (std::abs(a) + std::abs(b)) < epsilon;
+	//}
 	template<typename T>
-	static inline bool fequal(T a, T b, T epsilon = std::numeric_limits<float>::min()) {
+	static inline bool fequal(T a, T b, T epsilon = 1e-3) {
 		if (a == b) {
 			// Shortcut
 			return true;
 		}
 
+		//self-added
 		const T diff = std::abs(a - b);
+		if (diff < epsilon) {
+			return true;
+		}
+
 		if (a * b == 0) {
 			// a or b or both are zero; relative error is not meaningful here
-			return diff < (epsilon* epsilon);
+			return diff < (epsilon * epsilon);
 		}
 
 		return diff / (std::abs(a) + std::abs(b)) < epsilon;
-	}
+	};
 
 public:
 	vkglTF::Model model;
@@ -379,6 +408,9 @@ public:
 		std::vector<int> unchangedEdgeIdx{};
 		std::vector<Vertex> unchangedEdgeVert{};
 		std::vector<glm::vec3> silhouettePoints;
+		std::vector<glm::vec3> silhouettePointsDebug;
+		std::vector<std::tuple<double, double>> silhouette2dPntInside;
+		std::vector<std::vector<Handle(Geom2d_BSplineCurve)>> outwireCurves2d;
 		std::vector<Vertex> finEdgeVer;
 		std::vector<int> finEdgeIdx;
 		vks::Buffer verticesBuffer;
@@ -728,7 +760,7 @@ public:
 			vkFreeMemory(device->logicalDevice, edgeIdxStaging.memory, nullptr);
 		}
 
-		void setBuffers(vks::VulkanDevice* device, VkQueue transferQueue, std::vector<Vertex>& verticesData, std::vector<int>& idxData, std::vector<std::vector<glm::vec3>>& boundaryPoints, std::vector<std::vector<glm::vec3>>& uvParametricPoints, std::vector<glm::vec3>& silhouettePoints, std::vector<glm::vec3>& silhouettePointsDebug) {
+		void setBuffers(vks::VulkanDevice* device, VkQueue transferQueue, std::vector<Vertex>& verticesData, std::vector<int>& idxData, std::vector<std::vector<glm::vec3>>& boundaryPoints, std::vector<std::vector<glm::vec3>>& uvParametricPoints, std::vector<glm::vec3>& silhouettePoints, std::vector<glm::vec3>& silhouettePointsDebug, std::vector<glm::vec3>& debugLines) {
 			for (auto& idx : idxData) {
 				index.push_back((uint32_t)idx);
 			}
@@ -753,16 +785,16 @@ public:
 					glm::vec3 color = glm::mix(glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), t);
 					//glm::vec3 color = glm::vec3(0, 0, 0); //red color for boundary edges
 					if (i == 0) {
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else if (i == boundaryPointsPerEdge.size() - 1) {
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else {
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
-						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], glm::vec3(color), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(boundaryPointsPerEdge[i], color, glm::vec2(0), 0));
 						edgeIdx.push_back(edgeIdxCnt++);
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
@@ -772,9 +804,11 @@ public:
 				if (uvPointsPerEdge.size() <= 1) {
 					continue;
 				}
+				float colorMin = 0.3;
+				float colorStep = (1 - colorMin) / (uvPointsPerEdge.size() - 1);
 				for (int i = 0; i < uvPointsPerEdge.size(); ++i) {
 					if (i == 0) {
-						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(colorMin), glm::vec2(0), 0));
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else if (i == uvPointsPerEdge.size() - 1) {
@@ -782,12 +816,18 @@ public:
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 					else {
-						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
-						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+						float color1 = colorMin + colorStep * (i - 1);
+						float color2 = colorMin + colorStep * i;
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(color1), glm::vec2(0), 0));
+						edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(color2), glm::vec2(0), 0));
 						edgeIdx.push_back(edgeIdxCnt++);
 						edgeIdx.push_back(edgeIdxCnt++);
 					}
 				}
+				/*for (int i = 0; i < uvPointsPerEdge.size(); ++i) {
+					edgeVert.push_back(Vertex(uvPointsPerEdge[i], glm::vec3(1), glm::vec2(0), 0));
+					edgeIdx.push_back(edgeIdxCnt++);
+				}*/
 			}
 
 			unchangedEdgeVert = edgeVert;
@@ -795,6 +835,14 @@ public:
 
 			for(auto& silhouettePoint : silhouettePoints) {
 				edgeVert.push_back(Vertex(silhouettePoint, glm::vec3(0,0,1), glm::vec2(0), 0));
+				edgeIdx.push_back(edgeIdxCnt++);
+			}
+			for (auto& silhouettePoint : silhouettePointsDebug) {
+				edgeVert.push_back(Vertex(silhouettePoint, glm::vec3(0, 0, 0.2), glm::vec2(0), 0));
+				edgeIdx.push_back(edgeIdxCnt++);
+			}
+			for(auto& debugPoint : debugLines) {
+				edgeVert.push_back(Vertex(debugPoint, glm::vec3(1, 1, 0), glm::vec2(0), 0));
 				edgeIdx.push_back(edgeIdxCnt++);
 			}
 
@@ -1192,6 +1240,10 @@ public:
 				finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(0, 0, 1), glm::vec2(0), 0));
 				finEdgeIdx.push_back(i + unchangedEdgeIdx.size());
 			}
+			for (int i = 0; i < silhouettePointsDebug.size(); ++i) {
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(0, 0, 0.2), glm::vec2(0), 0));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+			}
 			lockedEdgeIdxCnt = finEdgeIdx.size();
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -1388,30 +1440,48 @@ public:
 					std::array<std::array<bool, (divide + 1)>, (divide + 1)> silhouetteBoolsArray;
 					std::array<std::array<glm::vec3, (divide + 1)>, (divide + 1)> silhouettePointsArray;
 					glm::vec3 cameraNor = glm::vec3(0.f, 0.f, -1.f);
-					for (int i = 0; i <= divide; ++i) {
-						Standard_Real u = u1 + double(i) * uStep;
-						for (int j = 0; j <= divide; ++j) {
-							Standard_Real v = v1 + double(j) * vStep;
-							gp_Pnt pt{};
-							gp_Vec pu{};
-							gp_Vec pv{};
-							bsplineSurf->D1(u, v, pt, pu, pv);
-							BRepClass_FaceClassifier classifier(face, pt, 1e-6);
-							if ((classifier.State() == TopAbs_IN) || (classifier.State() == TopAbs_ON)) {
-								gp_Vec norGp = pu.Crossed(pv);
-								glm::vec3 nor = glm::normalize(glm::vec3(norGp.X(), norGp.Y(), norGp.Z()));
-								silhouetteNorsArray[i][j] = glm::dot(glm::mat3(camera.matrices.view) * nor, glm::vec3(0, 0, -1));
-								silhouettePointsArray[i][j] = glm::vec3(pt.X(), pt.Y(), pt.Z());
-								silhouetteBoolsArray[i][j] = true;
-							}
-							else {
-								silhouetteBoolsArray[i][j] = false;
-							}
+					for (int i = 0; i < divide; ++i) {
+						Standard_Real su1 = u1 + double(i) * uStep;
+						Standard_Real su2 = u1 + double(i + 1) * uStep;
+						for (int j = 0; j < divide; ++j) {
+							Standard_Real sv1 = v1 + double(j) * vStep;
+							Standard_Real sv2 = v1 + double(j + 1) * vStep;
+
+							GeomLProp_SLProps props(bsplineSurf, su1, sv1, 1, Precision::Confusion());
+							gp_Dir p1ngp = props.Normal();
+							glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+							float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, -1));
+
+							props = GeomLProp_SLProps(bsplineSurf, su2, sv1, 1, Precision::Confusion());
+							gp_Dir p2ngp = props.Normal();
+							glm::vec3 p2n(p2ngp.X(), p2ngp.Y(), p2ngp.Z());
+							float p2s = glm::dot(glm::mat3(camera.matrices.view) * p2n, glm::vec3(0, 0, -1));
+
+							props = GeomLProp_SLProps(bsplineSurf, su1, sv2, 1, Precision::Confusion());
+							gp_Dir p3ngp = props.Normal();
+							glm::vec3 p3n(p3ngp.X(), p3ngp.Y(), p3ngp.Z());
+							float p3s = glm::dot(glm::mat3(camera.matrices.view) * p3n, glm::vec3(0, 0, -1));
+
+							props = GeomLProp_SLProps(bsplineSurf, su2, sv2, 1, Precision::Confusion());
+							gp_Dir p4ngp = props.Normal();
+							glm::vec3 p4n(p4ngp.X(), p4ngp.Y(), p4ngp.Z());
+							float p4s = glm::dot(glm::mat3(camera.matrices.view) * p4n, glm::vec3(0, 0, -1));
+
+							silhouetteNorsArray[i][j] = p1s;
+							silhouetteNorsArray[i + 1][j] = p2s;
+							silhouetteNorsArray[i][j + 1] = p3s;
+							silhouetteNorsArray[i + 1][j + 1] = p4s;
 						}
+
 					}
 					//marching squares
+					std::vector<std::tuple<double, double>> silhouette2dPnt;
 					for (int i = 0; i < divide; ++i) {
+						Standard_Real su1 = u1 + double(i) * uStep;
+						Standard_Real su2 = u1 + double(i + 1) * uStep;
 						for (int j = 0; j < divide; ++j) {
+							Standard_Real sv1 = v1 + double(j) * vStep;
+							Standard_Real sv2 = v1 + double(j + 1) * vStep;
 							glm::vec3 p1 = silhouettePointsArray[i][j];
 							glm::vec3 p2 = silhouettePointsArray[i + 1][j];
 							glm::vec3 p3 = silhouettePointsArray[i][j + 1];
@@ -1420,210 +1490,325 @@ public:
 							float n2 = silhouetteNorsArray[i + 1][j];
 							float n3 = silhouetteNorsArray[i][j + 1];
 							float n4 = silhouetteNorsArray[i + 1][j + 1];
-							bool b1 = silhouetteBoolsArray[i][j];
-							bool b2 = silhouetteBoolsArray[i + 1][j];
-							bool b3 = silhouetteBoolsArray[i][j + 1];
-							bool b4 = silhouetteBoolsArray[i + 1][j + 1];
-							if (!b1 || !b2 || !b3 || !b4) {
-								continue;
-							}
+
 							//tri 1
 							if ((n1 == 0.f) && (n2 == 0.f)) {
-								silhouettePoints.push_back(p1);
-								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							if ((n2 == 0.f) && (n3 == 0.f)) {
-								silhouettePoints.push_back(p2);
-								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							if ((n1 == 0.f) && (n3 == 0.f)) {
-								silhouettePoints.push_back(p1);
-								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							//0zf
 							if ((n1 == 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
 								float t23 = n2 / (n2 - n3);
-								silhouettePoints.push_back(p1);
-								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//0fz
 							if ((n1 == 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
 								float t32 = n3 / (n3 - n2);
-								silhouettePoints.push_back(p1);
-								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//z0f
 							if ((n1 > 0.f) && (n2 == 0.f) && (n3 < 0.f)) {
 								float t13 = n1 / (n1 - n3);
-								silhouettePoints.push_back(glm::mix(p1, p3, t13));
-								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//f0z
 							if ((n1 < 0.f) && (n2 == 0.f) && (n3 > 0.f)) {
 								float t31 = n3 / (n3 - n1);
-								silhouettePoints.push_back(glm::mix(p3, p1, t31));
-								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//zf0
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 == 0.f)) {
 								float t12 = n1 / (n1 - n2);
-								silhouettePoints.push_back(p3);
-								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
 							}
 							//fz0
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 == 0.f)) {
 								float t21 = n2 / (n2 - n1);
-								silhouettePoints.push_back(p3);
-								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
 							}
 							//zff
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 < 0.f)) {
 								float t12 = n1 / (n1 - n2);
 								float t13 = n1 / (n1 - n3);
-								silhouettePoints.push_back(glm::mix(p1, p2, t12));
-								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
 							}
 							//fzf
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
 								float t21 = n2 / (n2 - n1);
 								float t23 = n2 / (n2 - n3);
-								silhouettePoints.push_back(glm::mix(p2, p1, t21));
-								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//ffz
 							if ((n1 < 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
 								float t31 = n3 / (n3 - n1);
 								float t32 = n3 / (n3 - n2);
-								silhouettePoints.push_back(glm::mix(p3, p1, t31));
-								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//zzf
 							if ((n1 > 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
 								float t13 = n1 / (n1 - n3);
 								float t23 = n2 / (n2 - n3);
-								silhouettePoints.push_back(glm::mix(p1, p3, t13));
-								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//zfz
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
 								float t12 = n1 / (n1 - n2);
 								float t32 = n3 / (n3 - n2);
-								silhouettePoints.push_back(glm::mix(p1, p2, t12));
-								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//fzz
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 > 0.f)) {
 								float t21 = n2 / (n2 - n1);
 								float t31 = n3 / (n3 - n1);
-								silhouettePoints.push_back(glm::mix(p2, p1, t21));
-								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
 							}
 							//tri 2
 							if ((n2 == 0.f) && (n3 == 0.f)) {
-								silhouettePoints.push_back(p2);
-								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							if ((n3 == 0.f) && (n4 == 0.f)) {
-								silhouettePoints.push_back(p3);
-								silhouettePoints.push_back(p4);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 							}
 							if ((n4 == 0.f) && (n2 == 0.f)) {
-								silhouettePoints.push_back(p2);
-								silhouettePoints.push_back(p4);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 							}
 							//0zf
 							if ((n2 == 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
 								float t34 = n3 / (n3 - n4);
-								silhouettePoints.push_back(glm::mix(p3, p4, t34));
-								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//0fz
 							if ((n2 == 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
 								float t43 = n4 / (n4 - n3);
-								silhouettePoints.push_back(glm::mix(p4, p3, t43));
-								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//z0f
 							if ((n2 > 0.f) && (n3 == 0.f) && (n4 < 0.f)) {
 								float t24 = n2 / (n2 - n4);
-								silhouettePoints.push_back(glm::mix(p2, p4, t24));
-								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							//f0z
 							if ((n2 < 0.f) && (n3 == 0.f) && (n4 > 0.f)) {
 								float t42 = n4 / (n4 - n2);
-								silhouettePoints.push_back(glm::mix(p4, p2, t42));
-								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							//zf0
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 == 0.f)) {
 								float t23 = n2 / (n2 - n3);
-								silhouettePoints.push_back(p4);
-								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//fz0
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 == 0.f)) {
 								float t32 = n3 / (n3 - n2);
-								silhouettePoints.push_back(p4);
-								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//zff
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 < 0.f)) {
 								float t23 = n2 / (n2 - n3);
 								float t24 = n2 / (n2 - n4);
-								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
 							}
 							//fzf
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
 								float t32 = n3 / (n3 - n2);
 								float t34 = n3 / (n3 - n4);
-								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 							}
 							//ffz
 							if ((n2 < 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
 								float t42 = n4 / (n4 - n2);
 								float t43 = n4 / (n4 - n3);
-								silhouettePoints.push_back(glm::mix(p4, p2, t42));
-								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 							}
 							//zzf
 							if ((n2 > 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
 								float t24 = n2 / (n2 - n4);
 								float t34 = n3 / (n3 - n4);
-								silhouettePoints.push_back(glm::mix(p2, p4, t24));
-								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 							}
 							//zfz
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
 								float t23 = n2 / (n2 - n3);
 								float t43 = n4 / (n4 - n3);
-								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 							}
 							//fzz
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 > 0.f)) {
 								float t32 = n3 / (n3 - n2);
 								float t42 = n4 / (n4 - n2);
-								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
 							}
 						}
-						/*for (int i = 0; i < divide; ++i) {
-							for (int j = 0; j < divide; ++j) {
-								glm::vec3 p1 = silhouettePointsArray[i][j];
-								glm::vec3 p2 = silhouettePointsArray[i + 1][j];
-								glm::vec3 p3 = silhouettePointsArray[i][j + 1];
-								glm::vec3 p4 = silhouettePointsArray[i + 1][j + 1];
-								silhouettePointsDebug.push_back(p1);
-								silhouettePointsDebug.push_back(p2);
-								silhouettePointsDebug.push_back(p2);
-								silhouettePointsDebug.push_back(p3);
-								silhouettePointsDebug.push_back(p3);
-								silhouettePointsDebug.push_back(p1);
+						//for (int i = 0; i < divide; ++i) {
+						//	for (int j = 0; j < divide; ++j) {
+						//		glm::vec3 p1 = silhouettePointsArray[i][j];
+						//		glm::vec3 p2 = silhouettePointsArray[i + 1][j];
+						//		glm::vec3 p3 = silhouettePointsArray[i][j + 1];
+						//		glm::vec3 p4 = silhouettePointsArray[i + 1][j + 1];
+						//		silhouettePointsDebug.push_back(p1);
+						//		silhouettePointsDebug.push_back(p2);
+						//		silhouettePointsDebug.push_back(p2);
+						//		silhouettePointsDebug.push_back(p3);
+						//		silhouettePointsDebug.push_back(p3);
+						//		silhouettePointsDebug.push_back(p1);
+						//	}
+						//}
+						
+					}
+					/*for (auto& uv : silhouette2dPnt) {
+						gp_Pnt p = bsplineSurf->Value(std::get<0>(uv), std::get<1>(uv));
+						silhouettePoints.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
+					}*/
+					silhouette2dPntInside.clear();
+					for (int i = 0; i < silhouette2dPnt.size(); i += 2) {
+						double su1 = std::get<0>(silhouette2dPnt[i]);
+						double su2 = std::get<0>(silhouette2dPnt[i + 1]);
+						double sv1 = std::get<1>(silhouette2dPnt[i]);
+						double sv2 = std::get<1>(silhouette2dPnt[i + 1]);
+						gp_Pnt2d P1(su1, sv1), P2(su2, sv2);
+						Handle(Geom2d_Line) sline = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
+						Standard_Real len1 = 0.0, len2 = P1.Distance(P2);
+						Handle(Geom2d_TrimmedCurve) ssegment =
+							new Geom2d_TrimmedCurve(sline, len1, len2, Standard_True, Standard_True);
+						std::vector<std::tuple<Standard_Real, glm::dvec2>> inters;
+						int nullInters = 0;
+						int wireId = 0;
+						for (auto& outwire : outwireCurves2d) {
+							int edgeId = 0;
+							for (auto& outedge : outwire) {
+								gp_Pnt2d prevPt;
+								Standard_Real prevt;
+								Geom2dAPI_InterCurveCurve intersector(sline, outedge, 1.0e-4);
+								const Geom2dInt_GInter& ginter = intersector.Intersector();
+								if (intersector.NbPoints() > 0) {
+									int interCnt = intersector.NbPoints();
+									for (Standard_Integer i = 1; i <= intersector.NbPoints(); ++i) {
+										gp_Pnt2d pt = intersector.Point(i);
+										const IntRes2d_IntersectionPoint& ip = ginter.Point(i);
+										Standard_Real t1 = ip.ParamOnFirst();
+										Standard_Real t2 = ip.ParamOnSecond();
+										//only compare with previous
+										if (i != 1) {
+											bool b1 = fequal(t1, prevt);
+											bool b2 = fequal(pt.X(), prevPt.X());
+											bool b3 = fequal(pt.Y(), prevPt.Y());
+											if (b1 && b2 && b3) {
+												continue;
+											}
+										}
+										if ((t1 >= ssegment->FirstParameter()) && (t1 <= ssegment->LastParameter())) {
+											gp_Dir2d outedgeTan;
+											Geom2dLProp_CLProps2d props(outedge, t2, 1, 0.1);
+											props.Tangent(outedgeTan);
+											glm::dvec2 outedgeT(outedgeTan.X(), outedgeTan.Y());
+											outedgeT = glm::normalize(outedgeT);
+											inters.emplace_back(t1, outedgeT);
+										}
+										else if (t1 > ssegment->LastParameter()) {
+											++nullInters;
+										}
+										prevPt = pt;
+										prevt = t1;
+										//debug
+										/*gp_Pnt2d test2d1 = ssegment->Value(t1);
+										gp_Pnt2d test2d = outedge->Value(t2);
+										gp_Vec2d tangentDir(outedgeT.X() * 0.0005, outedgeT.Y() * 0.0005);
+										gp_Pnt2d testt = test2d.Translated(tangentDir);
+										gp_Pnt test3dpnt1 = bsplineSurf->Value(test2d.X(), test2d.Y());
+										gp_Pnt test3dpnt2 = bsplineSurf->Value(testt.X(), testt.Y());
+										debugLines.push_back(glm::vec3(test3dpnt1.X(), test3dpnt1.Y(), test3dpnt1.Z()));
+										debugLines.push_back(glm::vec3(test3dpnt2.X(), test3dpnt2.Y(), test3dpnt2.Z()));*/
+									}
+								}
+								++edgeId;
 							}
-						}*/
+							++wireId;
+						}
+						if (inters.size() != 0) {
+							//有交一定在内
+							double para1 = ssegment->FirstParameter();
+							double para2 = ssegment->LastParameter();
+							glm::dvec3 sdir(su2 - su1, sv2 - sv1, 0);
+							sdir = glm::normalize(sdir);
+							for (auto& inter : inters) {
+								double t = std::get<0>(inter);
+								glm::dvec2 tant = std::get<1>(inter);
+								glm::dvec3 tan(tant.x, tant.y, 0);
+								double result = glm::cross(sdir, tan).z;
+								if (result < 0) {
+									if (t < para1) {
+										continue;
+									}
+									gp_Pnt2d val = sline->Value(t);
+									su1 = val.X();
+									sv1 = val.Y();
+									para1 = t;
+								}
+								else {
+									if (t > para2) {
+										continue;
+									}
+									gp_Pnt2d val = sline->Value(t);
+									su2 = val.X();
+									sv2 = val.Y();
+									para2 = t;
+
+								}
+							}
+							silhouette2dPntInside.emplace_back(su1, sv1);
+							silhouette2dPntInside.emplace_back(su2, sv2);
+						}
+						else {
+							if (nullInters % 2 == 0) {
+								//外
+
+							}
+							else {
+								//内
+								silhouette2dPntInside.emplace_back(su1, sv1);
+								silhouette2dPntInside.emplace_back(su2, sv2);
+							}
+						}
+					}
+					for (auto& uv : silhouette2dPntInside) {
+
+						gp_Pnt p = bsplineSurf->Value(std::get<0>(uv), std::get<1>(uv));
+						silhouettePoints.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
 					}
 				}
 			}
@@ -2634,6 +2819,69 @@ public:
 		VK_CHECK_RESULT(vkEndCommandBuffer(lockedEdgeCmdBuffer));
 	}
 
+	static bool compareByU(const gp_Pnt2d& a, const gp_Pnt2d& b) {
+		return a.X() < b.X();
+	};
+
+	static bool compareByV(const gp_Pnt2d& a, const gp_Pnt2d& b) {
+		return a.Y() < b.Y();
+	};
+
+	static void silhouettePnt2dEmplace1(std::vector<std::tuple<Standard_Real, Standard_Real>>& silhouette2dPnt, double u1, double u2, double v1, double v2, int p) {
+		if (p == 1) {
+			silhouette2dPnt.emplace_back(u1, v1);
+		}
+		else if (p == 2) {
+			silhouette2dPnt.emplace_back(u2, v1);
+		}
+		else if (p == 3) {
+			silhouette2dPnt.emplace_back(u1, v2);
+		}
+		else if(p == 4){
+			silhouette2dPnt.emplace_back(u2, v2);
+		}
+	}
+
+	static void silhouettePnt2dEmplace2(std::vector<std::tuple<Standard_Real, Standard_Real>>& silhouette2dPnt, double u1, double u2, double v1, double v2, int p1, int p2, double t) {
+		if ((p1 == 1) && (p2 == 2)) {
+			silhouette2dPnt.emplace_back(glm::mix(u1, u2, t), v1);
+		}
+		else if ((p1 == 1) && (p2 == 3)) {
+			silhouette2dPnt.emplace_back(u1, glm::mix(v1, v2, t));
+		}
+		else if ((p1 == 1) && (p2 == 4)) {
+			silhouette2dPnt.emplace_back(glm::mix(u1, u2, t), glm::mix(v1, v2, t));
+		}
+		else if ((p1 == 2) && (p2 == 1)) {
+			silhouette2dPnt.emplace_back(glm::mix(u2, u1, t), v1);
+		}
+		else if ((p1 == 2) && (p2 == 3)) {
+			silhouette2dPnt.emplace_back(glm::mix(u2, u1, t), glm::mix(v1, v2, t));
+		}
+		else if ((p1 == 2) && (p2 == 4)) {
+			silhouette2dPnt.emplace_back(u2, glm::mix(v1, v2, t));
+		}
+		else if ((p1 == 3) && (p2 == 1)) {
+			silhouette2dPnt.emplace_back(u1, glm::mix(v2, v1, t));
+		}
+		else if ((p1 == 3) && (p2 == 2)) {
+			silhouette2dPnt.emplace_back(glm::mix(u1, u2, t), glm::mix(v2, v1, t));
+		}
+		else if ((p1 == 3) && (p2 == 4)) {
+			silhouette2dPnt.emplace_back(glm::mix(u1, u2, t), v2);
+		}
+		else if ((p1 == 4) && (p2 == 1)) {
+			silhouette2dPnt.emplace_back(glm::mix(u2, u1, t), glm::mix(v2, v1, t));
+		}
+		else if ((p1 == 4) && (p2 == 2)) {
+			silhouette2dPnt.emplace_back(u2, glm::mix(v2, v1, t));
+		}
+		else if ((p1 == 4) && (p2 == 3)) {
+			silhouette2dPnt.emplace_back(glm::mix(u2, u1, t), v2);
+		}
+
+	}
+
 	void loadAssets()
 	{
 		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors;
@@ -2696,7 +2944,7 @@ public:
 		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/ff1-flying-formula-1-1.snapshot.1/3.stp";
 		//大部分完美，有些curve没trim掉
 		//const char* filename = (getAssetPath() + "models/stp/Extra-230-50ccm/Extra-230-50ccm_5.stp").c_str();
-		std::string filenameTmp = getAssetPath() + "models/stp/Extra-230-50ccm/Extra-230-50ccm_8.stp";
+		std::string filenameTmp = getAssetPath() + "models/stp/Extra-230-50ccm/head2.stp";
 		const char* filename = filenameTmp.c_str();
 		// 轮椅
 		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/COMPLETA.STEP";
@@ -2853,18 +3101,33 @@ public:
 			std::vector<std::vector<glm::vec3>> uvParametricPoints;
 			std::vector<glm::vec3> silhouettePoints;
 			std::vector<glm::vec3> silhouettePointsDebug;
-
+			std::vector<glm::vec3> debugLines;
+			
 			TopExp_Explorer faceExp;
 			for (faceExp.Init(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
 				TopoDS_Face face = TopoDS::Face(faceExp.Current());
+				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+				Handle(Geom_BSplineSurface) bsplineSurf;
+				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
+					bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
+				}
+				else {
+					continue;
+				}
+				std::vector<std::vector<Handle(Geom2d_BSplineCurve)>> outwireCurves2d;
+				std::vector<std::vector<Handle(Geom2d_BSplineCurve)>> inwireCurves2d;
+				int curve3dDowncastFailed = 0;
+				int curve2dDowncastFailed = 0;
 
 				//boundary curves
 				TopExp_Explorer wireExp;
 				for (wireExp.Init(face, TopAbs_WIRE); wireExp.More(); wireExp.Next()) {
 					TopoDS_Wire wire = TopoDS::Wire(wireExp.Current());
+					std::vector<Handle(Geom2d_BSplineCurve)> currWireCurves2d;
 
 					//使用WireExplorer会正确按照拓扑顺序遍历wire的edge。
 					BRepTools_WireExplorer exp(wire);
+					int edgeCnt = 0;
 					for (; exp.More(); exp.Next()) {
 						// e 是接续关系正确的下一条边
 						const TopoDS_Edge& edgeTmp = exp.Current();
@@ -2903,10 +3166,9 @@ public:
 							edge.Reverse();
 							saEdge.Curve3d(edge, curve3d, realFirst, realLast, Standard_True);
 							curve3d->Reverse();
+							curve2d->Reverse();
 						};
 						Standard_Real deflection = 1e-3; // 控制细分精度
-
-						
 
 						//Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
 
@@ -2918,22 +3180,93 @@ public:
 
 						//拿到NURBS
 						Handle(Geom_BSplineCurve) bs;
-						if (bs = Handle(Geom_BSplineCurve)::DownCast(curve3d)) {
-							// 直接使用 bs
-							/*TColgp_Array1OfPnt poles(1, bs->NbPoles());
-							TColStd_Array1OfReal w(1, bs->NbPoles());
-							TColStd_Array1OfReal k(1, bs->NbKnots());
-							TColStd_Array1OfInteger m(1, bs->NbKnots());
+						Handle(Geom_Line) bsline;
+						Handle(Geom_BezierCurve) bsbezier;
+						Handle(Geom_Circle) bscircle;
+						//if (bs = Handle(Geom_BSplineCurve)::DownCast(curve3d)) {
+						//	// 直接使用 bs
+						//	/*TColgp_Array1OfPnt poles(1, bs->NbPoles());
+						//	TColStd_Array1OfReal w(1, bs->NbPoles());
+						//	TColStd_Array1OfReal k(1, bs->NbKnots());
+						//	TColStd_Array1OfInteger m(1, bs->NbKnots());
 
-							bs->Poles(poles);
-							bs->Weights(w);
-							bs->Knots(k);
-							bs->Multiplicities(m);
+						//	bs->Poles(poles);
+						//	bs->Weights(w);
+						//	bs->Knots(k);
+						//	bs->Multiplicities(m);
 
-							std::vector<glm::vec3> ctrlPts;
+						//	std::vector<glm::vec3> ctrlPts;
+						//	for (Standard_Integer i = poles.Lower(); i <= poles.Upper(); ++i) {
+						//		gp_Pnt p = poles(i);
+						//		ctrlPts.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
+						//	}
+
+						//	std::vector<double> weights;
+						//	for (Standard_Integer i = w.Lower(); i <= w.Upper(); ++i) {
+						//		weights.push_back(double(w(i)));
+						//	}
+
+						//	std::vector<double> knots;
+						//	for (Standard_Integer i = k.Lower(); i <= k.Upper(); ++i) {
+						//		knots.push_back(double(k(i)));
+						//	}
+
+						//	std::vector<double> mults;
+						//	for (Standard_Integer i = m.Lower(); i <= m.Upper(); ++i) {
+						//		mults.push_back(double(m(i)));
+						//	}
+
+						//	int degree;
+						//	degree = bs->Degree();
+
+						//	gp_Pnt start = bs->Value(realFirst);
+						//	gp_Pnt end = bs->Value(realLast);*/
+
+						//	//GeomAdaptor_Curve不允许uFirst大于uLast。
+						//	GeomAdaptor_Curve adaptor(bs, realFirst, realLast);
+						//	GCPnts_QuasiUniformDeflection discretizer(adaptor, deflection);
+						//	std::vector<glm::vec3> boundaryPointsForCurrEdge;
+						//	for (Standard_Integer i = 1; i <= discretizer.NbPoints(); ++i) {
+						//		boundaryPointsForCurrEdge.push_back(glm::vec3(discretizer.Value(i).X(), discretizer.Value(i).Y(), discretizer.Value(i).Z()));
+						//	}
+						//	boundaryPoints.push_back(boundaryPointsForCurrEdge);
+
+						//}
+						//else if (bsline = Handle(Geom_Line)::DownCast(curve3d)) {
+						//	continue;
+						//}
+						//else if (bsbezier = Handle(Geom_BezierCurve)::DownCast(curve3d)) {
+						//	continue;
+						//}
+						//else if (bscircle = Handle(Geom_Circle)::DownCast(curve3d)) {
+						//	continue;
+						//}
+						//else {
+						//	++curve3dDowncastFailed;
+						//	if (Handle(Geom2d_BSplineCurve)::DownCast(curve2d)) {
+						//		continue;
+						//	}
+						//}
+
+
+						//拿到2d NURBS
+						int sampleNum = 20;
+						Handle(Geom2d_BSplineCurve) bs2d;
+						if (bs2d = Handle(Geom2d_BSplineCurve)::DownCast(curve2d)) {
+							/*TColgp_Array1OfPnt2d poles(1, bs2d->NbPoles());
+							TColStd_Array1OfReal w(1, bs2d->NbPoles());
+							TColStd_Array1OfReal k(1, bs2d->NbKnots());
+							TColStd_Array1OfInteger m(1, bs2d->NbKnots());
+
+							bs2d->Poles(poles);
+							bs2d->Weights(w);
+							bs2d->Knots(k);
+							bs2d->Multiplicities(m);
+
+							std::vector<glm::vec2> ctrlPts;
 							for (Standard_Integer i = poles.Lower(); i <= poles.Upper(); ++i) {
-								gp_Pnt p = poles(i);
-								ctrlPts.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
+								gp_Pnt2d p = poles(i);
+								ctrlPts.push_back(glm::vec2(p.X(), p.Y()));
 							}
 
 							std::vector<double> weights;
@@ -2952,31 +3285,43 @@ public:
 							}
 
 							int degree;
-							degree = bs->Degree();
+							degree = bs2d->Degree();
 
-							gp_Pnt start = bs->Value(realFirst);
-							gp_Pnt end = bs->Value(realLast);*/
+							gp_Pnt2d start = bs2d->Value(first2d);
+							gp_Pnt2d end = bs2d->Value(last2d);*/
 
-							//GeomAdaptor_Curve不允许uFirst大于uLast。
-							GeomAdaptor_Curve adaptor(bs, realFirst, realLast);
-							GCPnts_QuasiUniformDeflection discretizer(adaptor, deflection);
+							/*GeomAdaptor_Curve adaptor2d(bs2d);
+							if (adaptor2d.GetType() == GeomAbs_Line) {
+								bs2d = bs2d;
+							}*/
 							std::vector<glm::vec3> boundaryPointsForCurrEdge;
-							for (Standard_Integer i = 1; i <= discretizer.NbPoints(); ++i) {
-								boundaryPointsForCurrEdge.push_back(glm::vec3(discretizer.Value(i).X(), discretizer.Value(i).Y(), discretizer.Value(i).Z()));
+							Standard_Real step = (last2d - first2d) / sampleNum;
+							for (int i = 0; i <= sampleNum; ++i) {
+								gp_Pnt2d uv = bs2d->Value(first2d + step * i);
+								gp_Pnt p3d = surface->Value(uv.X(), uv.Y());
+								boundaryPointsForCurrEdge.push_back(glm::vec3(p3d.X(), p3d.Y(), p3d.Z()));
 							}
 							boundaryPoints.push_back(boundaryPointsForCurrEdge);
-
 						}
+						else {
+							++curve2dDowncastFailed;
+						}
+						++edgeCnt;
+						currWireCurves2d.push_back(bs2d);
 					}
-
+					if (wire == BRepTools::OuterWire(face)) {
+						outwireCurves2d.push_back(currWireCurves2d);
+					}
+					else {
+						inwireCurves2d.push_back(currWireCurves2d);
+					}
 				}
+				mesh.outwireCurves2d = outwireCurves2d;
 				//uv parametric points
 				int uNum = 2; //num of u curves in middle
 				int vNum = 2;
-				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
 
 				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
-					Handle(Geom_BSplineSurface) bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
 
 					Standard_Real u1, u2, v1, v2;
 					bsplineSurf->Bounds(u1, u2, v1, v2);
@@ -3038,6 +3383,218 @@ public:
 					}
 				}
 
+				//2d uv lines
+				uvParametricPoints.clear();
+				int sampleNum = 20; //每条线采样点数
+				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
+					std::vector<glm::vec3> uvPointsForCurrEdge;
+					Handle(Geom_BSplineSurface) bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
+
+					Standard_Real u1, u2, v1, v2;
+					bsplineSurf->Bounds(u1, u2, v1, v2);
+					Standard_Real deflection = 1e-3;
+					if ((bsplineSurf->IsUPeriodic()) || (bsplineSurf->IsVPeriodic())) {
+						continue;
+					}
+
+					double uStep = (u2 - u1) / (uNum + 1);
+					double vStep = (v2 - v1) / (vNum + 1);
+
+					for (int i = 1; i <= vNum; ++i) {
+						std::vector<Standard_Real> linet;
+						gp_Pnt2d P1(u1 - 0.01, v1 + vStep * i), P2(u2 + 0.01, v1 + vStep * i);
+						Handle(Geom2d_Line) vLine = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
+						for (auto& outwire : outwireCurves2d) {
+							for (auto& outedge : outwire) {
+								gp_Pnt2d prevPt;
+								Standard_Real prevt;
+								Geom2dAPI_InterCurveCurve intersector(vLine, outedge, 1.0e-4);
+								const Geom2dInt_GInter& ginter = intersector.Intersector();
+								if (intersector.NbPoints() > 0) {
+									for (Standard_Integer i = 1; i <= intersector.NbPoints(); ++i) {
+										gp_Pnt2d pt = intersector.Point(i);
+										const IntRes2d_IntersectionPoint& ip = ginter.Point(i);
+										Standard_Real t = ip.ParamOnFirst();
+										//only compare with previous
+										if (i != 1) {
+											bool b1 = fequal(t, prevt);
+											bool b2 = fequal(pt.X(), prevPt.X());
+											bool b3 = fequal(pt.Y(), prevPt.Y());
+											if (b1 && b2 && b3) {
+												continue;
+											}
+										}
+										linet.push_back(t);
+										prevPt = pt;
+										prevt = t;
+									}
+								}
+							}
+						}
+						for (auto& inwire : inwireCurves2d) {
+							for (auto& inedge : inwire) {
+								gp_Pnt2d prevPt;
+								Standard_Real prevt;
+								Geom2dAPI_InterCurveCurve intersector(vLine, inedge, 1.0e-4);
+								const Geom2dInt_GInter& ginter = intersector.Intersector();
+								if (intersector.NbPoints() > 0) {
+									for (Standard_Integer i = 1; i <= intersector.NbPoints(); ++i) {
+										gp_Pnt2d pt = intersector.Point(i);
+										const IntRes2d_IntersectionPoint& ip = ginter.Point(i);
+										Standard_Real t = ip.ParamOnFirst();
+										//only compare with previous
+										if (i != 1) {
+											bool b1 = fequal(t, prevt);
+											bool b2 = fequal(pt.X(), prevPt.X());
+											bool b3 = fequal(pt.Y(), prevPt.Y());
+											if (b1 && b2 && b3) {
+												continue;
+											}
+										}
+										linet.push_back(t);
+										prevPt = pt;
+										prevt = t;
+									}
+								}
+							}
+						}
+						//std::sort(linet.begin(), linet.end(), &VulkanExample::compareByU);
+						std::sort(linet.begin(), linet.end());
+						for (int i = 0; i < linet.size(); i+=2) {
+							Standard_Real t1 = linet[i];
+							Standard_Real t2 = linet[i + 1];
+							Standard_Real step = (t2 - t1) / Standard_Real(sampleNum);
+							for (int j = 0; j <= sampleNum; ++j) {
+								Standard_Real t = t1 + Standard_Real(j) * step;
+								gp_Pnt2d uv2d = vLine->Value(t);
+								gp_Pnt uv3d = bsplineSurf->Value(uv2d.X(), uv2d.Y());
+								uvPointsForCurrEdge.push_back(glm::vec3(uv3d.X(), uv3d.Y(), uv3d.Z()));
+							}
+						}
+						uvParametricPoints.push_back(uvPointsForCurrEdge);
+						uvPointsForCurrEdge.clear();
+					}
+					for (int i = 1; i <= uNum; ++i) {
+						std::vector<Standard_Real> linet;
+						gp_Pnt2d P1(u1 + uStep * i, v1 - 0.01), P2(u1 + uStep * i, v2 + 0.01);
+						Handle(Geom2d_Line) uLine = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
+						for (auto& outwire : outwireCurves2d) {
+							int edgeCnt = 0;
+							for (auto& outedge : outwire) {
+								++edgeCnt;
+								gp_Pnt2d prevPt;
+								Standard_Real prevt;
+								Geom2dAPI_InterCurveCurve intersector(uLine, outedge, 1.0e-4);
+								const Geom2dInt_GInter& ginter = intersector.Intersector();
+								if (intersector.NbPoints() > 0) {
+									for (Standard_Integer i = 1; i <= intersector.NbPoints(); ++i) {
+										gp_Pnt2d pt = intersector.Point(i);
+										const IntRes2d_IntersectionPoint& ip = ginter.Point(i);
+										Standard_Real t = ip.ParamOnFirst();
+										//only compare with previous
+										if (i != 1) {
+											bool b1 = fequal(t, prevt);
+											bool b2 = fequal(pt.X(), prevPt.X());
+											bool b3 = fequal(pt.Y(), prevPt.Y());
+											if (b1 && b2 && b3) {
+												continue;
+											}
+										}
+										linet.push_back(t);
+										prevPt = pt;
+										prevt = t;
+									}
+								}
+							}
+						}
+						for (auto& inwire : inwireCurves2d) {
+							for (auto& inedge : inwire) {
+								gp_Pnt2d prevPt;
+								Standard_Real prevt;
+								Geom2dAPI_InterCurveCurve intersector(uLine, inedge, 1.0e-4);
+								const Geom2dInt_GInter& ginter = intersector.Intersector();
+								if (intersector.NbPoints() > 0) {
+									for (Standard_Integer i = 1; i <= intersector.NbPoints(); ++i) {
+										gp_Pnt2d pt = intersector.Point(i);
+										const IntRes2d_IntersectionPoint& ip = ginter.Point(i);
+										Standard_Real t = ip.ParamOnFirst();
+										//only compare with previous
+										if (i != 1) {
+											bool b1 = fequal(t, prevt);
+											bool b2 = fequal(pt.X(), prevPt.X());
+											bool b3 = fequal(pt.Y(), prevPt.Y());
+											if (b1 && b2 && b3) {
+												continue;
+											}
+										}
+										linet.push_back(t);
+										prevPt = pt;
+										prevt = t;
+									}
+								}
+							}
+						}
+						for (int i = 0; i < linet.size(); i += 2) {
+							Standard_Real t1 = linet[i];
+							Standard_Real t2 = linet[i + 1];
+							Standard_Real step = (t2 - t1) / Standard_Real(sampleNum);
+							for (int j = 0; j <= sampleNum; ++j) {
+								Standard_Real t = t1 + Standard_Real(j) * step;
+								gp_Pnt2d uv2d = uLine->Value(t);
+								gp_Pnt uv3d = bsplineSurf->Value(uv2d.X(), uv2d.Y());
+								uvPointsForCurrEdge.push_back(glm::vec3(uv3d.X(), uv3d.Y(), uv3d.Z()));
+							}
+						}
+						uvParametricPoints.push_back(uvPointsForCurrEdge);
+						uvPointsForCurrEdge.clear();
+					}
+					
+					uvParametricPoints.push_back(uvPointsForCurrEdge);
+				}
+
+				//purely uv parametric points
+				/*uvParametricPoints.clear();
+				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
+					std::vector<glm::vec3> uvPointsForCurrEdge;
+					Handle(Geom_BSplineSurface) bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
+
+					Standard_Real u1, u2, v1, v2;
+					bsplineSurf->Bounds(u1, u2, v1, v2);
+					Standard_Real deflection = 1e-3;
+					if ((bsplineSurf->IsUPeriodic()) || (bsplineSurf->IsVPeriodic())) {
+						continue;
+					}
+
+					double uStep = (u2 - u1) / (uNum + 1);
+					double vStep = (v2 - v1) / (vNum + 1);
+
+					for (int i = 1; i <= vNum; ++i) {
+						std::vector<Standard_Real> linet;
+						gp_Pnt2d P1(u1, v1 + vStep * i), P2(u2, v1 + vStep * i);
+						Standard_Real step = (u2 - u1) / Standard_Real(sampleNum);
+						for (int j = 0; j <= sampleNum; ++j) {
+							Standard_Real ut = u1 + Standard_Real(j) * step;
+							gp_Pnt uv3d = bsplineSurf->Value(ut, v1 + vStep * i);
+							uvPointsForCurrEdge.push_back(glm::vec3(uv3d.X(), uv3d.Y(), uv3d.Z()));
+						}
+						uvParametricPoints.push_back(uvPointsForCurrEdge);
+						uvPointsForCurrEdge.clear();
+					}
+					for (int i = 1; i <= uNum; ++i) {
+						std::vector<Standard_Real> linet;
+						gp_Pnt2d P1(u1 + uStep * i, v1), P2(u1 + uStep * i, v2);
+						Standard_Real ut = u1 + uStep * i;
+						Standard_Real step = (v2 - v1) / Standard_Real(sampleNum);
+						for (int j = 0; j <= sampleNum; ++j) {
+							Standard_Real vt = v1 + Standard_Real(j) * step;
+							gp_Pnt uv3d = bsplineSurf->Value(ut, vt);
+							uvPointsForCurrEdge.push_back(glm::vec3(uv3d.X(), uv3d.Y(), uv3d.Z()));
+						}
+						uvParametricPoints.push_back(uvPointsForCurrEdge);
+						uvPointsForCurrEdge.clear();
+					}
+				}*/
+
 				//silhouette
 				if (surface->IsKind(STANDARD_TYPE(Geom_BSplineSurface))) {
 					Handle(Geom_BSplineSurface) bsplineSurf = Handle(Geom_BSplineSurface)::DownCast(surface);
@@ -3063,31 +3620,93 @@ public:
 					std::array<std::array<float, (divide + 1)>, (divide + 1)> silhouetteNorsArray;
 					std::array<std::array<bool, (divide + 1)>, (divide + 1)> silhouetteBoolsArray;
 					std::array<std::array<glm::vec3, (divide + 1)>, (divide + 1)> silhouettePointsArray;
+					std::vector<std::tuple<Standard_Real, Standard_Real>> silhouette2dPnt;
+					std::vector<std::tuple<Standard_Real, Standard_Real>> silhouette2dPntInside;
 					glm::vec3 cameraNor = glm::vec3(0.f, 0.f, -1.f);
-					for (int i = 0; i <= divide; ++i) {
-						Standard_Real u = u1 + double(i) * uStep;
-						for(int j = 0; j <= divide; ++j) {
-							Standard_Real v = v1 + double(j) * vStep;
-							gp_Pnt pt{};
-							gp_Vec pu{};
-							gp_Vec pv{};
-							bsplineSurf->D1(u, v, pt, pu, pv);
-							BRepClass_FaceClassifier classifier(face, pt, 1e-6);
-							if ((classifier.State() == TopAbs_IN) || (classifier.State() == TopAbs_ON)) {
-								gp_Vec norGp = pu.Crossed(pv);
-								glm::vec3 nor = glm::normalize(glm::vec3(norGp.X(),norGp.Y(),norGp.Z()));
-								silhouetteNorsArray[i][j] = glm::dot(glm::mat3(camera.matrices.view)*nor, glm::vec3(0, 0, -1));
-								silhouettePointsArray[i][j] = glm::vec3(pt.X(), pt.Y(), pt.Z());
-								silhouetteBoolsArray[i][j] = true;
-							}
-							else {
-								silhouetteBoolsArray[i][j] = false;
-							}
+					//for (int i = 0; i <= divide; ++i) {
+					//	Standard_Real u = u1 + double(i) * uStep;
+					//	for(int j = 0; j <= divide; ++j) {
+					//		Standard_Real v = v1 + double(j) * vStep;
+					//		gp_Pnt pt{};
+					//		gp_Vec pu{};
+					//		gp_Vec pv{};
+					//		bsplineSurf->D1(u, v, pt, pu, pv);
+					//		BRepClass_FaceClassifier classifier(face, pt, 1e-6);
+					//		if ((classifier.State() == TopAbs_IN) || (classifier.State() == TopAbs_ON)) {
+					//			gp_Vec norGp = pu.Crossed(pv);
+					//			glm::vec3 nor = glm::normalize(glm::vec3(norGp.X(),norGp.Y(),norGp.Z()));
+					//			silhouetteNorsArray[i][j] = glm::dot(glm::mat3(camera.matrices.view)*nor, glm::vec3(0, 0, -1));
+					//			//silhouettePointsArray[i][j] = glm::vec3(pt.X(), pt.Y(), pt.Z());
+					//			silhouetteBoolsArray[i][j] = true;
+					//		}
+					//		else {
+					//			silhouetteBoolsArray[i][j] = false;
+					//		}
+					//	}
+					//}
+					for (int i = 0; i < divide; ++i) {
+						Standard_Real su1 = u1 + double(i) * uStep;
+						Standard_Real su2 = u1 + double(i + 1) * uStep;
+						for (int j = 0; j < divide; ++j) {
+							Standard_Real sv1 = v1 + double(j) * vStep;
+							Standard_Real sv2 = v1 + double(j + 1) * vStep;
+							gp_Pnt p1gp = bsplineSurf->Value(su1, sv1);
+							GeomLProp_SLProps props(bsplineSurf, su1, sv1, 1, Precision::Confusion());
+							gp_Dir p1ngp = props.Normal();
+							glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+							float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, -1));
+
+							gp_Pnt p2gp = bsplineSurf->Value(su2, sv1);
+							props = GeomLProp_SLProps(bsplineSurf, su2, sv1, 1, Precision::Confusion());
+							gp_Dir p2ngp = props.Normal();
+							glm::vec3 p2n(p2ngp.X(), p2ngp.Y(), p2ngp.Z());
+							float p2s = glm::dot(glm::mat3(camera.matrices.view) * p2n, glm::vec3(0, 0, -1));
+
+							gp_Pnt p3gp = bsplineSurf->Value(su1, sv2);
+							props = GeomLProp_SLProps(bsplineSurf, su1, sv2, 1, Precision::Confusion());
+							gp_Dir p3ngp = props.Normal();
+							glm::vec3 p3n(p3ngp.X(), p3ngp.Y(), p3ngp.Z());
+							float p3s = glm::dot(glm::mat3(camera.matrices.view) * p3n, glm::vec3(0, 0, -1));
+
+							gp_Pnt p4gp = bsplineSurf->Value(su2, sv2);
+							props = GeomLProp_SLProps(bsplineSurf, su2, sv2, 1, Precision::Confusion());
+							gp_Dir p4ngp = props.Normal();
+							glm::vec3 p4n(p4ngp.X(), p4ngp.Y(), p4ngp.Z());
+							float p4s = glm::dot(glm::mat3(camera.matrices.view) * p4n, glm::vec3(0, 0, -1));
+
+							glm::vec3 p1(p1gp.X(), p1gp.Y(), p1gp.Z());
+							glm::vec3 p2(p2gp.X(), p2gp.Y(), p2gp.Z());
+							glm::vec3 p3(p3gp.X(), p3gp.Y(), p3gp.Z());
+							glm::vec3 p4(p4gp.X(), p4gp.Y(), p4gp.Z());
+
+							silhouettePointsArray[i][j] = p1;
+							silhouettePointsArray[i + 1][j] = p2;
+							silhouettePointsArray[i][j + 1] = p3;
+							silhouettePointsArray[i + 1][j + 1] = p4;
+							silhouetteNorsArray[i][j] = p1s;
+							silhouetteNorsArray[i + 1][j] = p2s;
+							silhouetteNorsArray[i][j + 1] = p3s;
+							silhouetteNorsArray[i + 1][j + 1] = p4s;
+							silhouettePointsDebug.push_back(p1);
+							silhouettePointsDebug.push_back(p2);
+							silhouettePointsDebug.push_back(p2);
+							silhouettePointsDebug.push_back(p3);
+							silhouettePointsDebug.push_back(p3);
+							silhouettePointsDebug.push_back(p1);
+							silhouettePointsDebug.push_back(p3);
+							silhouettePointsDebug.push_back(p4);
+							silhouettePointsDebug.push_back(p4);
+							silhouettePointsDebug.push_back(p2);
 						}
+
 					}
 					//marching squares
 					for(int i = 0; i < divide; ++i) {
+						Standard_Real su1 = u1 + double(i) * uStep;
+						Standard_Real su2 = u1 + double(i + 1) * uStep;
 						for(int j = 0; j < divide; ++j) {
+							Standard_Real sv1 = v1 + double(j) * vStep;
+							Standard_Real sv2 = v1 + double(j + 1) * vStep;
 							glm::vec3 p1 = silhouettePointsArray[i][j];
 							glm::vec3 p2 = silhouettePointsArray[i + 1][j];
 							glm::vec3 p3 = silhouettePointsArray[i][j + 1];
@@ -3096,61 +3715,80 @@ public:
 							float n2 = silhouetteNorsArray[i + 1][j];
 							float n3 = silhouetteNorsArray[i][j + 1];
 							float n4 = silhouetteNorsArray[i + 1][j + 1];
-							bool b1 = silhouetteBoolsArray[i][j];
+							/*bool b1 = silhouetteBoolsArray[i][j];
 							bool b2 = silhouetteBoolsArray[i + 1][j];
 							bool b3 = silhouetteBoolsArray[i][j + 1];
 							bool b4 = silhouetteBoolsArray[i + 1][j + 1];
 							if (!b1 || !b2 || !b3 || !b4) {
 								continue;
-							}
+							}*/
 							//tri 1
 							if ((n1 == 0.f) && (n2 == 0.f)) {
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+
 							}
 							if ((n2 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							if ((n1 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							//0zf
 							if ((n1 == 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
-								float t23 = n2 / (n2 - n3);
+								double t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//0fz
 							if((n1 == 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
-								float t32 = n3 / (n3 - n2);
+								double t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//z0f
 							if((n1 > 0.f) && (n2 == 0.f) && (n3 < 0.f)) {
 								float t13 = n1 / (n1 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
 								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//f0z
 							if ((n1 < 0.f) && (n2 == 0.f) && (n3 > 0.f)) {
 								float t31 = n3 / (n3 - n1);
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
 								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//zf0
 							if((n1 > 0.f) && (n2 < 0.f) && (n3 == 0.f)) {
 								float t12 = n1 / (n1 - n2);
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
 							}
 							//fz0
 							if((n1 < 0.f) && (n2 > 0.f) && (n3 == 0.f)) {
 								float t21 = n2 / (n2 - n1);
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
 							}
 							//zff
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 < 0.f)) {
@@ -3158,6 +3796,8 @@ public:
 								float t13 = n1 / (n1 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
 							}
 							//fzf
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
@@ -3165,6 +3805,8 @@ public:
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//ffz
 							if ((n1 < 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
@@ -3172,6 +3814,8 @@ public:
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//zzf
 							if ((n1 > 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
@@ -3179,6 +3823,8 @@ public:
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//zfz
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
@@ -3186,6 +3832,8 @@ public:
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//fzz
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 > 0.f)) {
@@ -3193,55 +3841,75 @@ public:
 								float t31 = n3 / (n3 - n1);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
 							}
 							//tri 2
 							if ((n2 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							if ((n3 == 0.f) && (n4 == 0.f)) {
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(p4);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 							}
 							if ((n4 == 0.f) && (n2 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p4);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 							}
 							//0zf
 							if((n2 == 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
 								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//0fz
 							if((n2 == 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
 								silhouettePoints.push_back(p2);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 							}
 							//z0f
 							if((n2 > 0.f) && (n3 == 0.f) && (n4 < 0.f)) {
 								float t24 = n2 / (n2 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
 								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							//f0z
 							if((n2 < 0.f) && (n3 == 0.f) && (n4 > 0.f)) {
 								float t42 = n4 / (n4 - n2);
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
 								silhouettePoints.push_back(p3);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 							}
 							//zf0
 							if((n2 > 0.f) && (n3 < 0.f) && (n4 == 0.f)) {
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(p4);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 							}
 							//fz0
 							if((n2 < 0.f) && (n3 > 0.f) && (n4 == 0.f)) {
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(p4);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
+								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 							}
 							//zff
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 < 0.f)) {
@@ -3249,6 +3917,8 @@ public:
 								float t24 = n2 / (n2 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
 							}
 							//fzf
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
@@ -3256,6 +3926,8 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 							}
 							//ffz
 							if ((n2 < 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
@@ -3263,6 +3935,8 @@ public:
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 							}
 							//zzf
 							if ((n2 > 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
@@ -3270,6 +3944,8 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 							}
 							//zfz
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
@@ -3277,6 +3953,8 @@ public:
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 							}
 							//fzz
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 > 0.f)) {
@@ -3284,10 +3962,13 @@ public:
 								float t42 = n4 / (n4 - n2);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
 							}
 						}
-						/*for (int i = 0; i < divide; ++i) {
-							for (int j = 0; j < divide; ++j) {
+						
+						/*for (int i = 1; i < divide - 1; ++i) {
+							for (int j = 1; j < divide - 1; ++j) {
 								glm::vec3 p1 = silhouettePointsArray[i][j];
 								glm::vec3 p2 = silhouettePointsArray[i + 1][j];
 								glm::vec3 p3 = silhouettePointsArray[i][j + 1];
@@ -3298,13 +3979,142 @@ public:
 								silhouettePointsDebug.push_back(p3);
 								silhouettePointsDebug.push_back(p3);
 								silhouettePointsDebug.push_back(p1);
+								silhouettePointsDebug.push_back(p3);
+								silhouettePointsDebug.push_back(p4);
+								silhouettePointsDebug.push_back(p4);
+								silhouettePointsDebug.push_back(p2);
 							}
 						}*/
 					}
+					silhouettePoints.clear();
+					/*for (auto& uv : silhouette2dPnt) {
+						
+						gp_Pnt p = bsplineSurf->Value(std::get<0>(uv), std::get<1>(uv));
+						silhouettePoints.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
+					}*/
+					int silhouetteSegId = 0;
+					
+					for (int i = 0; i < silhouette2dPnt.size(); i+=2) {
+						double su1 = std::get<0>(silhouette2dPnt[i]);
+						double su2 = std::get<0>(silhouette2dPnt[i + 1]);
+						double sv1 = std::get<1>(silhouette2dPnt[i]);
+						double sv2 = std::get<1>(silhouette2dPnt[i + 1]);
+						gp_Pnt2d P1(su1, sv1), P2(su2, sv2);
+						Handle(Geom2d_Line) sline = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
+						Standard_Real len1 = 0.0, len2 = P1.Distance(P2);
+						Handle(Geom2d_TrimmedCurve) ssegment =
+							new Geom2d_TrimmedCurve(sline, len1, len2, Standard_True, Standard_True);
+						std::vector<std::tuple<Standard_Real, glm::dvec2>> inters;
+						int nullInters = 0;
+						int wireId = 0;
+						for (auto& outwire : outwireCurves2d) {
+							int edgeId = 0;
+							for (auto& outedge : outwire) {
+								gp_Pnt2d prevPt;
+								Standard_Real prevt;
+								Geom2dAPI_InterCurveCurve intersector(sline, outedge, 1.0e-4);
+								const Geom2dInt_GInter& ginter = intersector.Intersector();
+								if (intersector.NbPoints() > 0) {
+									int interCnt = intersector.NbPoints();
+									for (Standard_Integer i = 1; i <= intersector.NbPoints(); ++i) {
+										gp_Pnt2d pt = intersector.Point(i);
+										const IntRes2d_IntersectionPoint& ip = ginter.Point(i);
+										Standard_Real t1 = ip.ParamOnFirst();
+										Standard_Real t2 = ip.ParamOnSecond();
+										//only compare with previous
+										if (i != 1) {
+											bool b1 = fequal(t1, prevt);
+											bool b2 = fequal(pt.X(), prevPt.X());
+											bool b3 = fequal(pt.Y(), prevPt.Y());
+											if (b1 && b2 && b3) {
+												continue;
+											}
+										}
+										if ((t1 >= ssegment->FirstParameter()) && (t1 <= ssegment->LastParameter())) {
+											gp_Dir2d outedgeTan;
+											Geom2dLProp_CLProps2d props(outedge, t2, 1, 0.1);
+											props.Tangent(outedgeTan);
+											glm::dvec2 outedgeT(outedgeTan.X(), outedgeTan.Y());
+											outedgeT = glm::normalize(outedgeT);
+											inters.emplace_back(t1, outedgeT);
+										}
+										else if(t1 > ssegment->LastParameter()){
+											++nullInters;
+										}
+										prevPt = pt;
+										prevt = t1;
+										//debug
+										/*gp_Pnt2d test2d1 = ssegment->Value(t1);
+										gp_Pnt2d test2d = outedge->Value(t2);
+										gp_Vec2d tangentDir(outedgeT.X() * 0.0005, outedgeT.Y() * 0.0005);
+										gp_Pnt2d testt = test2d.Translated(tangentDir);
+										gp_Pnt test3dpnt1 = bsplineSurf->Value(test2d.X(), test2d.Y());
+										gp_Pnt test3dpnt2 = bsplineSurf->Value(testt.X(), testt.Y());
+										debugLines.push_back(glm::vec3(test3dpnt1.X(), test3dpnt1.Y(), test3dpnt1.Z()));
+										debugLines.push_back(glm::vec3(test3dpnt2.X(), test3dpnt2.Y(), test3dpnt2.Z()));*/
+									}
+								}
+								++edgeId;
+							}
+							++wireId;
+						}
+						if (inters.size() != 0) {
+							//有交一定在内
+							double para1 = ssegment->FirstParameter();
+							double para2 = ssegment->LastParameter();
+							glm::dvec3 sdir(su2 - su1, sv2 - sv1, 0);
+							sdir = glm::normalize(sdir);
+							for (auto& inter : inters) {
+								double t = std::get<0>(inter);
+								glm::dvec2 tant = std::get<1>(inter);
+								glm::dvec3 tan(tant.x, tant.y, 0);
+								double result = glm::cross(sdir, tan).z;
+								if (result < 0) {
+									if (t < para1) {
+										continue;
+									}
+									gp_Pnt2d val = sline->Value(t);
+									su1 = val.X();
+									sv1 = val.Y();
+									para1 = t;
+								}
+								else {
+									if (t > para2) {
+										continue;
+									}
+									gp_Pnt2d val = sline->Value(t);
+									su2 = val.X();
+									sv2 = val.Y();
+									para2 = t;
+
+								}
+							}
+							silhouette2dPntInside.emplace_back(su1, sv1);
+							silhouette2dPntInside.emplace_back(su2, sv2);
+						}
+						else {
+							if (nullInters % 2 == 0) {
+								//外
+
+							}
+							else {
+								//内
+								silhouette2dPntInside.emplace_back(su1, sv1);
+								silhouette2dPntInside.emplace_back(su2, sv2);
+							}
+						}
+						++silhouetteSegId;
+					}
+					for (auto& uv : silhouette2dPntInside) {
+
+						gp_Pnt p = bsplineSurf->Value(std::get<0>(uv), std::get<1>(uv));
+						silhouettePoints.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
+					}
 				}
 			}
-
-			mesh.setBuffers(vulkanDevice, queue, verticesData, idxData, boundaryPoints, uvParametricPoints, silhouettePoints, silhouettePointsDebug);
+			
+			mesh.silhouettePointsDebug = silhouettePointsDebug;
+			mesh.setBuffers(vulkanDevice, queue, verticesData, idxData, boundaryPoints, uvParametricPoints, silhouettePoints, silhouettePointsDebug, debugLines);
 
 		}
 	}
@@ -3947,7 +4757,7 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Edge", "EdgeUV", "EdgePure", "LockedEdge","Test1", "Test2" });
+			overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "LineWire", "LineObj", "LineFace", "LineFaceNor", "PureNor", "DepthNor","IsoparametricLine", "Edge", "EdgeUV", "EdgePure", "LockedEdge", "HiddenLine", "Test1", "Test2" });
 			ImGui::InputInt("Stride", &singleStride);
 			ImGui::DragFloat("DepthFactor", &depthFactor, 0.1f, 0.f, 100.f);
 			overlay->sliderInt("U", &uFactor, 1, 100);

@@ -589,7 +589,14 @@ vec3 case13(int size, vec2 inUV, vec2 tex_offset){
 
 }
 
-vec3 case14(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case14(int size, vec2 inUV, vec2 tex_offset){
+	//LockedEdge
+	vec3 center_edge =  texture(samplerLockedEdge, inUV).rgb;
+	return center_edge;
+
+}
+
+vec3 case15(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -606,7 +613,7 @@ vec3 case14(int size, vec2 center_uv, vec2 tex_offset){
 	return vec3(0);
 }
 
-vec3 case15(int size, vec2 center_uv, vec2 tex_offset){
+vec3 case16(int size, vec2 center_uv, vec2 tex_offset){
 	vec2 screen_uv = center_uv * 2 -1;
 	screen_uv.y = - screen_uv.y;
 	vec2 screen_length = vec2(pushConsts.screenHalfLengthX, pushConsts.screenHalfLengthY);
@@ -826,6 +833,7 @@ void main()
 //				}
 				break;
 			case 13:
+				//locked view
 				finalCol += case13(size, uv1, tex_offset);
 				finalCol += case13(size, uv2, tex_offset);
 				finalCol += case13(size, uv3, tex_offset);
@@ -844,6 +852,13 @@ void main()
 				finalCol += case15(size, uv2, tex_offset);
 				finalCol += case15(size, uv3, tex_offset);
 				finalCol += case15(size, uv4, tex_offset);
+				outFragcolor.rgb = finalCol / 4.f;
+				break;
+			case 16:
+				finalCol += case16(size, uv1, tex_offset);
+				finalCol += case16(size, uv2, tex_offset);
+				finalCol += case16(size, uv3, tex_offset);
+				finalCol += case16(size, uv4, tex_offset);
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 		}		

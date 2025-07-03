@@ -21,7 +21,16 @@ layout (location = 0) out vec4 outNormal;
 layout (location = 1) out flat int outObjectID;
 void main() 
 {
-	gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
-	outNormal = vec4(inNormal, 1);
+	//gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
+	gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos.x, inPos.y, -50,1);
+//	outNormal = inNormal;
 	outObjectID = inObjectID;
+//	if(gl_VertexIndex == 0){
+//		gl_Position = vec4(-0.5, -0.5, 1 ,1);
+//	}else if((gl_VertexIndex == 1) || (gl_VertexIndex == 2)){
+//		gl_Position = vec4(0.5, -0.5, 1 ,1);
+//	}else{
+//		gl_Position = vec4(0.5, 0.5, 1 ,1);
+//	}
+	outNormal = vec4(inNormal, 1);
 }

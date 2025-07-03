@@ -6,6 +6,8 @@ layout (binding = 3) uniform isampler2D samplerAlbedo;
 layout (binding = 8) uniform isampler2D samplerEdge;
 layout (binding = 9) uniform sampler2D samplerLockedEdge;
 layout (binding = 10) uniform sampler2D samplerEdge2;
+layout (binding = 11) uniform sampler2D samplerHiddenLine;
+layout (binding = 12) uniform sampler2D samplerLockedEdgeNor;
 
 layout (location = 0) in vec2 inUV;
 
@@ -580,7 +582,7 @@ vec3 case12(int size, vec2 inUV, vec2 tex_offset){
 //	}
 //
 //	return vec3(0);
-	vec4 center_edge =  texture(samplerEdge, inUV).rgba;
+	vec4 center_edge =  texture(samplerEdge2, inUV).rgba;
 	return vec3(center_edge);
 
 }
@@ -593,8 +595,8 @@ vec3 case13(int size, vec2 inUV, vec2 tex_offset){
 }
 
 vec3 case14(int size, vec2 inUV, vec2 tex_offset){
-	//LockedEdge2
-	vec3 center_edge =  texture(samplerLockedEdge, inUV).rgb;
+	//OCC
+	vec3 center_edge =  texture(samplerLockedEdgeNor, inUV).rgb;
 	return center_edge;
 
 }
@@ -602,7 +604,7 @@ vec3 case14(int size, vec2 inUV, vec2 tex_offset){
 
 vec3 case15(int size, vec2 inUV, vec2 tex_offset){
 	//HiddenLine
-	vec3 center_edge =  texture(samplerLockedEdge, inUV).rgb;
+	vec3 center_edge =  texture(samplerHiddenLine, inUV).rgb;
 	return center_edge;
 
 }
@@ -852,6 +854,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 14:
+				//locked view 2
 				finalCol += case14(size, uv1, tex_offset);
 				finalCol += case14(size, uv2, tex_offset);
 				finalCol += case14(size, uv3, tex_offset);
@@ -859,6 +862,7 @@ void main()
 				outFragcolor.rgb = finalCol / 4.f;
 				break;
 			case 15:
+				//hidden line
 				finalCol += case15(size, uv1, tex_offset);
 				finalCol += case15(size, uv2, tex_offset);
 				finalCol += case15(size, uv3, tex_offset);

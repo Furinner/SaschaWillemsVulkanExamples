@@ -490,6 +490,15 @@ public:
 		}
 	};
 
+	struct SilSeg {
+		int id;
+		int ori;
+		SilSeg* prev = nullptr;
+		SilSeg* next = nullptr;
+		glm::dvec2 v1;
+		glm::dvec2 v2;
+	};
+
 	struct Mesh {
 		std::vector<uint32_t> index{};
 		std::vector<uPtr<Vertex>> vertices1{};  //simple vertices, merged using position
@@ -507,10 +516,11 @@ public:
 		std::vector<int> unchangedEdgeIdx{};
 		std::vector<Vertex> unchangedEdgeVert{};
 		std::vector<glm::vec3> silhouettePoints;
+		std::vector<int> silhouetteOri;
 		std::vector<glm::vec3> silhouettePointsDebug;
 		std::vector<std::tuple<Standard_Real, Standard_Real>> silhouette2dPnt;
 		std::vector<std::vector<glm::dvec2>> silhouetteBoundings;  //half length of silhouette2dPnt
-		std::vector<int> silhouetteOri;
+		std::vector<int> silhouetteOriInside;
 		std::vector<std::vector<glm::vec3>> uvLinePointsHidden;
 		std::vector<std::tuple<double, double>> silhouette2dPntInside;
 		std::vector<std::vector<Handle(Geom2d_BSplineCurve)>> outwireCurves2d;
@@ -538,6 +548,8 @@ public:
 		size_t vertexBuffersSize2 = 0;
 		size_t indexBuffersSize = 0;
 		size_t facesSize = 0;
+		std::vector<SilSeg*> silSegRoots;
+		std::vector<uPtr<SilSeg>> silSegs;
 
 		void create(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<vkglTF::Vertex>>& vertexBuffers, vks::VulkanDevice* device, VkQueue transferQueue) {
 			int objectID = 0;
@@ -1435,11 +1447,47 @@ public:
 			finEdgeVer = unchangedEdgeVert;
 			finEdgeIdx = unchangedEdgeIdx;
 			for (int i = 0; i < silhouettePoints.size(); ++i) {
-				finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(0, 0, 1), glm::vec2(0), 0, 0, 1));
+				if (silhouetteOriInside[i / 2] == 0) {
+					//正silhouette
+					finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(1, 0, 1), glm::vec2(0), 0, 0, 1));
+				}
+				else if (silhouetteOriInside[i / 2] == 1) {
+					//cusp?
+					finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(0, 0, 1), glm::vec2(0), 0, 0, 1));
+				}
+				else {
+					//反silhouette
+					finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(1, 1, 0), glm::vec2(0), 0, 0, 1));
+				}
+				
 				finEdgeIdx.push_back(i + unchangedEdgeIdx.size());
 			}
-			for (int i = 0; i < silhouettePointsDebug.size(); ++i) {
+			
+			/*for (int i = 0; i < silhouettePointsDebug.size(); ++i) {
 				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(1, 0, 1), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+			}*/
+			for (int i = 0; i < silhouettePointsDebug.size(); i += 10) {
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(1, 0, 0), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 1], glm::vec3(1, 0, 0), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 2], glm::vec3(0, 1, 0), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 3], glm::vec3(0, 1, 0), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 4], glm::vec3(0, 0, 1), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 5], glm::vec3(0, 0, 1), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 6], glm::vec3(1, 1, 0), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 7], glm::vec3(1, 1, 0), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 8], glm::vec3(1, 1, 1), glm::vec2(0), 1, 0, 1));
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 9], glm::vec3(1, 1, 1), glm::vec2(0), 1, 0, 1));
 				finEdgeIdx.push_back(finEdgeIdx.size());
 			}
 
@@ -1673,6 +1721,8 @@ public:
 			silhouettePoints.clear();
 			silhouette2dPnt.clear();
 			silhouette2dPntInside.clear();
+			silhouetteOri.clear();
+			silhouetteOriInside.clear();
 			for (faceExp.Init(shape, TopAbs_FACE); faceExp.More(); faceExp.Next()) {
 				TopoDS_Face face = TopoDS::Face(faceExp.Current());
 				Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
@@ -1765,18 +1815,25 @@ public:
 							if ((n1 == 0.f) && (n2 == 0.f)) {
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								if (j == 0) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								}
 								else {
 									glm::dvec2 ptd(su2, sv1 - vStep);
 									std::vector<glm::dvec2> l1 = { p2d, p1d, ptd };
 									std::vector<glm::dvec2> l2 = { p1d, p2d, p3d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									//正silhouette的走向
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p1d, ptd, p2d, p3d };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -1784,29 +1841,39 @@ public:
 							if ((n2 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								std::vector<glm::dvec2> l1 = { p2d, p3d, p1d };
 								std::vector<glm::dvec2> l2 = { p3d, p2d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							if ((n1 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								if (i == 0) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								}
 								else {
 									glm::dvec2 ptd(su1 - uStep, sv2);
 									std::vector<glm::dvec2> l1 = { p1d, p3d, ptd };
 									std::vector<glm::dvec2> l2 = { p3d, p1d, p2d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p1d, p2d, p3d, ptd };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -1816,84 +1883,109 @@ public:
 								double t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p23d, p1d, p2d };
 								std::vector<glm::dvec2> l2 = { p1d, p23d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//0fz
 							if ((n1 == 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
 								double t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p32d, p1d, p2d };
 								std::vector<glm::dvec2> l2 = { p1d, p32d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//z0f
 							if ((n1 > 0.f) && (n2 == 0.f) && (n3 < 0.f)) {
 								float t13 = n1 / (n1 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p13d = glm::mix(p1d, p3d, t13);
 								std::vector<glm::dvec2> l1 = { p13d, p2d, p3d };
 								std::vector<glm::dvec2> l2 = { p2d, p13d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//f0z
 							if ((n1 < 0.f) && (n2 == 0.f) && (n3 > 0.f)) {
 								float t31 = n3 / (n3 - n1);
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p31d = glm::mix(p3d, p1d, t31);
 								std::vector<glm::dvec2> l1 = { p31d, p2d, p3d };
 								std::vector<glm::dvec2> l2 = { p2d, p31d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zf0
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 == 0.f)) {
 								float t12 = n1 / (n1 - n2);
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p12d = glm::mix(p1d, p2d, t12);
 								std::vector<glm::dvec2> l1 = { p12d, p3d, p1d };
 								std::vector<glm::dvec2> l2 = { p3d, p12d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fz0
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 == 0.f)) {
 								float t21 = n2 / (n2 - n1);
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p21d = glm::mix(p2d, p1d, t21);
 								std::vector<glm::dvec2> l1 = { p21d, p3d, p1d };
 								std::vector<glm::dvec2> l2 = { p3d, p21d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
+
 							}
 							//zff
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 < 0.f)) {
@@ -1901,8 +1993,8 @@ public:
 								float t13 = n1 / (n1 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
 
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -1910,7 +2002,11 @@ public:
 								glm::dvec2 p13d = glm::mix(p1d, p3d, t13);
 								std::vector<glm::dvec2> l1 = { p12d, p13d, p1d };
 								std::vector<glm::dvec2> l2 = { p13d, p12d, p2d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzf
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
@@ -1918,8 +2014,8 @@ public:
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -1927,7 +2023,11 @@ public:
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p23d, p21d, p2d };
 								std::vector<glm::dvec2> l2 = { p21d, p23d, p3d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//ffz
 							if ((n1 < 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
@@ -1935,8 +2035,8 @@ public:
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -1944,7 +2044,11 @@ public:
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p31d, p32d, p3d };
 								std::vector<glm::dvec2> l2 = { p32d, p31d, p1d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zzf
 							if ((n1 > 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
@@ -1952,8 +2056,8 @@ public:
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -1961,7 +2065,11 @@ public:
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p13d, p23d, p3d };
 								std::vector<glm::dvec2> l2 = { p23d, p13d, p1d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zfz
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
@@ -1969,8 +2077,8 @@ public:
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -1978,7 +2086,11 @@ public:
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p32d, p12d, p2d };
 								std::vector<glm::dvec2> l2 = { p12d, p32d, p3d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzz
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 > 0.f)) {
@@ -1986,8 +2098,8 @@ public:
 								float t31 = n3 / (n3 - n1);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
 
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -1995,37 +2107,51 @@ public:
 								glm::dvec2 p31d = glm::mix(p3d, p1d, t31);
 								std::vector<glm::dvec2> l1 = { p21d, p31d, p1d };
 								std::vector<glm::dvec2> l2 = { p31d, p21d, p2d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//tri 2
 							if ((n2 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								std::vector<glm::dvec2> l1 = { p3d, p2d, p4d };
 								std::vector<glm::dvec2> l2 = { p2d, p3d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							if ((n3 == 0.f) && (n4 == 0.f)) {
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(p4);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 
 								if (j == (divide - 1)) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 								}
 								else {
 									glm::dvec2 ptd(su1, sv2 + vStep);
 									std::vector<glm::dvec2> l1 = { p3d, p4d, ptd };
 									std::vector<glm::dvec2> l2 = { p4d, p3d, p2d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p2d, p4d, ptd, p3d };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -2033,19 +2159,25 @@ public:
 							if ((n4 == 0.f) && (n2 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p4);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 
 								if (i == (divide - 1)) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 								}
 								else {
 									glm::dvec2 ptd(su2 + uStep, sv1);
 									std::vector<glm::dvec2> l1 = { p4d, p2d, ptd };
 									std::vector<glm::dvec2> l2 = { p2d, p4d, p3d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p2d, ptd, p4d, p3d };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -2055,90 +2187,114 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p34d = glm::mix(p3d, p4d, t34);
 								std::vector<glm::dvec2> l1 = { p34d, p2d, p4d };
 								std::vector<glm::dvec2> l2 = { p2d, p34d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//0fz
 							if ((n2 == 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p43d = glm::mix(p4d, p3d, t43);
 								std::vector<glm::dvec2> l1 = { p43d, p2d, p4d };
 								std::vector<glm::dvec2> l2 = { p2d, p43d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//z0f
 							if ((n2 > 0.f) && (n3 == 0.f) && (n4 < 0.f)) {
 								float t24 = n2 / (n2 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p24d = glm::mix(p2d, p4d, t24);
 								std::vector<glm::dvec2> l1 = { p24d, p3d, p2d };
 								std::vector<glm::dvec2> l2 = { p3d, p24d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//f0z
 							if ((n2 < 0.f) && (n3 == 0.f) && (n4 > 0.f)) {
 								float t42 = n4 / (n4 - n2);
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p42d = glm::mix(p4d, p2d, t42);
 								std::vector<glm::dvec2> l1 = { p42d, p3d, p2d };
 								std::vector<glm::dvec2> l2 = { p3d, p42d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zf0
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 == 0.f)) {
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(p4);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p23d, p4d, p3d };
 								std::vector<glm::dvec2> l2 = { p4d, p23d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fz0
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 == 0.f)) {
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(p4);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p32d, p4d, p3d };
 								std::vector<glm::dvec2> l2 = { p4d, p32d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zff
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 < 0.f)) {
@@ -2146,8 +2302,8 @@ public:
 								float t24 = n2 / (n2 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -2155,7 +2311,11 @@ public:
 								glm::dvec2 p24d = glm::mix(p2d, p4d, t24);
 								std::vector<glm::dvec2> l1 = { p24d, p23d, p2d };
 								std::vector<glm::dvec2> l2 = { p23d, p24d, p4d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzf
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
@@ -2163,8 +2323,8 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -2172,7 +2332,11 @@ public:
 								glm::dvec2 p34d = glm::mix(p3d, p4d, t34);
 								std::vector<glm::dvec2> l1 = { p32d, p34d, p3d };
 								std::vector<glm::dvec2> l2 = { p34d, p32d, p2d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//ffz
 							if ((n2 < 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
@@ -2180,8 +2344,8 @@ public:
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -2189,7 +2353,11 @@ public:
 								glm::dvec2 p42d = glm::mix(p4d, p2d, t42);
 								std::vector<glm::dvec2> l1 = { p43d, p42d, p4d };
 								std::vector<glm::dvec2> l2 = { p42d, p43d, p3d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zzf
 							if ((n2 > 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
@@ -2197,8 +2365,8 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -2206,7 +2374,11 @@ public:
 								glm::dvec2 p34d = glm::mix(p3d, p4d, t34);
 								std::vector<glm::dvec2> l1 = { p34d, p24d, p4d };
 								std::vector<glm::dvec2> l2 = { p24d, p34d, p3d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zfz
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
@@ -2214,8 +2386,8 @@ public:
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -2223,7 +2395,11 @@ public:
 								glm::dvec2 p43d = glm::mix(p4d, p3d, t43);
 								std::vector<glm::dvec2> l1 = { p23d, p43d, p3d };
 								std::vector<glm::dvec2> l2 = { p43d, p23d, p2d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzz
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 > 0.f)) {
@@ -2231,8 +2407,8 @@ public:
 								float t42 = n4 / (n4 - n2);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
 
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -2240,7 +2416,12 @@ public:
 								glm::dvec2 p42d = glm::mix(p4d, p2d, t42);
 								std::vector<glm::dvec2> l1 = { p42d, p32d, p2d };
 								std::vector<glm::dvec2> l2 = { p32d, p42d, p4d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
+
 							}
 						}
 
@@ -2276,6 +2457,7 @@ public:
 							new Geom2d_TrimmedCurve(sline, len1, len2, Standard_True, Standard_True);
 						std::vector<std::tuple<Standard_Real, glm::dvec2>> inters;
 						int nullInters = 0;
+						std::vector<Standard_Real> nullInterst1;
 						int wireId = 0;
 						for (auto& outwire : outwireCurves2d) {
 							int edgeId = 0;
@@ -2291,6 +2473,18 @@ public:
 										const IntRes2d_IntersectionPoint& ip = ginter.Point(i);
 										Standard_Real t1 = ip.ParamOnFirst();
 										Standard_Real t2 = ip.ParamOnSecond();
+										// compare with other t1
+										bool skipThisEdge = false;
+										if (nullInters > 0) {
+											for (auto nullt1 : nullInterst1) {
+												if (fequal(nullt1, t1)) {
+													skipThisEdge = true;
+												}
+											}
+										}
+										if (skipThisEdge) {
+											continue;
+										}
 										//only compare with previous
 										if (i != 1) {
 											bool b1 = fequal(t1, prevt);
@@ -2311,6 +2505,7 @@ public:
 										}
 										else if (t1 > ssegment->LastParameter()) {
 											++nullInters;
+											nullInterst1.push_back(t1);
 										}
 										prevPt = pt;
 										prevt = t1;
@@ -2362,6 +2557,7 @@ public:
 							}
 							silhouette2dPntInside.emplace_back(su1, sv1);
 							silhouette2dPntInside.emplace_back(su2, sv2);
+							silhouetteOriInside.push_back(silhouetteOri[i / 2]);
 
 						}
 						else {
@@ -2373,14 +2569,62 @@ public:
 								//内
 								silhouette2dPntInside.emplace_back(su1, sv1);
 								silhouette2dPntInside.emplace_back(su2, sv2);
+								silhouetteOriInside.push_back(silhouetteOri[i / 2]);
 							}
 						}
 					}
 					silhouettePoints.clear();
 					for (auto& uv : silhouette2dPntInside) {
-
 						gp_Pnt p = bsplineSurf->Value(std::get<0>(uv), std::get<1>(uv));
 						silhouettePoints.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
+					}
+					silSegs.clear();
+					silSegRoots.clear();
+					for (int i = 0; i < silhouette2dPntInside.size(); i+=2) {
+						uPtr<SilSeg> silSeg = mkU<SilSeg>();
+						silSeg->v1 = glm::dvec2(std::get<0>(silhouette2dPntInside[i]), std::get<1>(silhouette2dPntInside[i]));
+						silSeg->v2 = glm::dvec2(std::get<0>(silhouette2dPntInside[i + 1]), std::get<1>(silhouette2dPntInside[i + 1]));
+						silSeg->id = (i / 2);
+						silSeg->ori = silhouetteOriInside[i / 2];
+						silSegs.push_back(std::move(silSeg));
+					}
+					for (auto& silSeg : silSegs) {
+						bool findPrev = false;
+						for (int j = 1; j < silhouette2dPntInside.size(); j += 2) {
+							glm::dvec2 prevTmp = glm::dvec2(std::get<0>(silhouette2dPntInside[j]), std::get<1>(silhouette2dPntInside[j]));
+							if (prevTmp == silSeg->v1) {
+								findPrev = true;
+								silSeg->prev = silSegs[j/2].get();
+							}
+						}
+						if (!findPrev) {
+							silSegRoots.push_back(silSeg.get());
+						}
+						for (int j = 0; j < silhouette2dPntInside.size(); j += 2) {
+							glm::dvec2 nextTmp = glm::dvec2(std::get<0>(silhouette2dPntInside[j]), std::get<1>(silhouette2dPntInside[j]));
+							if (nextTmp == silSeg->v2) {
+								silSeg->next = silSegs[j / 2].get();
+							}
+						}
+					}
+					//取出所有silhouette初始点
+					std::vector<glm::dvec2> silhouetteStart2d;
+					SilSeg* silSeg = silSegRoots[0];
+					int prevOri = silSeg->ori;
+					std::vector<glm::dvec2> cuspStart2d;
+					while (silSeg->next != nullptr) {
+						silhouetteStart2d.push_back(silSeg->v1);
+						int currOri = silSeg->ori;
+						if (currOri != prevOri) {
+							cuspStart2d.push_back(silSeg->v1);
+							prevOri = currOri;
+						}
+						silSeg = silSeg->next;
+					}
+					silhouetteStart2d.push_back(silSeg->v2);
+					//对于每一个点做牛顿迭代
+					for (auto ss2d : silhouetteStart2d) {
+						ss2d;
 					}
 				}
 			}
@@ -2634,6 +2878,8 @@ public:
 		camera.orthoTop = camera.orthoRight * height / width;
 		camera.orthographic = false;
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
+		camera.setRotation(glm::vec3(-18.5f, -26.75f, 0.f));
+		camera.setPosition(glm::vec3(-15.9321194, 40.3435707, -8.50157070));
 		camera.setPerspective(60.f, (float)width / (float)height, 0.01f, 256.0f);
 	}
 
@@ -3769,17 +4015,31 @@ public:
 
 	}
 
-	static int calculateSilhouetteOri(std::vector<glm::dvec2> l1, std::vector<glm::dvec2> l2, Handle(Geom_BSplineSurface) bsplineSurf, Camera& camera) {
+	static int calculateSilhouetteOri(std::vector<glm::dvec2> l1, std::vector<glm::dvec2> l2, Handle(Geom_BSplineSurface) bsplineSurf, Camera& camera, glm::dvec2& ps1, glm::dvec2& ps2) {
 		glm::dvec2 l1c(0);
 		glm::dvec2 l2c(0);
-		for (auto& l1p : l1) {
+		/*for (auto& l1p : l1) {
 			l1c += l1p;
 		}
 		for (auto& l2p : l2) {
 			l2c += l2p;
 		}
 		l1c /= l1.size();
-		l2c /= l2.size();
+		l2c /= l2.size();*/
+
+		if (l1.size() == 3) {
+			l1c = l1[2];
+		}
+		else {
+			l1c = (l1[2] + l1[3]) / 2.0;
+		}
+
+		if (l2.size() == 3) {
+			l2c = l2[2];
+		}
+		else {
+			l2c = (l2[2] + l2[3]) / 2.0;
+		}
 
 		GeomLProp_SLProps props(bsplineSurf, l1c.x, l1c.y, 1, Precision::Confusion());
 		gp_Dir p1ngp = props.Normal();
@@ -3803,6 +4063,8 @@ public:
 			nn = p1n;
 			nne1 = bsplineSurf->Value(l1[0].x, l1[0].y);
 			nne2 = bsplineSurf->Value(l1[1].x, l1[1].y);
+			ps1 = l2[0];
+			ps2 = l2[1];
 		}
 		else {
 			//l1正向，l2为反向
@@ -3810,6 +4072,8 @@ public:
 			nn = p2n;
 			nne1 = bsplineSurf->Value(l2[0].x, l2[0].y);
 			nne2 = bsplineSurf->Value(l2[1].x, l2[1].y);
+			ps1 = l1[0];
+			ps2 = l1[1];
 		}
 		gp_Vec nndirtmp(nne1, nne2);
 		glm::vec3 nndir = glm::vec3(nndirtmp.X(), nndirtmp.Y(), nndirtmp.Z());
@@ -4622,19 +4886,25 @@ public:
 							if ((n1 == 0.f) && (n2 == 0.f)) {
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								quads[i][j] = Quad(1, 1, 2);
 								if (j == 0) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								}
 								else {
 									glm::dvec2 ptd(su2, sv1 - vStep);
 									std::vector<glm::dvec2> l1 = { p2d, p1d, ptd };
 									std::vector<glm::dvec2> l2 = { p1d, p2d, p3d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p1d, ptd, p2d, p3d };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -4642,31 +4912,41 @@ public:
 							if ((n2 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								quads[i][j] = Quad(1, 2, 3);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								std::vector<glm::dvec2> l1 = { p2d, p3d, p1d };
 								std::vector<glm::dvec2> l2 = { p3d, p2d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							if ((n1 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								quads[i][j] = Quad(1, 1, 3);
 								if (i == 0) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								}
 								else {
 									glm::dvec2 ptd(su1 - uStep, sv2);
 									std::vector<glm::dvec2> l1 = { p1d, p3d, ptd };
 									std::vector<glm::dvec2> l2 = { p3d, p1d, p2d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p1d, p2d, p3d, ptd };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -4676,90 +4956,114 @@ public:
 								double t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 								quads[i][j] = Quad(1, 1, std::tuple<int, int>(2, 3), t23);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p23d, p1d, p2d };
 								std::vector<glm::dvec2> l2 = { p1d, p23d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//0fz
 							if ((n1 == 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
 								double t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(p1);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 1);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 								quads[i][j] = Quad(1, 1, std::tuple<int, int>(3, 2), t32);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p32d, p1d, p2d };
 								std::vector<glm::dvec2> l2 = { p1d, p32d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//z0f
 							if ((n1 > 0.f) && (n2 == 0.f) && (n3 < 0.f)) {
 								float t13 = n1 / (n1 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								quads[i][j] = Quad(1, std::tuple<int, int>(1, 3), 2, t13);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p13d = glm::mix(p1d, p3d, t13);
 								std::vector<glm::dvec2> l1 = { p13d, p2d, p3d };
 								std::vector<glm::dvec2> l2 = { p2d, p13d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//f0z
 							if ((n1 < 0.f) && (n2 == 0.f) && (n3 > 0.f)) {
 								float t31 = n3 / (n3 - n1);
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								quads[i][j] = Quad(1, std::tuple<int, int>(3, 1), 2, t31);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p31d = glm::mix(p3d, p1d, t31);
 								std::vector<glm::dvec2> l1 = { p31d, p2d, p3d };
 								std::vector<glm::dvec2> l2 = { p2d, p31d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zf0
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 == 0.f)) {
 								float t12 = n1 / (n1 - n2);
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
 								quads[i][j] = Quad(1, 3, std::tuple<int, int>(1, 2), t12);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p12d = glm::mix(p1d, p2d, t12);
 								std::vector<glm::dvec2> l1 = { p12d, p3d, p1d };
 								std::vector<glm::dvec2> l2 = { p3d, p12d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fz0
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 == 0.f)) {
 								float t21 = n2 / (n2 - n1);
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
 								quads[i][j] = Quad(1, 3, std::tuple<int, int>(2, 1), t21);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p21d = glm::mix(p2d, p1d, t21);
 								std::vector<glm::dvec2> l1 = { p21d, p3d, p1d };
 								std::vector<glm::dvec2> l2 = { p3d, p21d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zff
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 < 0.f)) {
@@ -4767,8 +5071,8 @@ public:
 								float t13 = n1 / (n1 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
 								quads[i][j] = Quad(1, std::tuple<int, int>(1, 2), std::tuple<int, int>(1, 3), t12, t13);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -4776,7 +5080,11 @@ public:
 								glm::dvec2 p13d = glm::mix(p1d, p3d, t13);
 								std::vector<glm::dvec2> l1 = { p12d, p13d, p1d };
 								std::vector<glm::dvec2> l2 = { p13d, p12d, p2d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzf
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
@@ -4784,8 +5092,8 @@ public:
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 								quads[i][j] = Quad(1, std::tuple<int, int>(2, 1), std::tuple<int, int>(2, 3), t21, t23);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -4793,7 +5101,11 @@ public:
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p23d, p21d, p2d };
 								std::vector<glm::dvec2> l2 = { p21d, p23d, p3d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//ffz
 							if ((n1 < 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
@@ -4801,8 +5113,8 @@ public:
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 								quads[i][j] = Quad(1, std::tuple<int, int>(3, 1), std::tuple<int, int>(3, 2), t31, t32);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -4810,7 +5122,11 @@ public:
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p31d, p32d, p3d };
 								std::vector<glm::dvec2> l2 = { p32d, p31d, p1d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zzf
 							if ((n1 > 0.f) && (n2 > 0.f) && (n3 < 0.f)) {
@@ -4818,8 +5134,8 @@ public:
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(glm::mix(p1, p3, t13));
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 3, t13);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 								quads[i][j] = Quad(1, std::tuple<int, int>(1, 3), std::tuple<int, int>(2, 3), t13, t23);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -4827,7 +5143,11 @@ public:
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p13d, p23d, p3d };
 								std::vector<glm::dvec2> l2 = { p23d, p13d, p1d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zfz
 							if ((n1 > 0.f) && (n2 < 0.f) && (n3 > 0.f)) {
@@ -4835,8 +5155,8 @@ public:
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(glm::mix(p1, p2, t12));
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 1, 2, t12);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 								quads[i][j] = Quad(1, std::tuple<int, int>(1, 2), std::tuple<int, int>(3, 2), t12, t32);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -4844,7 +5164,11 @@ public:
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p32d, p12d, p2d };
 								std::vector<glm::dvec2> l2 = { p12d, p32d, p3d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzz
 							if ((n1 < 0.f) && (n2 > 0.f) && (n3 > 0.f)) {
@@ -4852,8 +5176,8 @@ public:
 								float t31 = n3 / (n3 - n1);
 								silhouettePoints.push_back(glm::mix(p2, p1, t21));
 								silhouettePoints.push_back(glm::mix(p3, p1, t31));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 1, t21);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 1, t31);
 								quads[i][j] = Quad(1, std::tuple<int, int>(2, 1), std::tuple<int, int>(3, 1), t21, t31);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -4861,37 +5185,51 @@ public:
 								glm::dvec2 p31d = glm::mix(p3d, p1d, t31);
 								std::vector<glm::dvec2> l1 = { p21d, p31d, p1d };
 								std::vector<glm::dvec2> l2 = { p31d, p21d, p2d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//tri 2
 							if ((n2 == 0.f) && (n3 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								quads[i][j] = Quad(2, 2, 3);
 								std::vector<glm::dvec2> boundings = { p1d, p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								std::vector<glm::dvec2> l1 = { p3d, p2d, p4d };
 								std::vector<glm::dvec2> l2 = { p2d, p3d, p1d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							if ((n3 == 0.f) && (n4 == 0.f)) {
 								silhouettePoints.push_back(p3);
 								silhouettePoints.push_back(p4);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 								quads[i][j] = Quad(2, 3, 4);
 								if (j == (divide - 1)) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 								}
 								else {
 									glm::dvec2 ptd(su1, sv2 + vStep);
 									std::vector<glm::dvec2> l1 = { p3d, p4d, ptd };
 									std::vector<glm::dvec2> l2 = { p4d, p3d, p2d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p2d, p4d, ptd, p3d };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -4899,19 +5237,25 @@ public:
 							if ((n4 == 0.f) && (n2 == 0.f)) {
 								silhouettePoints.push_back(p2);
 								silhouettePoints.push_back(p4);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 								quads[i][j] = Quad(2, 2, 4);
 								if (i == (divide - 1)) {
 									silhouetteOri.push_back(1);
 									std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 									silhouetteBoundings.push_back(boundings);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+									silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
 								}
 								else {
 									glm::dvec2 ptd(su2 + uStep, sv1);
 									std::vector<glm::dvec2> l1 = { p4d, p2d, ptd };
 									std::vector<glm::dvec2> l2 = { p2d, p4d, p3d };
-									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+									glm::dvec2 ps1;
+									glm::dvec2 ps2;
+									silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+									silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+									silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 									std::vector<glm::dvec2> boundings = { p2d, ptd, p4d, p3d };
 									silhouetteBoundings.push_back(boundings);
 								}
@@ -4921,90 +5265,114 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								quads[i][j] = Quad(2, std::tuple<int, int>(3, 4), 2, t34);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p34d = glm::mix(p3d, p4d, t34);
 								std::vector<glm::dvec2> l1 = { p34d, p2d, p4d };
 								std::vector<glm::dvec2> l2 = { p2d, p34d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//0fz
 							if ((n2 == 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
 								silhouettePoints.push_back(p2);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 2);
 								quads[i][j] = Quad(2, std::tuple<int, int>(4, 3), 2, t43);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p43d = glm::mix(p4d, p3d, t43);
 								std::vector<glm::dvec2> l1 = { p43d, p2d, p4d };
 								std::vector<glm::dvec2> l2 = { p2d, p43d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//z0f
 							if ((n2 > 0.f) && (n3 == 0.f) && (n4 < 0.f)) {
 								float t24 = n2 / (n2 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								quads[i][j] = Quad(2, std::tuple<int, int>(2, 4), 3, t24);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p24d = glm::mix(p2d, p4d, t24);
 								std::vector<glm::dvec2> l1 = { p24d, p3d, p2d };
 								std::vector<glm::dvec2> l2 = { p3d, p24d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//f0z
 							if ((n2 < 0.f) && (n3 == 0.f) && (n4 > 0.f)) {
 								float t42 = n4 / (n4 - n2);
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
 								silhouettePoints.push_back(p3);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 3);
 								quads[i][j] = Quad(2, std::tuple<int, int>(4, 2), 3, t42);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p42d = glm::mix(p4d, p2d, t42);
 								std::vector<glm::dvec2> l1 = { p42d, p3d, p2d };
 								std::vector<glm::dvec2> l2 = { p3d, p42d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zf0
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 == 0.f)) {
 								float t23 = n2 / (n2 - n3);
 								silhouettePoints.push_back(p4);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
 								quads[i][j] = Quad(2, 4, std::tuple<int, int>(2, 3), t23);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p23d = glm::mix(p2d, p3d, t23);
 								std::vector<glm::dvec2> l1 = { p23d, p4d, p3d };
 								std::vector<glm::dvec2> l2 = { p4d, p23d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fz0
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 == 0.f)) {
 								float t32 = n3 / (n3 - n2);
 								silhouettePoints.push_back(p4);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
-								silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace1(silhouette2dPnt, su1, su2, sv1, sv2, 4);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
 								quads[i][j] = Quad(2, 4, std::tuple<int, int>(3, 2), t32);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
 								glm::dvec2 p32d = glm::mix(p3d, p2d, t32);
 								std::vector<glm::dvec2> l1 = { p32d, p4d, p3d };
 								std::vector<glm::dvec2> l2 = { p4d, p32d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zff
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 < 0.f)) {
@@ -5012,8 +5380,8 @@ public:
 								float t24 = n2 / (n2 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
 								quads[i][j] = Quad(2, std::tuple<int, int>(2, 3), std::tuple<int, int>(2, 4), t23, t24);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -5021,7 +5389,11 @@ public:
 								glm::dvec2 p24d = glm::mix(p2d, p4d, t24);
 								std::vector<glm::dvec2> l1 = { p24d, p23d, p2d };
 								std::vector<glm::dvec2> l2 = { p23d, p24d, p4d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzf
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
@@ -5029,8 +5401,8 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 								quads[i][j] = Quad(2, std::tuple<int, int>(3, 2), std::tuple<int, int>(3, 4), t32, t34);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -5038,7 +5410,11 @@ public:
 								glm::dvec2 p34d = glm::mix(p3d, p4d, t34);
 								std::vector<glm::dvec2> l1 = { p32d, p34d, p3d };
 								std::vector<glm::dvec2> l2 = { p34d, p32d, p2d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//ffz
 							if ((n2 < 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
@@ -5046,8 +5422,8 @@ public:
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 								quads[i][j] = Quad(2, std::tuple<int, int>(4, 2), std::tuple<int, int>(4, 3), t42, t43);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -5055,7 +5431,11 @@ public:
 								glm::dvec2 p42d = glm::mix(p4d, p2d, t42);
 								std::vector<glm::dvec2> l1 = { p43d, p42d, p4d };
 								std::vector<glm::dvec2> l2 = { p42d, p43d, p3d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zzf
 							if ((n2 > 0.f) && (n3 > 0.f) && (n4 < 0.f)) {
@@ -5063,8 +5443,8 @@ public:
 								float t34 = n3 / (n3 - n4);
 								silhouettePoints.push_back(glm::mix(p2, p4, t24));
 								silhouettePoints.push_back(glm::mix(p3, p4, t34));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 4, t24);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 4, t34);
 								quads[i][j] = Quad(2, std::tuple<int, int>(2, 4), std::tuple<int, int>(3, 4), t24, t34);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -5072,7 +5452,11 @@ public:
 								glm::dvec2 p34d = glm::mix(p3d, p4d, t34);
 								std::vector<glm::dvec2> l1 = { p34d, p24d, p4d };
 								std::vector<glm::dvec2> l2 = { p24d, p34d, p3d, p2d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//zfz
 							if ((n2 > 0.f) && (n3 < 0.f) && (n4 > 0.f)) {
@@ -5080,8 +5464,8 @@ public:
 								float t43 = n4 / (n4 - n3);
 								silhouettePoints.push_back(glm::mix(p2, p3, t23));
 								silhouettePoints.push_back(glm::mix(p4, p3, t43));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 2, 3, t23);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 3, t43);
 								quads[i][j] = Quad(2, std::tuple<int, int>(2, 3), std::tuple<int, int>(4, 3), t23, t43);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -5089,7 +5473,11 @@ public:
 								glm::dvec2 p43d = glm::mix(p4d, p3d, t43);
 								std::vector<glm::dvec2> l1 = { p23d, p43d, p3d };
 								std::vector<glm::dvec2> l2 = { p43d, p23d, p2d, p4d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 							//fzz
 							if ((n2 < 0.f) && (n3 > 0.f) && (n4 > 0.f)) {
@@ -5097,8 +5485,8 @@ public:
 								float t42 = n4 / (n4 - n2);
 								silhouettePoints.push_back(glm::mix(p3, p2, t32));
 								silhouettePoints.push_back(glm::mix(p4, p2, t42));
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
-								silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 3, 2, t32);
+								//silhouettePnt2dEmplace2(silhouette2dPnt, su1, su2, sv1, sv2, 4, 2, t42);
 								quads[i][j] = Quad(2, std::tuple<int, int>(3, 2), std::tuple<int, int>(4, 2), t32, t42);
 								std::vector<glm::dvec2> boundings = { p2d, p4d, p3d };
 								silhouetteBoundings.push_back(boundings);
@@ -5106,7 +5494,11 @@ public:
 								glm::dvec2 p42d = glm::mix(p4d, p2d, t42);
 								std::vector<glm::dvec2> l1 = { p42d, p32d, p2d };
 								std::vector<glm::dvec2> l2 = { p32d, p42d, p4d, p3d };
-								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera));
+								glm::dvec2 ps1;
+								glm::dvec2 ps2;
+								silhouetteOri.push_back(calculateSilhouetteOri(l1, l2, bsplineSurf, camera, ps1, ps2));
+								silhouette2dPnt.emplace_back(ps1.x, ps1.y);
+								silhouette2dPnt.emplace_back(ps2.x, ps2.y);
 							}
 						}
 

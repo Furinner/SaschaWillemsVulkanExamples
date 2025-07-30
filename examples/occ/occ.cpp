@@ -507,6 +507,7 @@ public:
 		std::vector<Vertex> unchangedEdgeVert{};
 		std::vector<glm::vec3> silhouettePoints;
 		std::vector<glm::vec3> silhouettePointsDebug;
+		std::vector<int> silhouetteCaseDebug;//debug
 		std::vector<std::tuple<Standard_Real, Standard_Real>> silhouette2dPnt;
 		std::vector<std::vector<glm::dvec2>> silhouetteBoundings;  //half length of silhouette2dPnt
 		std::vector<int> silhouetteOri;
@@ -1441,6 +1442,7 @@ public:
 				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(1, 0, 1), glm::vec2(0), 1, 0, 1));
 				finEdgeIdx.push_back(finEdgeIdx.size());
 			}
+			
 			
 			for (auto& occP : occPoints) {
 				for (int i = 0; i < occP.size(); ++i) {

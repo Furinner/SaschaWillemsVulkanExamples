@@ -17,11 +17,11 @@ layout (location = 6) in int inFaceID;
 layout (location = 7) in int inBorder;
 layout (location = 8) in int inHeID;
 
-layout (location = 0) out vec4 outNormal;
+layout (location = 0) out vec4 outColor;
 layout (location = 1) out flat int outObjectID;
 void main() 
 {
 	gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPos,1);
-	outNormal = vec4(inNormal, 1);
+	outColor = vec4(inNormal, 1);
 	outObjectID = inObjectID;
 }

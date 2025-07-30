@@ -1952,7 +1952,7 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug2", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug3", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/pixels_debug", vulkanDevice, queue, glTFLoadingFlags);
-		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/torus", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/torus", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_screen_debug", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_brake", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_debug", vulkanDevice, queue, glTFLoadingFlags);
@@ -1972,7 +1972,7 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/patch_bump2", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/singular_patch1", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/patch_bigbump", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/vischange", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/vischange", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		//view independent
 		

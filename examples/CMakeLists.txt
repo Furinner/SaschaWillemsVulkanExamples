@@ -152,6 +152,7 @@ set(EXAMPLES
 	negativeviewportheight	
 	occ
 	occlusionquery
+	occsilhouette
 	offscreen
 	oit
 	parallaxmapping

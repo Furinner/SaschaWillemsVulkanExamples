@@ -41,10 +41,12 @@
 #include <Geom_BezierCurve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom2d_BSplineCurve.hxx>
+#include <Geom2dAPI_PointsToBSpline.hxx>
 #include <Geom_Curve.hxx>                 // 曲线基类
 #include <Geom2d_Line.hxx>
 #include <Geom2d_TrimmedCurve.hxx>
 #include <Geom2dAPI_InterCurveCurve.hxx>
+#include <Geom2dAPI_ProjectPointOnCurve.hxx>
 #include <GeomAdaptor_Curve.hxx>
 #include <GeomAdaptor_Surface.hxx>
 #include <GeomAPI.hxx>  
@@ -521,6 +523,10 @@ public:
 		std::vector<std::tuple<Standard_Real, Standard_Real>> silhouette2dPnt;
 		std::vector<std::vector<glm::dvec2>> silhouetteBoundings;  //half length of silhouette2dPnt
 		std::vector<int> silhouetteOriInside;
+		std::vector<glm::dvec2> nurbsSilhouettePoints2d;
+		std::vector<int> nurbsSilhouettePoints2dBad;
+		std::vector<glm::vec3> nurbsSilhouettePoints;
+		std::vector<glm::vec3> pnts;
 		std::vector<std::vector<glm::vec3>> uvLinePointsHidden;
 		std::vector<std::tuple<double, double>> silhouette2dPntInside;
 		std::vector<std::vector<Handle(Geom2d_BSplineCurve)>> outwireCurves2d;
@@ -528,6 +534,8 @@ public:
 		std::vector<std::vector<glm::vec3>> occPoints;
 		std::vector<Vertex> finEdgeVer;
 		std::vector<int> finEdgeIdx;
+		std::vector<Vertex> pntVer;
+		std::vector<int> pntIdx;
 		vks::Buffer verticesBuffer;
 		vks::Buffer idxBuffer;
 		vks::Buffer faceInfoBuffer;
@@ -538,6 +546,8 @@ public:
 		vks::Buffer cpuImageBuffer;
 		vks::Buffer lockedEdgeVertBuffer;
 		vks::Buffer lockedEdgeIdxBuffer;
+		vks::Buffer lockedEdgePntVertBuffer;
+		vks::Buffer lockedEdgePntIdxBuffer;
 		vks::Buffer hiddenLineVertBuffer;
 		vks::Buffer hiddenLineIdxBuffer;
 		size_t lockedEdgeIdxCnt;
@@ -550,6 +560,7 @@ public:
 		size_t facesSize = 0;
 		std::vector<SilSeg*> silSegRoots;
 		std::vector<uPtr<SilSeg>> silSegs;
+		std::vector<glm::vec3> silhouettePntArr;
 
 		void create(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<vkglTF::Vertex>>& vertexBuffers, vks::VulkanDevice* device, VkQueue transferQueue) {
 			int objectID = 0;
@@ -1277,6 +1288,12 @@ public:
 			vkCmdBindIndexBuffer(commandBuffer, hiddenLineIdxBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 		}
 
+		void bindPntBuffers(VkCommandBuffer commandBuffer) {
+			const VkDeviceSize offsets[1] = { 0 };
+			vkCmdBindVertexBuffers(commandBuffer, 0, 1, &lockedEdgePntVertBuffer.buffer, offsets);
+			vkCmdBindIndexBuffer(commandBuffer, lockedEdgePntIdxBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+		}
+
 		void analyzeEdgePixels(vks::VulkanDevice* device, int32_t height, int32_t width, VkQueue transferQueue) {
 			std::unordered_map<int32_t, std::unordered_set<int32_t>> edgeList;
 			edgePixels = static_cast<int32_t*>(edgePixelsRawData);
@@ -1390,7 +1407,7 @@ public:
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
-			} vertexStaging, indexStaging, vertexHiddenStaging, indexHiddenStaging;
+			} vertexStaging, indexStaging, vertexHiddenStaging, indexHiddenStaging, pntVerStaging, pntIdxStaging;
 			//scan-convert
 			/*glm::mat4 persp = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
 			glm::mat4 view = camera.matrices.view;
@@ -1444,51 +1461,46 @@ public:
 			finEdgeIdx.clear();
 			edgeVertHidden.clear();
 			edgeIdxHidden.clear();
+			pntVer.clear();
+			pntIdx.clear();
 			finEdgeVer = unchangedEdgeVert;
 			finEdgeIdx = unchangedEdgeIdx;
-			for (int i = 0; i < silhouettePoints.size(); ++i) {
+			for (int i = 0; i < silhouettePoints.size(); i+=2) {
 				if (silhouetteOriInside[i / 2] == 0) {
 					//正silhouette
 					finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(1, 0, 1), glm::vec2(0), 0, 0, 1));
+					finEdgeVer.push_back(Vertex(silhouettePoints[i+1], glm::vec3(1, 0, 1), glm::vec2(0), 0, 0, 1));
 				}
 				else if (silhouetteOriInside[i / 2] == 1) {
 					//cusp?
 					finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(0, 0, 1), glm::vec2(0), 0, 0, 1));
+					finEdgeVer.push_back(Vertex(silhouettePoints[i+1], glm::vec3(0, 0, 1), glm::vec2(0), 0, 0, 1));
 				}
 				else {
 					//反silhouette
 					finEdgeVer.push_back(Vertex(silhouettePoints[i], glm::vec3(1, 1, 0), glm::vec2(0), 0, 0, 1));
+					finEdgeVer.push_back(Vertex(silhouettePoints[i+1], glm::vec3(1, 1, 0), glm::vec2(0), 0, 0, 1));
 				}
-				
-				finEdgeIdx.push_back(i + unchangedEdgeIdx.size());
+				finEdgeIdx.push_back(finEdgeIdx.size());
+				finEdgeIdx.push_back(finEdgeIdx.size());
 			}
 			
-			/*for (int i = 0; i < silhouettePointsDebug.size(); ++i) {
+			for (int i = 0; i < silhouettePointsDebug.size(); ++i) {
 				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(1, 0, 1), glm::vec2(0), 1, 0, 1));
 				finEdgeIdx.push_back(finEdgeIdx.size());
-			}*/
-			for (int i = 0; i < silhouettePointsDebug.size(); i += 10) {
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i], glm::vec3(1, 0, 0), glm::vec2(0), 1, 0, 1));
+			}
+			for (int i = 0; i < nurbsSilhouettePoints.size(); ++i) {
+				finEdgeVer.push_back(Vertex(nurbsSilhouettePoints[i], glm::vec3(1, 0, 0), glm::vec2(0), 0, 0, 1));
 				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 1], glm::vec3(1, 0, 0), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 2], glm::vec3(0, 1, 0), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 3], glm::vec3(0, 1, 0), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 4], glm::vec3(0, 0, 1), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 5], glm::vec3(0, 0, 1), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
+				if ((i != 0) && (i != (silhouettePointsDebug.size() - 1))) {
+					finEdgeVer.push_back(Vertex(nurbsSilhouettePoints[i], glm::vec3(1, 0, 0), glm::vec2(0), 0, 0, 1));
+					finEdgeIdx.push_back(finEdgeIdx.size());
+				}
+			}
 
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 6], glm::vec3(1, 1, 0), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 7], glm::vec3(1, 1, 0), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 8], glm::vec3(1, 1, 1), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
-				finEdgeVer.push_back(Vertex(silhouettePointsDebug[i + 9], glm::vec3(1, 1, 1), glm::vec2(0), 1, 0, 1));
-				finEdgeIdx.push_back(finEdgeIdx.size());
+			for (auto pt : pnts) {
+				pntVer.push_back(Vertex(pt, glm::vec3(1, 1, 0), glm::vec2(0), 0, 0, 1));
+				pntIdx.push_back(pntIdx.size());
 			}
 
 			for (auto& occP : occPoints) {
@@ -1512,6 +1524,8 @@ public:
 
 			int edgeVertHiddenSize = edgeVertHidden.size() * sizeof(Vertex);
 			int edgeIdxHiddenSize = edgeIdxHidden.size() * sizeof(int);
+			int pntVerSize = pntVer.size() * sizeof(Vertex);
+			int pntIdxSize = pntIdx.size() * sizeof(int);
 			hiddenLineIdxCnt = edgeIdxHidden.size();
 			lockedEdgeIdxCnt = finEdgeIdx.size();
 			VK_CHECK_RESULT(device->createBuffer(
@@ -1544,6 +1558,22 @@ public:
 				&indexHiddenStaging.buffer,
 				&indexHiddenStaging.memory,
 				edgeIdxHidden.data()));
+			if (pntIdxSize != 0) {
+				VK_CHECK_RESULT(device->createBuffer(
+					VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+					pntVerSize,
+					&pntVerStaging.buffer,
+					&pntVerStaging.memory,
+					pntVer.data()));
+				VK_CHECK_RESULT(device->createBuffer(
+					VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+					pntIdxSize,
+					&pntIdxStaging.buffer,
+					&pntIdxStaging.memory,
+					pntIdx.data()));
+			}
 
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -1583,6 +1613,20 @@ public:
 				edgeIdxHiddenSize,
 				&hiddenLineIdxBuffer.buffer,
 				&hiddenLineIdxBuffer.memory));
+			if (pntIdxSize != 0) {
+				VK_CHECK_RESULT(device->createBuffer(
+					VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+					pntVerSize,
+					&lockedEdgePntVertBuffer.buffer,
+					&lockedEdgePntVertBuffer.memory));
+				VK_CHECK_RESULT(device->createBuffer(
+					VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+					pntIdxSize,
+					&lockedEdgePntIdxBuffer.buffer,
+					&lockedEdgePntIdxBuffer.memory));
+			}
 
 			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 			VkBufferCopy copyRegion = {};
@@ -1601,6 +1645,14 @@ public:
 			copyRegion.size = edgeIdxHiddenSize;
 			vkCmdCopyBuffer(copyCmd, indexHiddenStaging.buffer, hiddenLineIdxBuffer.buffer, 1, &copyRegion);
 
+			if (pntIdxSize != 0) {
+				copyRegion.size = pntVerSize;
+				vkCmdCopyBuffer(copyCmd, pntVerStaging.buffer, lockedEdgePntVertBuffer.buffer, 1, &copyRegion);
+
+				copyRegion.size = pntIdxSize;
+				vkCmdCopyBuffer(copyCmd, pntIdxStaging.buffer, lockedEdgePntIdxBuffer.buffer, 1, &copyRegion);
+			}
+
 			device->flushCommandBuffer(copyCmd, transferQueue, true);
 
 			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
@@ -1611,6 +1663,12 @@ public:
 			vkFreeMemory(device->logicalDevice, vertexHiddenStaging.memory, nullptr);
 			vkDestroyBuffer(device->logicalDevice, indexHiddenStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, indexHiddenStaging.memory, nullptr);
+			if (pntIdxSize != 0) {
+				vkDestroyBuffer(device->logicalDevice, pntVerStaging.buffer, nullptr);
+				vkFreeMemory(device->logicalDevice, pntVerStaging.memory, nullptr);
+				vkDestroyBuffer(device->logicalDevice, pntIdxStaging.buffer, nullptr);
+				vkFreeMemory(device->logicalDevice, pntIdxStaging.memory, nullptr);
+			}
 		}
 
 		std::vector<Vertex> scanConvert(glm::vec3 v1Scr, glm::vec3 v2Scr, int32_t height, int32_t width, int objID, int heID) {
@@ -2424,7 +2482,7 @@ public:
 
 							}
 						}
-
+						//silhouettePointsDebug.clear();
 						/*for (int i = 1; i < divide - 1; ++i) {
 							for (int j = 1; j < divide - 1; ++j) {
 								glm::vec3 p1 = silhouettePointsArray[i][j];
@@ -2574,10 +2632,10 @@ public:
 						}
 					}
 					silhouettePoints.clear();
-					for (auto& uv : silhouette2dPntInside) {
+					/*for (auto& uv : silhouette2dPntInside) {
 						gp_Pnt p = bsplineSurf->Value(std::get<0>(uv), std::get<1>(uv));
 						silhouettePoints.push_back(glm::vec3(p.X(), p.Y(), p.Z()));
-					}
+					}*/
 					silSegs.clear();
 					silSegRoots.clear();
 					for (int i = 0; i < silhouette2dPntInside.size(); i+=2) {
@@ -2607,25 +2665,215 @@ public:
 							}
 						}
 					}
+					//遍历silSegRoots
+					silhouetteOriInside.clear();
+					if (silSegRoots.size() != 0) {
+						SilSeg* sil = silSegRoots[0];
+						do {
+							gp_Pnt p1 = bsplineSurf->Value(sil->v1.x, sil->v1.y);
+							gp_Pnt p2 = bsplineSurf->Value(sil->v2.x, sil->v2.y);
+							silhouettePoints.push_back(glm::vec3(p1.X(), p1.Y(), p1.Z()));
+							silhouettePoints.push_back(glm::vec3(p2.X(), p2.Y(), p2.Z()));
+							silhouetteOriInside.push_back(sil->ori);
+							sil = sil->next;
+						} while (sil != nullptr);
+					}
 					//取出所有silhouette初始点
-					std::vector<glm::dvec2> silhouetteStart2d;
-					SilSeg* silSeg = silSegRoots[0];
-					int prevOri = silSeg->ori;
-					std::vector<glm::dvec2> cuspStart2d;
-					while (silSeg->next != nullptr) {
-						silhouetteStart2d.push_back(silSeg->v1);
-						int currOri = silSeg->ori;
-						if (currOri != prevOri) {
-							cuspStart2d.push_back(silSeg->v1);
-							prevOri = currOri;
+					if (silSegRoots.size() != 0) {
+						std::vector<glm::dvec2> silhouetteStart2d;
+						std::vector<int> silhouetteStartOri;
+						SilSeg* silSeg = silSegRoots[0];
+						int prevOri = silSeg->ori;
+						std::vector<glm::dvec2> cuspStart2d;
+						do {
+							silhouetteStart2d.push_back(silSeg->v1);
+							silhouetteStart2d.push_back((silSeg->v1 + silSeg->v2) / 2.0);
+							silhouetteStartOri.push_back(silSeg->ori);
+							silhouetteStartOri.push_back(silSeg->ori);
+							int currOri = silSeg->ori;
+							if (currOri != prevOri) {
+								cuspStart2d.push_back(silSeg->v1);
+								prevOri = currOri;
+							}
+							silSeg = silSeg->next;
+						} while (silSeg != nullptr);
+						nurbsSilhouettePoints2dBad.clear();
+						nurbsSilhouettePoints2d.clear();
+						//对于每一个点做牛顿迭代
+						int silid = 0;
+						glm::dvec3 viewDir = glm::transpose(glm::dmat3(glm::mat3(camera.matrices.view))) * glm::dvec3(0, 0, 1);
+						for (auto ss2d : silhouetteStart2d) {
+							int currOri = silhouetteStartOri[silid];
+							++silid;
+							Standard_Real u = ss2d.x;
+							Standard_Real v = ss2d.y;
+							Standard_Real origU = u;
+							Standard_Real origV = v;
+							Standard_Real tol = Precision::Confusion();
+							Standard_Real funStart = 0;
+							Standard_Real funEnd = 0;
+							//步长最大为10步
+							for (int i = 0; i < 11; ++i) {
+								// 需要计算二阶导数所以 N=2
+								GeomLProp_SLProps props(bsplineSurf, u, v, 2, tol);
+
+								gp_Vec Xu = props.D1U();
+								gp_Vec Xv = props.D1V();
+								gp_Vec Xuu = props.D2U();
+								gp_Vec Xvv = props.D2V();
+								gp_Vec Xuv = props.DUV();
+								gp_Dir normalgp = props.Normal();
+
+								// 第一基本形式
+								Standard_Real E = Xu.Dot(Xu);
+								Standard_Real F = Xu.Dot(Xv);
+								Standard_Real G = Xv.Dot(Xv);
+
+								// 第二基本形式
+								Standard_Real L = normalgp.Dot(Xuu);
+								Standard_Real M = normalgp.Dot(Xuv);
+								Standard_Real N = normalgp.Dot(Xvv);
+
+								gp_Vec Nugp = ((F * M - G * L) / (E * G - F * F)) * Xu + ((F * L - E * M) / (E * G - F * F)) * Xv;
+								gp_Vec Nvgp = ((F * N - G * M) / (E * G - F * F)) * Xu + ((F * M - E * N) / (E * G - F * F)) * Xv;
+
+								glm::dvec3 normal = glm::dvec3(normalgp.X(), normalgp.Y(), normalgp.Z());
+								glm::dvec3 Nu = glm::dvec3(Nugp.X(), Nugp.Y(), Nugp.Z());
+								glm::dvec3 Nv = glm::dvec3(Nvgp.X(), Nvgp.Y(), Nvgp.Z());
+								Standard_Real fun = glm::dot(normal, viewDir);
+								if (i == 0) {
+									funStart = fun;
+								}
+								if (i == 10) {
+									funEnd = fun;
+									break;
+								}
+								//检查函数残差是否接近0
+								if (std::abs(fun) < 1e-5) {
+									funEnd = fun;
+									break;
+								}
+								glm::dvec2 defun = glm::dvec2(glm::dot(Nu, viewDir), glm::dot(Nv, viewDir));
+								Standard_Real defunLen = glm::length(defun);
+								if (defunLen == 0) {
+									funEnd = fun;
+									break;
+								}
+								//牛顿迭代
+								//glm::dvec2 deltauv = (-fun * defun) / (defunLen * defunLen);
+								//梯度下降
+								glm::dvec2 deltauv = (-fun * defun);
+								u += deltauv.x;
+								v += deltauv.y;
+								//检查迭代步长，使用绝对步长准则
+								if (glm::length(deltauv) < 1e-6) {
+									funEnd = fun;
+									break;
+								}
+							}
+							if (std::abs(funEnd) > std::abs(funStart)) {
+								nurbsSilhouettePoints2dBad.push_back(1);
+								if (std::abs(funEnd) - std::abs(funStart) > 1e-2) {
+									u = origU;
+									v = origV;
+								}
+							}
+							else {
+								nurbsSilhouettePoints2dBad.push_back(0);
+							}
+							nurbsSilhouettePoints2d.push_back(glm::dvec2(u, v));
 						}
-						silSeg = silSeg->next;
+						nurbsSilhouettePoints.clear();
+						std::vector<gp_Pnt2d> fitPoints2d;
+						for (auto& tmp2d : nurbsSilhouettePoints2d) {
+							fitPoints2d.push_back(gp_Pnt2d(tmp2d.x, tmp2d.y));
+						}
+						int arrn = static_cast<Standard_Integer>(fitPoints2d.size());
+						TColgp_Array1OfPnt2d arr(1, arrn);  // 通常用 1…n，也可以是 0…n-1，只要一致
+
+						for (Standard_Integer i = 1; i <= arrn; ++i) {
+							arr.SetValue(i, fitPoints2d[i - 1]);
+						}
+						Geom2dAPI_PointsToBSpline fitter(arr);
+						//parameter start from 0 to 1
+						Handle(Geom2d_BSplineCurve) fitCurve = fitter.Curve();
+
+						//迭代求解cusp
+						Standard_Real tol = Precision::Confusion();
+						gp_Vec viewDirgp = gp_Vec(viewDir.x, viewDir.y, viewDir.z);
+						if (cuspStart2d.size() != 0) {
+							glm::dvec2 cusp2d = cuspStart2d[0]; //迭代初值uv
+							gp_Pnt2d cusp2dgp = gp_Pnt2d(cusp2d.x, cusp2d.y);
+							Geom2dAPI_ProjectPointOnCurve projector(cusp2dgp, fitCurve);
+							double cuspt = projector.LowerDistanceParameter(); //迭代初值t
+							double origCuspt = cuspt;
+							for (int i = 0; i < 10; ++i) {
+								//牛顿迭代
+								//先求f(t)
+								//f(t) = |T(t)*view| - 1
+								//T(t) = Su * V1.x + Sv * V1.y
+								gp_Pnt2d curruv;
+								gp_Vec2d V1;
+								gp_Vec2d V2;
+								fitCurve->D2(cuspt, curruv, V1, V2);
+								GeomLProp_SLProps props(bsplineSurf, curruv.X(), curruv.Y(), 2, tol);
+								gp_Vec Su = props.D1U();
+								gp_Vec Sv = props.D1V();
+								gp_Vec Suu = props.D2U();
+								gp_Vec Svv = props.D2V();
+								gp_Vec Suv = props.DUV();
+								double f1 = (Su * V1.X() + Sv * V1.Y()).Dot(viewDirgp);
+								double fun;
+								if (f1 > 0) {
+									fun = f1 - 1;
+								}
+								else {
+									fun = -f1 - 1;
+								}
+								if(std::abs(fun) < 1e-3){
+									break;
+								}
+								//fund
+								//假设f1为正，f'(t) = T'(t) * view
+								//T'(t) = Su*u2 + Sv*v2 + Suu*u1*u1 + Svv*v1*v1 + 2*Suv*u1*v1
+								double fund;
+								if (f1 > 0) {
+									fund = (Su * V2.X() + Sv * V2.Y() + Suu * V1.X() * V1.X() + Svv * V1.Y() * V1.Y() + 2 * Suv * V1.X() * V1.Y()).Dot(viewDirgp);
+								}
+								else {
+									fund = -(Su * V2.X() + Sv * V2.Y() + Suu * V1.X() * V1.X() + Svv * V1.Y() * V1.Y() + 2 * Suv * V1.X() * V1.Y()).Dot(viewDirgp);
+								}
+								if(std::abs((fun / fund)) < 1e-3) {
+									break;
+								}
+								cuspt = cuspt - (fun / fund);
+							}
+							gp_Pnt2d tmp = fitCurve->Value(cuspt);
+							cuspStart2d.push_back(glm::dvec2(tmp.X(), tmp.Y()));
+						}
+						//渲染p-curve
+						Standard_Integer test1 = fitCurve->Degree();
+						Standard_Integer test2 = fitCurve->NbPoles();
+						Standard_Real tStep = (fitCurve->LastParameter() - fitCurve->FirstParameter()) / 1000.0;
+						for (double i = fitCurve->FirstParameter(); i <= fitCurve->LastParameter(); i += tStep) {
+							gp_Pnt2d tmp2d = fitCurve->Value(i);
+							gp_Pnt tmp = bsplineSurf->Value(tmp2d.X(), tmp2d.Y());
+							nurbsSilhouettePoints.push_back(glm::vec3(tmp.X(), tmp.Y(), tmp.Z()));
+						}
+						//渲染cusp
+						pnts.clear();
+						for (auto tmp2d : cuspStart2d) {
+							gp_Pnt tmp = bsplineSurf->Value(tmp2d.x, tmp2d.y);
+							pnts.push_back(glm::vec3(tmp.X(), tmp.Y(), tmp.Z()));
+						}
+					}else{
+						nurbsSilhouettePoints2dBad.clear();
+						nurbsSilhouettePoints2d.clear();
+						nurbsSilhouettePoints.clear();
+						pnts.clear();
 					}
-					silhouetteStart2d.push_back(silSeg->v2);
-					//对于每一个点做牛顿迭代
-					for (auto ss2d : silhouetteStart2d) {
-						ss2d;
-					}
+					
+					
 				}
 			}
 			occPoints.clear();
@@ -2803,6 +3051,7 @@ public:
 		VkPipeline edge{ VK_NULL_HANDLE };
 		VkPipeline lockedEdge{ VK_NULL_HANDLE };
 		VkPipeline hiddenLine{ VK_NULL_HANDLE };
+		VkPipeline lockedEdgePnt{ VK_NULL_HANDLE };
 	} pipelines;
 	VkPipelineLayout pipelineLayout{ VK_NULL_HANDLE };
 	VkPipelineLayout pipelineLayoutedge{ VK_NULL_HANDLE };
@@ -2880,6 +3129,8 @@ public:
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
 		camera.setRotation(glm::vec3(-18.5f, -26.75f, 0.f));
 		camera.setPosition(glm::vec3(-15.9321194, 40.3435707, -8.50157070));
+		camera.setRotation(glm::vec3(-12, 22, 0));
+		camera.setPosition(glm::vec3(13.2468090, 32.1183052, -2.46503234));
 		camera.setPerspective(60.f, (float)width / (float)height, 0.01f, 256.0f);
 	}
 
@@ -3419,11 +3670,22 @@ public:
 		depthReference.attachment = 1;
 		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-		VkSubpassDescription subpass = {};
+		/*VkSubpassDescription subpass = {};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 		subpass.pColorAttachments = colorReferences.data();
 		subpass.colorAttachmentCount = static_cast<uint32_t>(colorReferences.size());
-		subpass.pDepthStencilAttachment = &depthReference;
+		subpass.pDepthStencilAttachment = &depthReference;*/
+		std::array<VkSubpassDescription, 2> subpassDescriptions{};
+		subpassDescriptions[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpassDescriptions[0].colorAttachmentCount = static_cast<uint32_t>(colorReferences.size());
+		subpassDescriptions[0].pColorAttachments = colorReferences.data();
+		subpassDescriptions[0].pDepthStencilAttachment = &depthReference;
+
+		subpassDescriptions[1].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpassDescriptions[1].colorAttachmentCount = static_cast<uint32_t>(colorReferences.size());
+		subpassDescriptions[1].pColorAttachments = colorReferences.data();
+		subpassDescriptions[1].pDepthStencilAttachment = &depthReference;
+
 
 		// Use subpass dependencies for attachment layout transitions
 		std::array<VkSubpassDependency, 2> dependencies;
@@ -3448,8 +3710,8 @@ public:
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 		renderPassInfo.pAttachments = attachmentDescs.data();
 		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachmentDescs.size());
-		renderPassInfo.subpassCount = 1;
-		renderPassInfo.pSubpasses = &subpass;
+		renderPassInfo.subpassCount = static_cast<uint32_t>(subpassDescriptions.size());
+		renderPassInfo.pSubpasses = subpassDescriptions.data();
 		renderPassInfo.dependencyCount = dependencies.size();
 		renderPassInfo.pDependencies = dependencies.data();
 
@@ -4043,18 +4305,26 @@ public:
 
 		GeomLProp_SLProps props(bsplineSurf, l1c.x, l1c.y, 1, Precision::Confusion());
 		gp_Dir p1ngp = props.Normal();
-		glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
-		p1n = glm::mat3(camera.matrices.view) * p1n;
-		float l1n = glm::dot(p1n, glm::vec3(0, 0, 1));
+		glm::dvec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+		p1n = glm::dmat3(glm::mat3(camera.matrices.view)) * p1n;
+		//map到摄像机的z和y组成的平面上
+		double zcomp = glm::dot(p1n, glm::dvec3(0, 0, 1));
+		double ycomp = glm::dot(p1n, glm::dvec3(0, 1, 0));
+		p1n = glm::normalize(glm::dvec3(0, ycomp, zcomp));
+		double l1n = glm::dot(p1n, glm::dvec3(0, 0, 1));
 
 		props = GeomLProp_SLProps(bsplineSurf, l2c.x, l2c.y, 1, Precision::Confusion());
 		gp_Dir p2ngp = props.Normal();
-		glm::vec3 p2n(p2ngp.X(), p2ngp.Y(), p2ngp.Z());
-		p2n = glm::mat3(camera.matrices.view) * p2n;
-		float l2n = glm::dot(p2n, glm::vec3(0, 0, 1));
+		glm::dvec3 p2n(p2ngp.X(), p2ngp.Y(), p2ngp.Z());
+		p2n = glm::dmat3(glm::mat3(camera.matrices.view)) * p2n;
+		//map到摄像机的z和y组成的平面上
+		zcomp = glm::dot(p2n, glm::dvec3(0, 0, 1));
+		ycomp = glm::dot(p2n, glm::dvec3(0, 1, 0));
+		p2n = glm::normalize(glm::dvec3(0, ycomp, zcomp));
+		double l2n = glm::dot(p2n, glm::dvec3(0, 0, 1));
 
-		glm::vec3 np;
-		glm::vec3 nn;
+		glm::dvec3 np;
+		glm::dvec3 nn;
 		gp_Pnt nne1;
 		gp_Pnt nne2;
 		if (l1n < 0) {
@@ -4076,8 +4346,8 @@ public:
 			ps2 = l1[1];
 		}
 		gp_Vec nndirtmp(nne1, nne2);
-		glm::vec3 nndir = glm::vec3(nndirtmp.X(), nndirtmp.Y(), nndirtmp.Z());
-		float res = glm::dot(glm::cross(np, nn), nndir);
+		glm::dvec3 nndir = glm::dvec3(nndirtmp.X(), nndirtmp.Y(), nndirtmp.Z());
+		double res = glm::dot(glm::normalize(glm::cross(np, nn)), glm::normalize(nndir));
 		if (res < 0) {
 			//正silhouette
 			return 0;
@@ -4170,7 +4440,7 @@ public:
 
 			//Rendering
 			// 对整个模型进行离散化（细分）
-			BRepMesh_IncrementalMesh mesher(shape, 1e-1); // 0.001是线性公差（越小越精细）
+			BRepMesh_IncrementalMesh mesher(shape, 1e-3); // 0.001是线性公差（越小越精细）
 
 			// 遍历所有的面并访问三角剖分
 			int objID = 0;
@@ -5655,469 +5925,469 @@ public:
 					}
 					//提前记录好silhouette与边界边在uv参数域上的交点
 					//edge id, para, visChange
-					std::vector<std::tuple<Handle(Geom2d_BSplineCurve), Standard_Real, int>> preComputedOutedgeVisChanges;
-					for (auto& outedgeInter : outEdgesInters) {
-						Handle(Geom2d_BSplineCurve) outedge = std::get<0>(outedgeInter);
-						int silhouetteId = std::get<1>(outedgeInter);
-						Standard_Real st = std::get<2>(outedgeInter);
-						Standard_Real et = std::get<3>(outedgeInter);
-						std::vector<Standard_Real> boundingInters;
-						Standard_Real boundingInterParaFirst;
-						Standard_Real boundingInterParaLast;
-						//边界边与该silhouette的bounding的交点数
-						std::vector<glm::dvec2> currSilBounding = silhouetteBoundings[silhouetteId];
-						for (int k = 0; k < currSilBounding.size(); ++k) {
-							Handle(Geom2d_Line) currBoundLine;
-							gp_Pnt2d P1b, P2b;
-							if (k == (currSilBounding.size() - 1)) {
-								P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
-								P2b = gp_Pnt2d(currSilBounding[0].x, currSilBounding[0].y);
-							}
-							else {
-								P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
-								P2b = gp_Pnt2d(currSilBounding[k + 1].x, currSilBounding[k + 1].y);
-							}
-							currBoundLine = new Geom2d_Line(P1b, gp_Dir2d(P2b.XY() - P1b.XY()));
-							Handle(Geom2d_TrimmedCurve) currBoundLineTrim =
-								new Geom2d_TrimmedCurve(currBoundLine, 0, P1b.Distance(P2b), Standard_True, Standard_True);
-							//该bounding line与等参数线求交
-							Geom2dAPI_InterCurveCurve intersector2(outedge, currBoundLineTrim, 1.0e-4);
-							const Geom2dInt_GInter& ginter2 = intersector2.Intersector();
-							if (intersector2.NbPoints() > 0) {
-								const IntRes2d_IntersectionPoint& ip2 = ginter2.Point(1);
-								boundingInters.push_back(ip2.ParamOnFirst());
-							}
-						}
-						std::sort(boundingInters.begin(), boundingInters.end());
-						for (auto boundingPara : boundingInters) {
-							if (boundingPara < et) {
-								boundingInterParaFirst = boundingPara;
-							}
-							else if (boundingPara > et) {
-								boundingInterParaLast = boundingPara;
-							}
-						}
-						//现在知道了边界边和bounding的两个交点（boundingInterParaFirst & boundingInterParaLast），以及和silhouette的交点（st）。
-						//利用silhouette的正反信息，判断是否隐藏该等参数线。
-						gp_Pnt2d paraFirst = outedge->Value(boundingInterParaFirst);
-						gp_Pnt2d paraLast = outedge->Value(boundingInterParaLast);
-						gp_Pnt2d pt = outedge->Value(et);
-						gp_Pnt2d mid1 = gp_Pnt2d((paraFirst.X() + pt.X()) / 2.0, (paraFirst.Y() + pt.Y()) / 2.0); //
-						gp_Pnt2d mid2 = gp_Pnt2d((paraLast.X() + pt.X()) / 2.0, (paraLast.Y() + pt.Y()) / 2.0);
+					//std::vector<std::tuple<Handle(Geom2d_BSplineCurve), Standard_Real, int>> preComputedOutedgeVisChanges;
+					//for (auto& outedgeInter : outEdgesInters) {
+					//	Handle(Geom2d_BSplineCurve) outedge = std::get<0>(outedgeInter);
+					//	int silhouetteId = std::get<1>(outedgeInter);
+					//	Standard_Real st = std::get<2>(outedgeInter);
+					//	Standard_Real et = std::get<3>(outedgeInter);
+					//	std::vector<Standard_Real> boundingInters;
+					//	Standard_Real boundingInterParaFirst;
+					//	Standard_Real boundingInterParaLast;
+					//	//边界边与该silhouette的bounding的交点数
+					//	std::vector<glm::dvec2> currSilBounding = silhouetteBoundings[silhouetteId];
+					//	for (int k = 0; k < currSilBounding.size(); ++k) {
+					//		Handle(Geom2d_Line) currBoundLine;
+					//		gp_Pnt2d P1b, P2b;
+					//		if (k == (currSilBounding.size() - 1)) {
+					//			P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
+					//			P2b = gp_Pnt2d(currSilBounding[0].x, currSilBounding[0].y);
+					//		}
+					//		else {
+					//			P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
+					//			P2b = gp_Pnt2d(currSilBounding[k + 1].x, currSilBounding[k + 1].y);
+					//		}
+					//		currBoundLine = new Geom2d_Line(P1b, gp_Dir2d(P2b.XY() - P1b.XY()));
+					//		Handle(Geom2d_TrimmedCurve) currBoundLineTrim =
+					//			new Geom2d_TrimmedCurve(currBoundLine, 0, P1b.Distance(P2b), Standard_True, Standard_True);
+					//		//该bounding line与等参数线求交
+					//		Geom2dAPI_InterCurveCurve intersector2(outedge, currBoundLineTrim, 1.0e-4);
+					//		const Geom2dInt_GInter& ginter2 = intersector2.Intersector();
+					//		if (intersector2.NbPoints() > 0) {
+					//			const IntRes2d_IntersectionPoint& ip2 = ginter2.Point(1);
+					//			boundingInters.push_back(ip2.ParamOnFirst());
+					//		}
+					//	}
+					//	std::sort(boundingInters.begin(), boundingInters.end());
+					//	for (auto boundingPara : boundingInters) {
+					//		if (boundingPara < et) {
+					//			boundingInterParaFirst = boundingPara;
+					//		}
+					//		else if (boundingPara > et) {
+					//			boundingInterParaLast = boundingPara;
+					//		}
+					//	}
+					//	//现在知道了边界边和bounding的两个交点（boundingInterParaFirst & boundingInterParaLast），以及和silhouette的交点（st）。
+					//	//利用silhouette的正反信息，判断是否隐藏该等参数线。
+					//	gp_Pnt2d paraFirst = outedge->Value(boundingInterParaFirst);
+					//	gp_Pnt2d paraLast = outedge->Value(boundingInterParaLast);
+					//	gp_Pnt2d pt = outedge->Value(et);
+					//	gp_Pnt2d mid1 = gp_Pnt2d((paraFirst.X() + pt.X()) / 2.0, (paraFirst.Y() + pt.Y()) / 2.0); //
+					//	gp_Pnt2d mid2 = gp_Pnt2d((paraLast.X() + pt.X()) / 2.0, (paraLast.Y() + pt.Y()) / 2.0);
 
-						//mid1的normal
-						GeomLProp_SLProps props(bsplineSurf, mid1.X(), mid1.Y(), 1, Precision::Confusion());
-						gp_Dir p1ngp = props.Normal();
-						glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
-						glm::vec3 test = glm::mat3(camera.matrices.view) * p1n;
-						float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
-						//mid2的normal
-						props = GeomLProp_SLProps(bsplineSurf, mid2.X(), mid2.X(), 1, Precision::Confusion());
-						p1ngp = props.Normal();
-						glm::vec3 p2n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
-						glm::vec3 test2 = glm::mat3(camera.matrices.view) * p2n;
-						float p2s = glm::dot(glm::mat3(camera.matrices.view) * p2n, glm::vec3(0, 0, 1));
+					//	//mid1的normal
+					//	GeomLProp_SLProps props(bsplineSurf, mid1.X(), mid1.Y(), 1, Precision::Confusion());
+					//	gp_Dir p1ngp = props.Normal();
+					//	glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+					//	glm::vec3 test = glm::mat3(camera.matrices.view) * p1n;
+					//	float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
+					//	//mid2的normal
+					//	props = GeomLProp_SLProps(bsplineSurf, mid2.X(), mid2.X(), 1, Precision::Confusion());
+					//	p1ngp = props.Normal();
+					//	glm::vec3 p2n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+					//	glm::vec3 test2 = glm::mat3(camera.matrices.view) * p2n;
+					//	float p2s = glm::dot(glm::mat3(camera.matrices.view) * p2n, glm::vec3(0, 0, 1));
 
-						int sOri = silhouetteOri[silhouetteId];
-						if (p1s > 0) {
-							//mid1在正，mid2在反
-							if (sOri == 0) {
-								//silhouette为正silhouette
-								//mid1可见，mid2不可见
-								//visibility我改成负数吧，直观点。
-								preComputedOutedgeVisChanges.emplace_back(outedge, et, -1);
-							}
-							else if (sOri == 2) {
-								//silhouette为反silhouette
-								//mid1不可见，mid2可见
-								preComputedOutedgeVisChanges.emplace_back(outedge, et, 1);
-							}
-						}
-						else {
-							//mid1在反，mid2在正
-							if (sOri == 0) {
-								//silhouette为正silhouette
-								//mid1不可见，mid2可见
-								preComputedOutedgeVisChanges.emplace_back(outedge, et, 1);
-							}
-							else if (sOri == 2) {
-								//silhouette为反silhouette
-								//mid1可见，mid2不可见
-								preComputedOutedgeVisChanges.emplace_back(outedge, et, -1);
-							}
-						}
-					}
-					//每一个边界边细分为polyline
-					outwirePolylines3d;
-					for (int i = 0; i < outwireCurves2d[0].size(); ++i) {
-						Handle(Geom2d_BSplineCurve) outedge = outwireCurves2d[0][i];
-						std::vector<std::tuple<Handle(Geom2d_TrimmedCurve), Standard_Real, Standard_Real, Standard_Real, int>> c2d;
-						std::vector<std::tuple<Handle(Geom2d_TrimmedCurve), Standard_Real, Standard_Real, Standard_Real, int>> c3d;
-						double firstt = outedge->FirstParameter();
-						double lastt = outedge->LastParameter();
-						double step = (lastt - firstt) / sampleNum;
-						for (int j = 0; j < sampleNum; ++j) {
-							double t1 = firstt + (step * j);
-							double t2 = firstt + (step * (j + 1));
-							gp_Pnt2d P1 = outedge->Value(t1);
-							gp_Pnt2d P2 = outedge->Value(t2);
-							Handle(Geom2d_Line) sline = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
-							Standard_Real len1 = 0.0, len2 = P1.Distance(P2);
-							Handle(Geom2d_TrimmedCurve) ssegment2d =
-								new Geom2d_TrimmedCurve(sline, len1, len2, Standard_True, Standard_True);
-							c2d.emplace_back(ssegment2d, t1, t2, len2, i);
-							gp_Pnt P1_3d = bsplineSurf->Value(P1.X(), P1.Y());
-							gp_Pnt P2_3d = bsplineSurf->Value(P2.X(), P2.Y());
-							glm::vec3 p1tmp = glm::mat3(camera.matrices.view) * glm::vec3(P1_3d.X(), P1_3d.Y(), P1_3d.Z());
-							glm::vec3 p2tmp = glm::mat3(camera.matrices.view) * glm::vec3(P2_3d.X(), P2_3d.Y(), P2_3d.Z());
-							gp_Pnt2d P1View(p1tmp.x, p1tmp.y);
-							gp_Pnt2d P2View(p2tmp.x, p2tmp.y);
-							double z1 = p1tmp.z;
-							double z2 = p2tmp.z;
-							Handle(Geom2d_Line) sline2 = new Geom2d_Line(P1View, gp_Dir2d(P2View.XY() - P1View.XY()));
-							len2 = P1View.Distance(P2View);
-							Handle(Geom2d_TrimmedCurve) ssegment3d =
-								new Geom2d_TrimmedCurve(sline2, len1, len2, Standard_True, Standard_True);
-							c3d.emplace_back(ssegment3d, z1, z2, len2, i);
-						}
-						outwirePolylines2d.insert(outwirePolylines2d.end(), c2d.begin(), c2d.end());
-						outwirePolylines3d.insert(outwirePolylines3d.end(), c3d.begin(), c3d.end());
-					}
-					//边界边和silhouette在正交投影中求交
-					//
-
-
-					mesh.uvLinePointsHidden.clear();
-					std::vector<glm::vec3> tempVec;
-					//边界边和边界边在正交投影中求交
-					//edge id, para, visChange
-					std::vector<std::tuple<int, double, int>> edgeEdgeInters;
-					for (int i = 0; i < outwirePolylines3d.size(); ++i) {
-						for (int j = i; j < outwirePolylines3d.size(); ++j) {
-							if ((j == i) || (j == i - 1) || (j == i + 1) || ((i == 0) && (j == outwirePolylines3d.size() - 1)) || ((i == outwirePolylines3d.size() - 1) && j == 0)) {
-								continue;
-							}
-							else {
-								Handle(Geom2d_TrimmedCurve) c1 = std::get<0>(outwirePolylines3d[i]);
-								Handle(Geom2d_TrimmedCurve) c2 = std::get<0>(outwirePolylines3d[j]);
-								Handle(Geom2d_TrimmedCurve) c1_2d = std::get<0>(outwirePolylines2d[i]);
-								Handle(Geom2d_TrimmedCurve) c2_2d = std::get<0>(outwirePolylines2d[j]);
-								int id1 = std::get<4>(outwirePolylines3d[i]);
-								int id2 = std::get<4>(outwirePolylines3d[j]);
-								Geom2dAPI_InterCurveCurve intersector(c1, c2, 1.0e-8);
-								const Geom2dInt_GInter& ginter = intersector.Intersector();
-								if (intersector.NbPoints() > 0) {
-									//默认只有一个交点
-									gp_Pnt2d pt = intersector.Point(1);
-									const IntRes2d_IntersectionPoint& ip = ginter.Point(1);
-									Standard_Real t1 = ip.ParamOnFirst();
-									Standard_Real t2 = ip.ParamOnSecond();
-									gp_Pnt2d p11p = c1->Value(c1->FirstParameter());
-									gp_Pnt2d p12p = c1->Value(c1->LastParameter());
-									gp_Pnt2d p21p = c2->Value(c2->FirstParameter());
-									gp_Pnt2d p22p = c2->Value(c2->LastParameter());
-									glm::dvec2 p11(p11p.X(), p11p.Y());
-									glm::dvec2 p12(p12p.X(), p12p.Y());
-									glm::dvec2 p21(p21p.X(), p21p.Y());
-									glm::dvec2 p22(p22p.X(), p22p.Y());
-									double z11 = std::get<1>(outwirePolylines3d[i]);
-									double z12 = std::get<2>(outwirePolylines3d[i]);
-									double z21 = std::get<1>(outwirePolylines3d[j]);
-									double z22 = std::get<2>(outwirePolylines3d[j]);
-									double z1 = glm::mix(z11, z12, t1 / (c1->FirstParameter() - c1->LastParameter()));
-									double z2 = glm::mix(z21, z22, t2 / (c2->FirstParameter() - c2->LastParameter()));
-									double te1 = c1->FirstParameter();
-									double te11 = c1->LastParameter();
-									double te2 = c2->FirstParameter();
-									double te22 = c2->LastParameter();
-									double t1orig = glm::mix(std::get<1>(outwirePolylines2d[i]), std::get<2>(outwirePolylines2d[i]), t1 / (c1->FirstParameter() - c1->LastParameter()));
-									double t2orig = glm::mix(std::get<1>(outwirePolylines2d[j]), std::get<2>(outwirePolylines2d[j]), t2 / (c2->FirstParameter() - c2->LastParameter()));
-									glm::dvec3 c2dir = glm::dvec3(p22, 0) - glm::dvec3(p21, 0);
-									glm::dvec3 c1dir = glm::dvec3(p12, 0) - glm::dvec3(p11, 0);
-									if (z1 < z2) {
-										//z1在后，即c1在后
-										//计算c2的normal
-										gp_Pnt2d uvorig = c2_2d->Value(t1orig);
-										GeomLProp_SLProps props(bsplineSurf, uvorig.X(), uvorig.Y(), 1, Precision::Confusion());
-										gp_Dir p1ngp = props.Normal();
-										glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
-										float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
-										double crossResult = glm::cross(c1dir, c2dir).z;
-										if (p1s > 0) {
-											//c2正面
-											if (crossResult < 0) {
-												//c1进入
-												edgeEdgeInters.emplace_back(id1, t1orig, -1);
-											}
-											else {
-												//c1走出
-												edgeEdgeInters.emplace_back(id1, t1orig, 1);
-											}
-										}
-										else {
-											//c2反面
-											if (crossResult < 0) {
-												//c1走出
-												edgeEdgeInters.emplace_back(id1, t1orig, 1);
-											}
-											else {
-												//c1进入
-												edgeEdgeInters.emplace_back(id1, t1orig, -1);
-											}
-
-										}
-									}
-									else {
-										//c2在后
-										gp_Pnt2d uvorig = c1_2d->Value(t2orig);
-										GeomLProp_SLProps props(bsplineSurf, uvorig.X(), uvorig.Y(), 1, Precision::Confusion());
-										gp_Dir p1ngp = props.Normal();
-										glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
-										float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
-										double crossResult = glm::cross(c2dir, c1dir).z;
-										if (p1s > 0) {
-											//c1正面
-											if (crossResult < 0) {
-												//c2进入
-												edgeEdgeInters.emplace_back(id2, t2orig, -1);
-											}
-											else {
-												//c2走出
-												edgeEdgeInters.emplace_back(id2, t2orig, 1);
-											}
-										}
-										else {
-											//c1反面
-											if (crossResult < 0) {
-												//c2走出
-												edgeEdgeInters.emplace_back(id2, t2orig, 1);
-											}
-											else {
-												//c2进入
-												edgeEdgeInters.emplace_back(id2, t2orig, -1);
-											}
-
-										}
-									}
-								}
-							}
-						}
-					}
-					mesh.uvLinePointsHidden.push_back(tempVec);
-					//vis压制到0
-					int edgeId = 0;
-					int maxVis = 0;
-					int startVis = 0;
-					std::vector<std::tuple<Handle(Geom2d_BSplineCurve), std::vector<std::tuple<double, double>>, std::vector<int>>> edgeVis;
-					for (auto& outwire : outwireCurves2d[0]) {
-						std::vector<double> inters;
-						std::vector<int> visChange;
-						for (auto& inter : edgeEdgeInters) {
-							if (std::get<0>(inter) == edgeId) {
-								inters.push_back(std::get<1>(inter));
-								visChange.push_back(std::get<2>(inter));
-							}
-						}
-						if (inters.size() == 0) {
-							std::vector<std::tuple<double, double>> paras = { std::tuple<double, double>(outwire->FirstParameter(), outwire->LastParameter()) };
-							std::vector<int> vis = { startVis };
-							edgeVis.emplace_back(outwire, paras, vis);
-						}
-						else {
-							std::vector<std::tuple<double, double>> paras;
-							std::vector<int> vis;
-							double lastPara = outwire->FirstParameter();
-							for (int i = 0; i < inters.size(); ++i) {
-								paras.emplace_back(lastPara, inters[i]);
-								vis.push_back(startVis);
-								startVis += visChange[i];
-								lastPara = inters[i];
-							}
-							if (startVis > maxVis) {
-								maxVis = startVis;
-							}
-							paras.emplace_back(lastPara, outwire->LastParameter());
-							vis.push_back(startVis);
-							edgeVis.emplace_back(outwire, paras, vis);
-						}
-						++edgeId;
-					}
-					for (auto& edge : edgeVis) {
-						for (auto& vis : std::get<2>(edge)) {
-							vis -= maxVis;
-						}
-					}
-					//装入vector中
-					for (auto& edge : edgeVis) {
-						std::vector<int> vis = std::get<2>(edge);
-						for (int i = 0; i < vis.size(); ++i) {
-							if (vis[i] == 0) {
-								std::vector<glm::vec3> tempVec;
-								Handle(Geom2d_BSplineCurve) b2d = std::get<0>(edge);
-								//区间
-								std::tuple<double, double> paras = std::get<1>(edge)[i];
-								double t1 = std::get<0>(paras);
-								double t2 = std::get<1>(paras);
-								double step = (t2 - t1) / sampleNum;
-								for (int j = 0; j <= sampleNum; ++j) {
-									double t = t1 + step * j;
-									gp_Pnt2d p2d = b2d->Value(t);
-									gp_Pnt p3d = bsplineSurf->Value(p2d.X(), p2d.Y());
-									tempVec.push_back(glm::vec3(p3d.X(), p3d.Y(), p3d.Z()));
-								}
-								mesh.outedgePoints.push_back(tempVec);
-							}
-						}
-					}
+					//	int sOri = silhouetteOri[silhouetteId];
+					//	if (p1s > 0) {
+					//		//mid1在正，mid2在反
+					//		if (sOri == 0) {
+					//			//silhouette为正silhouette
+					//			//mid1可见，mid2不可见
+					//			//visibility我改成负数吧，直观点。
+					//			preComputedOutedgeVisChanges.emplace_back(outedge, et, -1);
+					//		}
+					//		else if (sOri == 2) {
+					//			//silhouette为反silhouette
+					//			//mid1不可见，mid2可见
+					//			preComputedOutedgeVisChanges.emplace_back(outedge, et, 1);
+					//		}
+					//	}
+					//	else {
+					//		//mid1在反，mid2在正
+					//		if (sOri == 0) {
+					//			//silhouette为正silhouette
+					//			//mid1不可见，mid2可见
+					//			preComputedOutedgeVisChanges.emplace_back(outedge, et, 1);
+					//		}
+					//		else if (sOri == 2) {
+					//			//silhouette为反silhouette
+					//			//mid1可见，mid2不可见
+					//			preComputedOutedgeVisChanges.emplace_back(outedge, et, -1);
+					//		}
+					//	}
+					//}
+					////每一个边界边细分为polyline
+					//outwirePolylines3d;
+					//for (int i = 0; i < outwireCurves2d[0].size(); ++i) {
+					//	Handle(Geom2d_BSplineCurve) outedge = outwireCurves2d[0][i];
+					//	std::vector<std::tuple<Handle(Geom2d_TrimmedCurve), Standard_Real, Standard_Real, Standard_Real, int>> c2d;
+					//	std::vector<std::tuple<Handle(Geom2d_TrimmedCurve), Standard_Real, Standard_Real, Standard_Real, int>> c3d;
+					//	double firstt = outedge->FirstParameter();
+					//	double lastt = outedge->LastParameter();
+					//	double step = (lastt - firstt) / sampleNum;
+					//	for (int j = 0; j < sampleNum; ++j) {
+					//		double t1 = firstt + (step * j);
+					//		double t2 = firstt + (step * (j + 1));
+					//		gp_Pnt2d P1 = outedge->Value(t1);
+					//		gp_Pnt2d P2 = outedge->Value(t2);
+					//		Handle(Geom2d_Line) sline = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
+					//		Standard_Real len1 = 0.0, len2 = P1.Distance(P2);
+					//		Handle(Geom2d_TrimmedCurve) ssegment2d =
+					//			new Geom2d_TrimmedCurve(sline, len1, len2, Standard_True, Standard_True);
+					//		c2d.emplace_back(ssegment2d, t1, t2, len2, i);
+					//		gp_Pnt P1_3d = bsplineSurf->Value(P1.X(), P1.Y());
+					//		gp_Pnt P2_3d = bsplineSurf->Value(P2.X(), P2.Y());
+					//		glm::vec3 p1tmp = glm::mat3(camera.matrices.view) * glm::vec3(P1_3d.X(), P1_3d.Y(), P1_3d.Z());
+					//		glm::vec3 p2tmp = glm::mat3(camera.matrices.view) * glm::vec3(P2_3d.X(), P2_3d.Y(), P2_3d.Z());
+					//		gp_Pnt2d P1View(p1tmp.x, p1tmp.y);
+					//		gp_Pnt2d P2View(p2tmp.x, p2tmp.y);
+					//		double z1 = p1tmp.z;
+					//		double z2 = p2tmp.z;
+					//		Handle(Geom2d_Line) sline2 = new Geom2d_Line(P1View, gp_Dir2d(P2View.XY() - P1View.XY()));
+					//		len2 = P1View.Distance(P2View);
+					//		Handle(Geom2d_TrimmedCurve) ssegment3d =
+					//			new Geom2d_TrimmedCurve(sline2, len1, len2, Standard_True, Standard_True);
+					//		c3d.emplace_back(ssegment3d, z1, z2, len2, i);
+					//	}
+					//	outwirePolylines2d.insert(outwirePolylines2d.end(), c2d.begin(), c2d.end());
+					//	outwirePolylines3d.insert(outwirePolylines3d.end(), c3d.begin(), c3d.end());
+					//}
+					////边界边和silhouette在正交投影中求交
+					////
 
 
-					//等参数线和silhouette在uv参数域中求交
-					std::vector<std::tuple<Handle(Geom2d_TrimmedCurve), std::vector<std::tuple<Standard_Real, Standard_Real, int>>>> uvLinesHidden;
-					for (auto& uvLine : uvLines) {
-						std::vector<Standard_Real> linet = std::get<1>(uvLine);
-						for (int i = 0; i < linet.size(); i += 2) {
-							Standard_Real t1 = linet[i];
-							Standard_Real t2 = linet[i + 1];
-							std::vector<std::tuple<Standard_Real, int>> visChange;
-							Handle(Geom2d_TrimmedCurve) trimmedLine = new Geom2d_TrimmedCurve(std::get<0>(uvLine), t1, t2, Standard_True, Standard_True);
-							for (int j = 0; j < silhouette2dPnt.size(); j += 2) {
-								double su1 = std::get<0>(silhouette2dPnt[j]);
-								double su2 = std::get<0>(silhouette2dPnt[j + 1]);
-								double sv1 = std::get<1>(silhouette2dPnt[j]);
-								double sv2 = std::get<1>(silhouette2dPnt[j + 1]);
-								gp_Pnt2d P1(su1, sv1), P2(su2, sv2);
-								Handle(Geom2d_Line) sline = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
-								Standard_Real len1 = 0.0, len2 = P1.Distance(P2);
-								Handle(Geom2d_TrimmedCurve) ssegment =
-									new Geom2d_TrimmedCurve(sline, len1, len2, Standard_True, Standard_True);
-								//等参数线和每个silhouette segment求交
-								Geom2dAPI_InterCurveCurve intersector(trimmedLine, ssegment, 1.0e-4);
-								const Geom2dInt_GInter& ginter = intersector.Intersector();
-								if (intersector.NbPoints() > 0) {
-									int interCnt = intersector.NbPoints();
-									gp_Pnt2d pt = intersector.Point(1);
-									const IntRes2d_IntersectionPoint& ip = ginter.Point(1);
-									Standard_Real it1 = ip.ParamOnFirst();
-									Standard_Real it2 = ip.ParamOnSecond();
+					//mesh.uvLinePointsHidden.clear();
+					//std::vector<glm::vec3> tempVec;
+					////边界边和边界边在正交投影中求交
+					////edge id, para, visChange
+					//std::vector<std::tuple<int, double, int>> edgeEdgeInters;
+					//for (int i = 0; i < outwirePolylines3d.size(); ++i) {
+					//	for (int j = i; j < outwirePolylines3d.size(); ++j) {
+					//		if ((j == i) || (j == i - 1) || (j == i + 1) || ((i == 0) && (j == outwirePolylines3d.size() - 1)) || ((i == outwirePolylines3d.size() - 1) && j == 0)) {
+					//			continue;
+					//		}
+					//		else {
+					//			Handle(Geom2d_TrimmedCurve) c1 = std::get<0>(outwirePolylines3d[i]);
+					//			Handle(Geom2d_TrimmedCurve) c2 = std::get<0>(outwirePolylines3d[j]);
+					//			Handle(Geom2d_TrimmedCurve) c1_2d = std::get<0>(outwirePolylines2d[i]);
+					//			Handle(Geom2d_TrimmedCurve) c2_2d = std::get<0>(outwirePolylines2d[j]);
+					//			int id1 = std::get<4>(outwirePolylines3d[i]);
+					//			int id2 = std::get<4>(outwirePolylines3d[j]);
+					//			Geom2dAPI_InterCurveCurve intersector(c1, c2, 1.0e-8);
+					//			const Geom2dInt_GInter& ginter = intersector.Intersector();
+					//			if (intersector.NbPoints() > 0) {
+					//				//默认只有一个交点
+					//				gp_Pnt2d pt = intersector.Point(1);
+					//				const IntRes2d_IntersectionPoint& ip = ginter.Point(1);
+					//				Standard_Real t1 = ip.ParamOnFirst();
+					//				Standard_Real t2 = ip.ParamOnSecond();
+					//				gp_Pnt2d p11p = c1->Value(c1->FirstParameter());
+					//				gp_Pnt2d p12p = c1->Value(c1->LastParameter());
+					//				gp_Pnt2d p21p = c2->Value(c2->FirstParameter());
+					//				gp_Pnt2d p22p = c2->Value(c2->LastParameter());
+					//				glm::dvec2 p11(p11p.X(), p11p.Y());
+					//				glm::dvec2 p12(p12p.X(), p12p.Y());
+					//				glm::dvec2 p21(p21p.X(), p21p.Y());
+					//				glm::dvec2 p22(p22p.X(), p22p.Y());
+					//				double z11 = std::get<1>(outwirePolylines3d[i]);
+					//				double z12 = std::get<2>(outwirePolylines3d[i]);
+					//				double z21 = std::get<1>(outwirePolylines3d[j]);
+					//				double z22 = std::get<2>(outwirePolylines3d[j]);
+					//				double z1 = glm::mix(z11, z12, t1 / (c1->FirstParameter() - c1->LastParameter()));
+					//				double z2 = glm::mix(z21, z22, t2 / (c2->FirstParameter() - c2->LastParameter()));
+					//				double te1 = c1->FirstParameter();
+					//				double te11 = c1->LastParameter();
+					//				double te2 = c2->FirstParameter();
+					//				double te22 = c2->LastParameter();
+					//				double t1orig = glm::mix(std::get<1>(outwirePolylines2d[i]), std::get<2>(outwirePolylines2d[i]), t1 / (c1->FirstParameter() - c1->LastParameter()));
+					//				double t2orig = glm::mix(std::get<1>(outwirePolylines2d[j]), std::get<2>(outwirePolylines2d[j]), t2 / (c2->FirstParameter() - c2->LastParameter()));
+					//				glm::dvec3 c2dir = glm::dvec3(p22, 0) - glm::dvec3(p21, 0);
+					//				glm::dvec3 c1dir = glm::dvec3(p12, 0) - glm::dvec3(p11, 0);
+					//				if (z1 < z2) {
+					//					//z1在后，即c1在后
+					//					//计算c2的normal
+					//					gp_Pnt2d uvorig = c2_2d->Value(t1orig);
+					//					GeomLProp_SLProps props(bsplineSurf, uvorig.X(), uvorig.Y(), 1, Precision::Confusion());
+					//					gp_Dir p1ngp = props.Normal();
+					//					glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+					//					float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
+					//					double crossResult = glm::cross(c1dir, c2dir).z;
+					//					if (p1s > 0) {
+					//						//c2正面
+					//						if (crossResult < 0) {
+					//							//c1进入
+					//							edgeEdgeInters.emplace_back(id1, t1orig, -1);
+					//						}
+					//						else {
+					//							//c1走出
+					//							edgeEdgeInters.emplace_back(id1, t1orig, 1);
+					//						}
+					//					}
+					//					else {
+					//						//c2反面
+					//						if (crossResult < 0) {
+					//							//c1走出
+					//							edgeEdgeInters.emplace_back(id1, t1orig, 1);
+					//						}
+					//						else {
+					//							//c1进入
+					//							edgeEdgeInters.emplace_back(id1, t1orig, -1);
+					//						}
 
-									std::vector<Standard_Real> boundingInters;
-									Standard_Real boundingInterParaFirst, boundingInterParaLast;
-									//等参数线与该silhouette的bounding的交点数
-									std::vector<glm::dvec2> currSilBounding = silhouetteBoundings[j / 2];
-									for (int k = 0; k < currSilBounding.size(); ++k) {
-										Handle(Geom2d_Line) currBoundLine;
-										gp_Pnt2d P1b, P2b;
-										if (k == (currSilBounding.size() - 1)) {
-											P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
-											P2b = gp_Pnt2d(currSilBounding[0].x, currSilBounding[0].y);
-										}
-										else {
-											P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
-											P2b = gp_Pnt2d(currSilBounding[k + 1].x, currSilBounding[k + 1].y);
-										}
-										currBoundLine = new Geom2d_Line(P1b, gp_Dir2d(P2b.XY() - P1b.XY()));
-										Handle(Geom2d_TrimmedCurve) currBoundLineTrim =
-											new Geom2d_TrimmedCurve(currBoundLine, 0, P1b.Distance(P2b), Standard_True, Standard_True);
-										//该bounding line与等参数线求交
-										Geom2dAPI_InterCurveCurve intersector2(trimmedLine, currBoundLineTrim, 1.0e-4);
-										const Geom2dInt_GInter& ginter2 = intersector2.Intersector();
-										if (intersector2.NbPoints() > 0) {
-											const IntRes2d_IntersectionPoint& ip2 = ginter2.Point(1);
-											boundingInters.push_back(ip2.ParamOnFirst());
-										}
-									}
-									std::sort(boundingInters.begin(), boundingInters.end());
-									for (auto boundingPara : boundingInters) {
-										if (boundingPara < it1) {
-											boundingInterParaFirst = boundingPara;
-										}
-										else if (boundingPara > it1) {
-											boundingInterParaLast = boundingPara;
-										}
-									}
-									//现在知道了等参数线和bounding的两个交点（boundingInterParaFirst & boundingInterParaLast），以及和silhouette的交点（it1）。
-									//利用silhouette的正反信息，判断是否隐藏该等参数线。
-									gp_Pnt2d paraFirst = trimmedLine->Value(boundingInterParaFirst);
-									gp_Pnt2d paraLast = trimmedLine->Value(boundingInterParaLast);
-									gp_Pnt2d mid1 = gp_Pnt2d((paraFirst.X() + pt.X()) / 2.0, (paraFirst.Y() + pt.Y()) / 2.0); //
-									gp_Pnt2d mid2 = gp_Pnt2d((paraLast.X() + pt.X()) / 2.0, (paraLast.Y() + pt.Y()) / 2.0);
+					//					}
+					//				}
+					//				else {
+					//					//c2在后
+					//					gp_Pnt2d uvorig = c1_2d->Value(t2orig);
+					//					GeomLProp_SLProps props(bsplineSurf, uvorig.X(), uvorig.Y(), 1, Precision::Confusion());
+					//					gp_Dir p1ngp = props.Normal();
+					//					glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+					//					float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
+					//					double crossResult = glm::cross(c2dir, c1dir).z;
+					//					if (p1s > 0) {
+					//						//c1正面
+					//						if (crossResult < 0) {
+					//							//c2进入
+					//							edgeEdgeInters.emplace_back(id2, t2orig, -1);
+					//						}
+					//						else {
+					//							//c2走出
+					//							edgeEdgeInters.emplace_back(id2, t2orig, 1);
+					//						}
+					//					}
+					//					else {
+					//						//c1反面
+					//						if (crossResult < 0) {
+					//							//c2走出
+					//							edgeEdgeInters.emplace_back(id2, t2orig, 1);
+					//						}
+					//						else {
+					//							//c2进入
+					//							edgeEdgeInters.emplace_back(id2, t2orig, -1);
+					//						}
 
-									//mid1的normal
-									GeomLProp_SLProps props(bsplineSurf, mid1.X(), mid1.Y(), 1, Precision::Confusion());
-									gp_Dir p1ngp = props.Normal();
-									glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
-									glm::vec3 test = glm::mat3(camera.matrices.view) * p1n;
-									float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
-									//mid2的normal
-									props = GeomLProp_SLProps(bsplineSurf, mid2.X(), mid2.X(), 1, Precision::Confusion());
-									p1ngp = props.Normal();
-									glm::vec3 p2n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
-									glm::vec3 test2 = glm::mat3(camera.matrices.view) * p2n;
-									float p2s = glm::dot(glm::mat3(camera.matrices.view) * p2n, glm::vec3(0, 0, 1));
+					//					}
+					//				}
+					//			}
+					//		}
+					//	}
+					//}
+					//mesh.uvLinePointsHidden.push_back(tempVec);
+					////vis压制到0
+					//int edgeId = 0;
+					//int maxVis = 0;
+					//int startVis = 0;
+					//std::vector<std::tuple<Handle(Geom2d_BSplineCurve), std::vector<std::tuple<double, double>>, std::vector<int>>> edgeVis;
+					//for (auto& outwire : outwireCurves2d[0]) {
+					//	std::vector<double> inters;
+					//	std::vector<int> visChange;
+					//	for (auto& inter : edgeEdgeInters) {
+					//		if (std::get<0>(inter) == edgeId) {
+					//			inters.push_back(std::get<1>(inter));
+					//			visChange.push_back(std::get<2>(inter));
+					//		}
+					//	}
+					//	if (inters.size() == 0) {
+					//		std::vector<std::tuple<double, double>> paras = { std::tuple<double, double>(outwire->FirstParameter(), outwire->LastParameter()) };
+					//		std::vector<int> vis = { startVis };
+					//		edgeVis.emplace_back(outwire, paras, vis);
+					//	}
+					//	else {
+					//		std::vector<std::tuple<double, double>> paras;
+					//		std::vector<int> vis;
+					//		double lastPara = outwire->FirstParameter();
+					//		for (int i = 0; i < inters.size(); ++i) {
+					//			paras.emplace_back(lastPara, inters[i]);
+					//			vis.push_back(startVis);
+					//			startVis += visChange[i];
+					//			lastPara = inters[i];
+					//		}
+					//		if (startVis > maxVis) {
+					//			maxVis = startVis;
+					//		}
+					//		paras.emplace_back(lastPara, outwire->LastParameter());
+					//		vis.push_back(startVis);
+					//		edgeVis.emplace_back(outwire, paras, vis);
+					//	}
+					//	++edgeId;
+					//}
+					//for (auto& edge : edgeVis) {
+					//	for (auto& vis : std::get<2>(edge)) {
+					//		vis -= maxVis;
+					//	}
+					//}
+					////装入vector中
+					//for (auto& edge : edgeVis) {
+					//	std::vector<int> vis = std::get<2>(edge);
+					//	for (int i = 0; i < vis.size(); ++i) {
+					//		if (vis[i] == 0) {
+					//			std::vector<glm::vec3> tempVec;
+					//			Handle(Geom2d_BSplineCurve) b2d = std::get<0>(edge);
+					//			//区间
+					//			std::tuple<double, double> paras = std::get<1>(edge)[i];
+					//			double t1 = std::get<0>(paras);
+					//			double t2 = std::get<1>(paras);
+					//			double step = (t2 - t1) / sampleNum;
+					//			for (int j = 0; j <= sampleNum; ++j) {
+					//				double t = t1 + step * j;
+					//				gp_Pnt2d p2d = b2d->Value(t);
+					//				gp_Pnt p3d = bsplineSurf->Value(p2d.X(), p2d.Y());
+					//				tempVec.push_back(glm::vec3(p3d.X(), p3d.Y(), p3d.Z()));
+					//			}
+					//			mesh.outedgePoints.push_back(tempVec);
+					//		}
+					//	}
+					//}
 
-									int sOri = silhouetteOri[j / 2];
-									if (p1s > 0) {
-										//mid1在正，mid2在反
-										if (sOri == 0) {
-											//silhouette为正silhouette
-											//mid1可见，mid2不可见
-											//visibility我改成负数吧，直观点。
-											visChange.emplace_back(it1, -1);
-										}
-										else if (sOri == 2) {
-											//silhouette为反silhouette
-											//mid1不可见，mid2可见
-											visChange.emplace_back(it1, 1);
-										}
-									}
-									else {
-										//mid1在反，mid2在正
-										if (sOri == 0) {
-											//silhouette为正silhouette
-											//mid1不可见，mid2可见
-											visChange.emplace_back(it1, 1);
-										}
-										else if (sOri == 2) {
-											//silhouette为反silhouette
-											//mid1可见，mid2不可见
-											visChange.emplace_back(it1, -1);
-										}
-									}
-								}
-							}
-							//算出每个segment的可见性度
-							std::vector<std::tuple<Standard_Real, Standard_Real, int>> segVis;
-							//sort visChange
-							std::sort(visChange.begin(), visChange.end(), compareByTupleFirst);
-							if (visChange.size() == 0) {
-								segVis.emplace_back(t1, t2, 0);
-							}
-							else {
-								segVis.emplace_back(t1, std::get<0>(visChange[0]), 0);
-								int segVisCnt = 0;
-								for (int k = 0; k < (visChange.size() - 1); ++k) {
-									segVis.emplace_back(std::get<0>(visChange[k]), std::get<0>(visChange[k + 1]), std::get<1>(visChange[k]) + std::get<2>(segVis[segVisCnt]));
-									++segVisCnt;
-								}
-								segVis.emplace_back(std::get<0>(visChange[visChange.size() - 1]), t2, std::get<1>(visChange[visChange.size() - 1]) + std::get<2>(segVis[segVisCnt]));
-							}
-							//可见度矫正，最可见的设置为0。
-							int max = 0;
-							for (auto& seg : segVis) {
-								if (std::get<2>(seg) > max) {
-									max = std::get<2>(seg);
-								}
-							}
-							if (max > 0) {
-								for (auto& seg : segVis) {
-									std::get<2>(seg) -= max;
-								}
-							}
-							uvLinesHidden.emplace_back(trimmedLine, segVis);
 
-						}
-					}
-					surfLinesHidden.emplace_back(bsplineSurf, uvLinesHidden);
+					////等参数线和silhouette在uv参数域中求交
+					//std::vector<std::tuple<Handle(Geom2d_TrimmedCurve), std::vector<std::tuple<Standard_Real, Standard_Real, int>>>> uvLinesHidden;
+					//for (auto& uvLine : uvLines) {
+					//	std::vector<Standard_Real> linet = std::get<1>(uvLine);
+					//	for (int i = 0; i < linet.size(); i += 2) {
+					//		Standard_Real t1 = linet[i];
+					//		Standard_Real t2 = linet[i + 1];
+					//		std::vector<std::tuple<Standard_Real, int>> visChange;
+					//		Handle(Geom2d_TrimmedCurve) trimmedLine = new Geom2d_TrimmedCurve(std::get<0>(uvLine), t1, t2, Standard_True, Standard_True);
+					//		for (int j = 0; j < silhouette2dPnt.size(); j += 2) {
+					//			double su1 = std::get<0>(silhouette2dPnt[j]);
+					//			double su2 = std::get<0>(silhouette2dPnt[j + 1]);
+					//			double sv1 = std::get<1>(silhouette2dPnt[j]);
+					//			double sv2 = std::get<1>(silhouette2dPnt[j + 1]);
+					//			gp_Pnt2d P1(su1, sv1), P2(su2, sv2);
+					//			Handle(Geom2d_Line) sline = new Geom2d_Line(P1, gp_Dir2d(P2.XY() - P1.XY()));
+					//			Standard_Real len1 = 0.0, len2 = P1.Distance(P2);
+					//			Handle(Geom2d_TrimmedCurve) ssegment =
+					//				new Geom2d_TrimmedCurve(sline, len1, len2, Standard_True, Standard_True);
+					//			//等参数线和每个silhouette segment求交
+					//			Geom2dAPI_InterCurveCurve intersector(trimmedLine, ssegment, 1.0e-4);
+					//			const Geom2dInt_GInter& ginter = intersector.Intersector();
+					//			if (intersector.NbPoints() > 0) {
+					//				int interCnt = intersector.NbPoints();
+					//				gp_Pnt2d pt = intersector.Point(1);
+					//				const IntRes2d_IntersectionPoint& ip = ginter.Point(1);
+					//				Standard_Real it1 = ip.ParamOnFirst();
+					//				Standard_Real it2 = ip.ParamOnSecond();
+
+					//				std::vector<Standard_Real> boundingInters;
+					//				Standard_Real boundingInterParaFirst, boundingInterParaLast;
+					//				//等参数线与该silhouette的bounding的交点数
+					//				std::vector<glm::dvec2> currSilBounding = silhouetteBoundings[j / 2];
+					//				for (int k = 0; k < currSilBounding.size(); ++k) {
+					//					Handle(Geom2d_Line) currBoundLine;
+					//					gp_Pnt2d P1b, P2b;
+					//					if (k == (currSilBounding.size() - 1)) {
+					//						P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
+					//						P2b = gp_Pnt2d(currSilBounding[0].x, currSilBounding[0].y);
+					//					}
+					//					else {
+					//						P1b = gp_Pnt2d(currSilBounding[k].x, currSilBounding[k].y);
+					//						P2b = gp_Pnt2d(currSilBounding[k + 1].x, currSilBounding[k + 1].y);
+					//					}
+					//					currBoundLine = new Geom2d_Line(P1b, gp_Dir2d(P2b.XY() - P1b.XY()));
+					//					Handle(Geom2d_TrimmedCurve) currBoundLineTrim =
+					//						new Geom2d_TrimmedCurve(currBoundLine, 0, P1b.Distance(P2b), Standard_True, Standard_True);
+					//					//该bounding line与等参数线求交
+					//					Geom2dAPI_InterCurveCurve intersector2(trimmedLine, currBoundLineTrim, 1.0e-4);
+					//					const Geom2dInt_GInter& ginter2 = intersector2.Intersector();
+					//					if (intersector2.NbPoints() > 0) {
+					//						const IntRes2d_IntersectionPoint& ip2 = ginter2.Point(1);
+					//						boundingInters.push_back(ip2.ParamOnFirst());
+					//					}
+					//				}
+					//				std::sort(boundingInters.begin(), boundingInters.end());
+					//				for (auto boundingPara : boundingInters) {
+					//					if (boundingPara < it1) {
+					//						boundingInterParaFirst = boundingPara;
+					//					}
+					//					else if (boundingPara > it1) {
+					//						boundingInterParaLast = boundingPara;
+					//					}
+					//				}
+					//				//现在知道了等参数线和bounding的两个交点（boundingInterParaFirst & boundingInterParaLast），以及和silhouette的交点（it1）。
+					//				//利用silhouette的正反信息，判断是否隐藏该等参数线。
+					//				gp_Pnt2d paraFirst = trimmedLine->Value(boundingInterParaFirst);
+					//				gp_Pnt2d paraLast = trimmedLine->Value(boundingInterParaLast);
+					//				gp_Pnt2d mid1 = gp_Pnt2d((paraFirst.X() + pt.X()) / 2.0, (paraFirst.Y() + pt.Y()) / 2.0); //
+					//				gp_Pnt2d mid2 = gp_Pnt2d((paraLast.X() + pt.X()) / 2.0, (paraLast.Y() + pt.Y()) / 2.0);
+
+					//				//mid1的normal
+					//				GeomLProp_SLProps props(bsplineSurf, mid1.X(), mid1.Y(), 1, Precision::Confusion());
+					//				gp_Dir p1ngp = props.Normal();
+					//				glm::vec3 p1n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+					//				glm::vec3 test = glm::mat3(camera.matrices.view) * p1n;
+					//				float p1s = glm::dot(glm::mat3(camera.matrices.view) * p1n, glm::vec3(0, 0, 1));
+					//				//mid2的normal
+					//				props = GeomLProp_SLProps(bsplineSurf, mid2.X(), mid2.X(), 1, Precision::Confusion());
+					//				p1ngp = props.Normal();
+					//				glm::vec3 p2n(p1ngp.X(), p1ngp.Y(), p1ngp.Z());
+					//				glm::vec3 test2 = glm::mat3(camera.matrices.view) * p2n;
+					//				float p2s = glm::dot(glm::mat3(camera.matrices.view) * p2n, glm::vec3(0, 0, 1));
+
+					//				int sOri = silhouetteOri[j / 2];
+					//				if (p1s > 0) {
+					//					//mid1在正，mid2在反
+					//					if (sOri == 0) {
+					//						//silhouette为正silhouette
+					//						//mid1可见，mid2不可见
+					//						//visibility我改成负数吧，直观点。
+					//						visChange.emplace_back(it1, -1);
+					//					}
+					//					else if (sOri == 2) {
+					//						//silhouette为反silhouette
+					//						//mid1不可见，mid2可见
+					//						visChange.emplace_back(it1, 1);
+					//					}
+					//				}
+					//				else {
+					//					//mid1在反，mid2在正
+					//					if (sOri == 0) {
+					//						//silhouette为正silhouette
+					//						//mid1不可见，mid2可见
+					//						visChange.emplace_back(it1, 1);
+					//					}
+					//					else if (sOri == 2) {
+					//						//silhouette为反silhouette
+					//						//mid1可见，mid2不可见
+					//						visChange.emplace_back(it1, -1);
+					//					}
+					//				}
+					//			}
+					//		}
+					//		//算出每个segment的可见性度
+					//		std::vector<std::tuple<Standard_Real, Standard_Real, int>> segVis;
+					//		//sort visChange
+					//		std::sort(visChange.begin(), visChange.end(), compareByTupleFirst);
+					//		if (visChange.size() == 0) {
+					//			segVis.emplace_back(t1, t2, 0);
+					//		}
+					//		else {
+					//			segVis.emplace_back(t1, std::get<0>(visChange[0]), 0);
+					//			int segVisCnt = 0;
+					//			for (int k = 0; k < (visChange.size() - 1); ++k) {
+					//				segVis.emplace_back(std::get<0>(visChange[k]), std::get<0>(visChange[k + 1]), std::get<1>(visChange[k]) + std::get<2>(segVis[segVisCnt]));
+					//				++segVisCnt;
+					//			}
+					//			segVis.emplace_back(std::get<0>(visChange[visChange.size() - 1]), t2, std::get<1>(visChange[visChange.size() - 1]) + std::get<2>(segVis[segVisCnt]));
+					//		}
+					//		//可见度矫正，最可见的设置为0。
+					//		int max = 0;
+					//		for (auto& seg : segVis) {
+					//			if (std::get<2>(seg) > max) {
+					//				max = std::get<2>(seg);
+					//			}
+					//		}
+					//		if (max > 0) {
+					//			for (auto& seg : segVis) {
+					//				std::get<2>(seg) -= max;
+					//			}
+					//		}
+					//		uvLinesHidden.emplace_back(trimmedLine, segVis);
+
+					//	}
+					//}
+					//surfLinesHidden.emplace_back(bsplineSurf, uvLinesHidden);
 				}
 			}
 
@@ -6442,8 +6712,8 @@ public:
 
 		// Final fullscreen composition pass pipeline
 		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
-		shaderStages[0] = loadShader(getShadersPath() + "occ/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "occ/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occsilhouette/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occsilhouette/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		// Empty vertex input state, vertices are generated by the vertex shader
 		VkPipelineVertexInputStateCreateInfo emptyInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
 		pipelineCI.pVertexInputState = &emptyInputState;
@@ -6466,8 +6736,8 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
 		// Offscreen pipeline
-		shaderStages[0] = loadShader(getShadersPath() + "occ/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "occ/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occsilhouette/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occsilhouette/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 
 		// Separate render pass
 		pipelineCI.renderPass = offScreenFrameBuf.renderPass;
@@ -6496,8 +6766,8 @@ public:
 		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 		rasterizationState.lineWidth = 5.f;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-		shaderStages[0] = loadShader(getShadersPath() + "occ/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "occ/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occsilhouette/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occsilhouette/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = edgeFrameBuf.renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.edge));
 
@@ -6506,16 +6776,26 @@ public:
 		rasterizationState.lineWidth = 5.f;
 		depthStencilState.depthWriteEnable = VK_TRUE;
 		depthStencilState.depthTestEnable = VK_TRUE;
-		shaderStages[0] = loadShader(getShadersPath() + "occ/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "occ/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occsilhouette/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occsilhouette/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = lockedEdgeFrameBuf.renderPass;
+		pipelineCI.subpass = 0;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.lockedEdge));
 
+
 		rasterizationState.lineWidth = 5.f;
-		shaderStages[0] = loadShader(getShadersPath() + "occ/hiddenline.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "occ/hiddenline.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "occsilhouette/hiddenline.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occsilhouette/hiddenline.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = hiddenLineFrameBuf.renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.hiddenLine));
+
+		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+		inputAssemblyState.primitiveRestartEnable = VK_FALSE;
+		shaderStages[0] = loadShader(getShadersPath() + "occsilhouette/lockededgepnt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "occsilhouette/lockededgepnt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		pipelineCI.renderPass = lockedEdgeFrameBuf.renderPass;
+		pipelineCI.subpass = 1;
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.lockedEdgePnt));
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
@@ -6779,6 +7059,14 @@ public:
 		vkCmdBindDescriptorSets(lockedEdgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.lockedEdge, 0, nullptr);
 		mesh.bindLockedEdgeBuffers(lockedEdgeCmdBuffer);
 		vkCmdDrawIndexed(lockedEdgeCmdBuffer, mesh.lockedEdgeIdxCnt, 1, 0, 0, 0);
+
+		vkCmdNextSubpass(lockedEdgeCmdBuffer, VK_SUBPASS_CONTENTS_INLINE);
+
+		vkCmdBindPipeline(lockedEdgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.lockedEdgePnt);
+		
+		mesh.bindPntBuffers(lockedEdgeCmdBuffer);
+		vkCmdDrawIndexed(lockedEdgeCmdBuffer, mesh.pntVer.size() , 1, 0, 0, 0);
+
 
 		vkCmdEndRenderPass(lockedEdgeCmdBuffer);
 

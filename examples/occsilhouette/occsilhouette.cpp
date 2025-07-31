@@ -2849,7 +2849,7 @@ public:
 								cuspt = cuspt - (fun / fund);
 							}
 							gp_Pnt2d tmp = fitCurve->Value(cuspt);
-							cuspStart2d.push_back(glm::dvec2(tmp.X(), tmp.Y()));
+							//cuspStart2d.push_back(glm::dvec2(tmp.X(), tmp.Y()));
 						}
 						//渲染p-curve
 						Standard_Integer test1 = fitCurve->Degree();

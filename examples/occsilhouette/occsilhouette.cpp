@@ -2704,14 +2704,38 @@ public:
 						glm::dvec3 viewDir = glm::transpose(glm::dmat3(glm::mat3(camera.matrices.view))) * glm::dvec3(0, 0, 1);
 						for (auto ss2d : silhouetteStart2d) {
 							int currOri = silhouetteStartOri[silid];
-							++silid;
+							int uvmain = 0;
+							glm::dvec2 uvdir;
+							if(silid == 0) {
+								uvdir = silhouetteStart2d[silid + 1] - ss2d;
+								if (uvdir.x >= uvdir.y) {
+									uvmain = 0;
+								}
+								else {
+									uvmain = 1;
+								}
+							}
+							else {
+								uvdir = ss2d - silhouetteStart2d[silid - 1];
+								if (uvdir.x >= uvdir.y) {
+									uvmain = 0;
+								}
+								else {
+									uvmain = 1;
+								}
+							}
 							Standard_Real u = ss2d.x;
 							Standard_Real v = ss2d.y;
 							Standard_Real origU = u;
 							Standard_Real origV = v;
+							Standard_Real lastU = u;
+							Standard_Real lastV = v;
+							Standard_Real lastFun = 0;
+							Standard_Real lastStep = 0;
 							Standard_Real tol = Precision::Confusion();
 							Standard_Real funStart = 0;
 							Standard_Real funEnd = 0;
+							bool newton = true;
 							//步长最大为10步
 							for (int i = 0; i < 11; ++i) {
 								// 需要计算二阶导数所以 N=2
@@ -2743,33 +2767,80 @@ public:
 								Standard_Real fun = glm::dot(normal, viewDir);
 								if (i == 0) {
 									funStart = fun;
+									lastFun = fun;
 								}
 								if (i == 10) {
 									funEnd = fun;
 									break;
 								}
 								//检查函数残差是否接近0
-								if (std::abs(fun) < 1e-5) {
+								if (std::abs(fun) < 1e-6) {
 									funEnd = fun;
 									break;
 								}
+								/*if (std::signbit(fun) != std::signbit(lastFun)) {
+									break;
+								}*/
+								/*if (std::abs(fun) > std::abs(lastFun)) {
+									break;
+								}*/
 								glm::dvec2 defun = glm::dvec2(glm::dot(Nu, viewDir), glm::dot(Nv, viewDir));
 								Standard_Real defunLen = glm::length(defun);
 								if (defunLen == 0) {
 									funEnd = fun;
 									break;
 								}
+								//步进切线法
+								Standard_Real fun2 = glm::dot(uvdir, glm::dvec2(u,v) - glm::dvec2(origU, origV));
+								glm::dmat2 J = glm::dmat2(defun.x, uvdir.x, defun.y, uvdir.y);
+								glm::dmat2 Jinv = glm::inverse(J);
+								glm::dvec2 deltauv = -Jinv * glm::dvec2(fun, fun2);
+								
+								u += deltauv.x * 0.01;
+								v += deltauv.y * 0.01;
 								//牛顿迭代
 								//glm::dvec2 deltauv = (-fun * defun) / (defunLen * defunLen);
 								//梯度下降
-								glm::dvec2 deltauv = (-fun * defun);
+								/*glm::dvec2 deltauv = (-fun * defun);
 								u += deltauv.x;
-								v += deltauv.y;
+								v += deltauv.y;*/
+								//步进法（加约束的牛顿迭代）
+								double step = 0;
+								//if (uvmain) {
+								//	//uvdir.v大一点
+								//	step = -(fun / defun.x) * 0.001;
+								//	u += step;
+								//}
+								//else {
+								//	step = -(fun / defun.y) * 0.001;
+								//	v += step;
+								//}
+								//if (uvmain) {
+								//	//uvdir.v大一点
+								//	step = -(fun / defun.y) * 0.01;
+								//	v += step;
+								//}
+								//else {
+								//	step = -(fun / defun.x) * 0.01;
+								//	u += step;
+								//}
+								
 								//检查迭代步长，使用绝对步长准则
-								if (glm::length(deltauv) < 1e-6) {
+								/*if (glm::length(deltauv) < 1e-6) {
 									funEnd = fun;
 									break;
+								}*/
+								if (i == 0) {
+									lastStep = step;
 								}
+								/*if (glm::length(step) < 1e-6) {
+									funEnd = fun;
+									break;
+								}*/
+								lastStep = step;
+								lastFun = fun;
+								lastU = u;
+								lastV = v;
 							}
 							if (std::abs(funEnd) > std::abs(funStart)) {
 								nurbsSilhouettePoints2dBad.push_back(1);
@@ -2781,6 +2852,7 @@ public:
 							else {
 								nurbsSilhouettePoints2dBad.push_back(0);
 							}
+							++silid;
 							nurbsSilhouettePoints2d.push_back(glm::dvec2(u, v));
 						}
 						nurbsSilhouettePoints.clear();

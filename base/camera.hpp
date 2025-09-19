@@ -55,6 +55,10 @@ public:
 	float orthoLeft, orthoRight, orthoBottom, orthoTop;
 	float aspect;
 	bool orthographic = false;
+	std::vector<glm::vec3> positions;
+	glm::vec3 positionOrig;
+	float orthoLeftOrig, orthoRightOrig, orthoBottomOrig, orthoTopOrig;
+	float tbsh, lrsh;
 	//for debug
 	//left dx+, right dx-, up dy+£¬down dy-
 	//float dx, dy;
@@ -113,6 +117,20 @@ public:
 		}
 	};
 
+	void setViewToAABB(glm::vec3 aabbCameraMin, glm::vec3 aabbCameraMax, int scale) {
+		float lr = (aabbCameraMax.x - aabbCameraMin.x) / scale;
+		float tb = (aabbCameraMax.y - aabbCameraMin.y) / scale;
+		float lrh = 0.5f * lr;
+		float tbh = 0.5f * tb;
+		
+		orthoTop = tbh;
+		orthoBottom = -tbh;
+		orthoLeft = -lrh;
+		orthoRight = lrh;
+
+		position = positions[0];
+	}
+
 	void updatePerspective(float fov, float aspect, float znear, float zfar) {
 		this->fov = fov;
 		this->fov = fov;
@@ -147,7 +165,13 @@ public:
 
 	void rotate(glm::vec3 delta)
 	{
-		this->rotation += delta;
+		//rotation deadzone
+		if((this->rotation.x + delta.x > 89.0f) || (this->rotation.x + delta.x < -89.0f)) {
+			this->rotation.y += delta.y;
+		}
+		else {
+			this->rotation += delta;
+		}
 		updateViewMatrix();
 	}
 
@@ -168,6 +192,7 @@ public:
 			wheelDelta = -wheelDelta;
 			float btm = (orthoBottom + orthoTop) / 2.f;
 			float lfm = (orthoLeft + orthoRight) / 2.f;
+			aspect = (orthoRight - orthoLeft) / (orthoTop - orthoBottom);
 			orthoTop += (float)wheelDelta * 0.0005f;
 			orthoBottom -= (float)wheelDelta * 0.0005f;
 			orthoRight += (float)wheelDelta * 0.0005f * aspect;

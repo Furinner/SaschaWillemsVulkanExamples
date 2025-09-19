@@ -104,8 +104,20 @@ VkResult VulkanExampleBase::createInstance()
 	VkDebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCI{};
 	if (settings.validation) {
 		vks::debug::setupDebugingMessengerCreateInfo(debugUtilsMessengerCI);
-		debugUtilsMessengerCI.pNext = instanceCreateInfo.pNext;
-		instanceCreateInfo.pNext = &debugUtilsMessengerCI;
+
+		VkValidationFeatureEnableEXT enables[] = {
+			VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+			VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
+		};
+		VkValidationFeaturesEXT vf{ VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
+		vf.enabledValidationFeatureCount = 2;
+		vf.pEnabledValidationFeatures = enables;
+
+		/*debugUtilsMessengerCI.pNext = instanceCreateInfo.pNext;
+		instanceCreateInfo.pNext = &debugUtilsMessengerCI;*/
+		debugUtilsMessengerCI.pNext = nullptr;
+		vf.pNext = &debugUtilsMessengerCI;
+		instanceCreateInfo.pNext = &vf;
 	}
 
 #if (defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT)) && defined(VK_KHR_portability_enumeration)
@@ -120,6 +132,9 @@ VkResult VulkanExampleBase::createInstance()
 	// Enable the debug utils extension if available (e.g. when debugging tools are present)
 	if (settings.validation || std::find(supportedInstanceExtensions.begin(), supportedInstanceExtensions.end(), VK_EXT_DEBUG_UTILS_EXTENSION_NAME) != supportedInstanceExtensions.end()) {
 		instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+	}
+	if (settings.validation || std::find(supportedInstanceExtensions.begin(), supportedInstanceExtensions.end(), VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME) != supportedInstanceExtensions.end()) {
+		instanceExtensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
 	}
 
 	if (instanceExtensions.size() > 0) {
@@ -1073,7 +1088,7 @@ bool VulkanExampleBase::initVulkan()
 
 	// Derived examples can override this to set actual features (based on above readings) to enable for logical device creation
 	getEnabledFeatures();
-
+	
 	// Vulkan device creation
 	// This is handled by a separate class that gets a logical device representation
 	// and encapsulates functions related to a device
@@ -1414,7 +1429,7 @@ void VulkanExampleBase::handleMessages(HWND hWnd, UINT uMsg, WPARAM wParam, LPAR
 		resizing = false;
 		break;
 	}
-
+	
 	OnHandleMessage(hWnd, uMsg, wParam, lParam);
 }
 #elif defined(VK_USE_PLATFORM_ANDROID_KHR)

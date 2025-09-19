@@ -13,16 +13,31 @@
 */
 
 #include "vulkanexamplebase.h"
+#include "VulkanInitializers.hpp"
 #include "VulkanglTFModel.h"
 #include <memory>
 #include <limits>
 #include <unordered_set>
+
+//#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+//#include <CGAL/Surface_mesh.h>
+//#include <CGAL/Optimal_bounding_box/oriented_bounding_box.h>
+//namespace CGALPMP = CGAL::Polygon_mesh_processing;
+//typedef CGAL::Exact_predicates_inexact_constructions_kernel CGALKernel;
+//typedef CGALKernel::Point_3 CGALPoint;
+//typedef CGAL::Surface_mesh<CGALPoint> CGALMesh;
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+
 #define DLF 1
 
 #define MAX_NEIGHBOR_FACE_COUNT 50
 
 #define uPtr std::unique_ptr
 #define mkU std::make_unique
+#define SCALECNT (VulkanExampleBase::scale * VulkanExampleBase::scale)
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -85,12 +100,14 @@ public:
 		alignas(4) int border = 0;
 		alignas(4) int heID = -1;
 		alignas(4) int uniqueID; //unique id in obj
+		alignas(4) int debug = 0;
+		alignas(4) int globalHeID = -1;
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
 		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), uniqueID(ver->uniqueID), faceID(faceID) {};
 		Vertex(glm::vec3 position) :position(position) {};
 		Vertex(Vertex* ver) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
-
+		Vertex(glm::vec3 position, int debug) :position(position), debug(debug) {};
 		bool operator==(const Vertex& other) const {
 			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
 		}
@@ -103,8 +120,8 @@ public:
 			return bindingDescription;
 		}
 
-		static std::array<VkVertexInputAttributeDescription, 9> getAttributeDescriptions() {
-			std::array<VkVertexInputAttributeDescription, 9> attributeDescriptions{};
+		static std::array<VkVertexInputAttributeDescription, 11> getAttributeDescriptions() {
+			std::array<VkVertexInputAttributeDescription, 11> attributeDescriptions{};
 			attributeDescriptions[0].binding = 0;
 			attributeDescriptions[0].location = 0;
 			attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -149,6 +166,16 @@ public:
 			attributeDescriptions[8].location = 8;
 			attributeDescriptions[8].format = VK_FORMAT_R32_SINT;
 			attributeDescriptions[8].offset = offsetof(Vertex, heID);
+
+			attributeDescriptions[9].binding = 0;
+			attributeDescriptions[9].location = 9;
+			attributeDescriptions[9].format = VK_FORMAT_R32_SINT;
+			attributeDescriptions[9].offset = offsetof(Vertex, debug);
+
+			attributeDescriptions[10].binding = 0;
+			attributeDescriptions[10].location = 10;
+			attributeDescriptions[10].format = VK_FORMAT_R32_SINT;
+			attributeDescriptions[10].offset = offsetof(Vertex, globalHeID);
 
 			return attributeDescriptions;
 		}
@@ -335,6 +362,11 @@ public:
 		std::vector<glm::vec4> faceNors{};
 		std::vector<int> edgeIdx{};
 		std::vector<Vertex> edgeVert{};
+		std::vector<std::array<glm::vec3, 2>> aabbMeshes;
+		glm::vec3 aabbSceneMin = glm::vec3(std::numeric_limits<float>::max());
+		glm::vec3 aabbSceneMax = glm::vec3(-std::numeric_limits<float>::max());
+		glm::vec3 aabbCameraMin = glm::vec3(std::numeric_limits<float>::max());
+		glm::vec3 aabbCameraMax = glm::vec3(std::numeric_limits<float>::lowest());
 		vks::Buffer verticesBuffer;
 		vks::Buffer idxBuffer;
 		vks::Buffer faceInfoBuffer;
@@ -356,6 +388,8 @@ public:
 		void create(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<vkglTF::Vertex>>& vertexBuffers, vks::VulkanDevice* device, VkQueue transferQueue) {
 			int objectID = 0;
 			for (auto& vertexBuffer : vertexBuffers) {
+				glm::vec3 aabbMeshMin = glm::vec3(std::numeric_limits<float>::max());
+				glm::vec3 aabbMeshMax = glm::vec3(-std::numeric_limits<float>::max());
 				//find all unique vertices, store them into vertices1 and store verIDtoUniqueID
 				int uniqueVerId = 0;
 				std::unordered_map<Vertex*, int, VertexHash, VertexEqual> uniqueVers;
@@ -380,10 +414,34 @@ public:
 							verIDtoUniqueID[i] = uniqueVerId;
 						}
 						tmpVerPtr->uniqueID = uniqueVerId++;
+						//update aabbMesh
+						if (tmpVerPtr->position.x < aabbMeshMin.x) aabbMeshMin.x = tmpVerPtr->position.x;
+						if (tmpVerPtr->position.y < aabbMeshMin.y) aabbMeshMin.y = tmpVerPtr->position.y;
+						if (tmpVerPtr->position.z < aabbMeshMin.z) aabbMeshMin.z = tmpVerPtr->position.z;
+						if (tmpVerPtr->position.x > aabbMeshMax.x) aabbMeshMax.x = tmpVerPtr->position.x;
+						if (tmpVerPtr->position.y > aabbMeshMax.y) aabbMeshMax.y = tmpVerPtr->position.y;
+						if (tmpVerPtr->position.z > aabbMeshMax.z) aabbMeshMax.z = tmpVerPtr->position.z;
 						vertices1.push_back(std::move(tmpVer));
 						facesConnectToVertex.push_back(std::move(mkU<FaceConnectToVertex>()));
 					}
 				}
+				//update aabbScene
+				if (aabbMeshMin.x < aabbSceneMin.x) aabbSceneMin.x = aabbMeshMin.x;
+				if (aabbMeshMin.y < aabbSceneMin.y) aabbSceneMin.y = aabbMeshMin.y;
+				if (aabbMeshMin.z < aabbSceneMin.z) aabbSceneMin.z = aabbMeshMin.z;
+				if (aabbMeshMax.x > aabbSceneMax.x) aabbSceneMax.x = aabbMeshMax.x;
+				if (aabbMeshMax.y > aabbSceneMax.y) aabbSceneMax.y = aabbMeshMax.y;
+				if (aabbMeshMax.z > aabbSceneMax.z) aabbSceneMax.z = aabbMeshMax.z;
+				aabbMeshes.push_back({ aabbMeshMin, aabbMeshMax });
+				//CGAL
+				/*std::vector<CGALPoint> cgalPts;
+				cgalPts.reserve(vertices1.size());
+				for(auto& ver : vertices1) {
+					cgalPts.push_back(CGALPoint(ver->position.x, ver->position.y, ver->position.z));
+				}
+				std::array<CGALPoint, 8> meshObb;
+				CGAL::oriented_bounding_box(cgalPts, meshObb);*/
+
 				int faceID = 0;
 				int indexCnt = 0;
 				int heID = 0;
@@ -411,6 +469,8 @@ public:
 					Vertex* v1 = vertices1[idx1 + vertexBuffersSize1].get();
 					Vertex* v2 = vertices1[idx2 + vertexBuffersSize1].get();
 					Vertex* v3 = vertices1[idx3 + vertexBuffersSize1].get();
+					//CGAL mesh
+
 					FaceConnectToVertex* ftv1 = facesConnectToVertex[idx1 + vertexBuffersSize1].get();
 					FaceConnectToVertex* ftv2 = facesConnectToVertex[idx2 + vertexBuffersSize1].get();
 					FaceConnectToVertex* ftv3 = facesConnectToVertex[idx3 + vertexBuffersSize1].get();
@@ -498,6 +558,52 @@ public:
 					faces[i]->getAllEdges(edgeIdx, edgeVert);
 					neighborFacesData.insert(neighborFacesData.end(), faces[i]->neighborFaces.begin(), faces[i]->neighborFaces.end());
 				}
+				//add debug edge
+				//for (auto& aabbMesh : aabbMeshes) {
+				//	glm::vec3 p1 = aabbMesh[0];
+				//	glm::vec3 dir = aabbMesh[1] - aabbMesh[0];
+				//	glm::vec3 p2 = aabbMesh[1];
+				//	//line 1
+				//	edgeVert.push_back(Vertex(p1, 1));
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, 0, 0), 1));
+				//	//line 2
+				//	edgeVert.push_back(Vertex(p1, 1));
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, 0), 1));
+				//	//line 3
+				//	edgeVert.push_back(Vertex(p1, 1));
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, 0, dir.z), 1));
+				//	//line 4
+				//	edgeVert.push_back(Vertex(p2, 1));
+				//	edgeVert.push_back(Vertex(p2 - glm::vec3(dir.x, 0, 0), 1));
+				//	//line 5
+				//	edgeVert.push_back(Vertex(p2, 1));
+				//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, 0), 1));
+				//	//line 6
+				//	edgeVert.push_back(Vertex(p2, 1));
+				//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, 0, dir.z), 1));
+				//	//line 7
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, 0), 1));
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, dir.y, 0), 1));
+				//	//line 8
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, 0), 1));
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, dir.z), 1));
+				//	//line 9
+				//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, 0), 1));
+				//	edgeVert.push_back(Vertex(p2 - glm::vec3(dir.x, dir.y, 0), 1));
+				//	//line 10
+				//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, 0), 1));
+				//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, dir.z), 1));
+				//	//line 11
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, 0, 0), 1));
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, dir.y, 0), 1));
+				//	//line 12
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, 0, dir.z), 1));
+				//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, dir.z), 1));
+				//	int idx = edgeIdx.size();
+				//	for (int i = 0; i < 24; ++i) {
+				//		edgeIdx.push_back(idx + i);
+				//	}
+				//}
 				facesSize = faces.size();
 				vertexBuffersSize1 = vertices1.size();
 				vertexBuffersSize2 = vertices2.size();
@@ -506,6 +612,52 @@ public:
 
 			}
 
+			//add debug edge scene
+			//{
+			//	glm::vec3 p1 = aabbSceneMin;
+			//	glm::vec3 dir = aabbSceneMax - aabbSceneMin;
+			//	glm::vec3 p2 = aabbSceneMax;
+			//	//line 1
+			//	edgeVert.push_back(Vertex(p1, 1));
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, 0, 0), 1));
+			//	//line 2
+			//	edgeVert.push_back(Vertex(p1, 1));
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, 0), 1));
+			//	//line 3
+			//	edgeVert.push_back(Vertex(p1, 1));
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, 0, dir.z), 1));
+			//	//line 4
+			//	edgeVert.push_back(Vertex(p2, 1));
+			//	edgeVert.push_back(Vertex(p2 - glm::vec3(dir.x, 0, 0), 1));
+			//	//line 5
+			//	edgeVert.push_back(Vertex(p2, 1));
+			//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, 0), 1));
+			//	//line 6
+			//	edgeVert.push_back(Vertex(p2, 1));
+			//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, 0, dir.z), 1));
+			//	//line 7
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, 0), 1));
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, dir.y, 0), 1));
+			//	//line 8
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, 0), 1));
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, dir.z), 1));
+			//	//line 9
+			//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, 0), 1));
+			//	edgeVert.push_back(Vertex(p2 - glm::vec3(dir.x, dir.y, 0), 1));
+			//	//line 10
+			//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, 0), 1));
+			//	edgeVert.push_back(Vertex(p2 - glm::vec3(0, dir.y, dir.z), 1));
+			//	//line 11
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, 0, 0), 1));
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(dir.x, dir.y, 0), 1));
+			//	//line 12
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, 0, dir.z), 1));
+			//	edgeVert.push_back(Vertex(p1 + glm::vec3(0, dir.y, dir.z), 1));
+			//	int idx = edgeIdx.size();
+			//	for (int i = 0; i < 24; ++i) {
+			//		edgeIdx.push_back(idx + i);
+			//	}
+			//}
 			//store vertices2's data
 			std::vector<Vertex> vertices2Data;
 			for (auto& ver : vertices2) {
@@ -521,6 +673,10 @@ public:
 			size_t faceNorSize = faceNors.size() * sizeof(glm::vec4);
 			size_t edgeVertSize = edgeVert.size() * sizeof(Vertex);
 			size_t edgeIdxSize = edgeIdx.size() * sizeof(int);
+			for (int i = 0; i < edgeVert.size(); i+=2) {
+				edgeVert[i].globalHeID = i;
+				edgeVert[i + 1].globalHeID = i + 1;
+			}
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
@@ -626,11 +782,10 @@ public:
 				faceNorSize));
 			// Edge Vert Data
 			VK_CHECK_RESULT(device->createBuffer(
-				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				edgeVertSize,
-				&edgeVertBuffer.buffer,
-				&edgeVertBuffer.memory));
+				&edgeVertBuffer,
+				edgeVertSize));
 			// Edge Idx Data
 			VK_CHECK_RESULT(device->createBuffer(
 				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -658,11 +813,39 @@ public:
 			copyRegion.size = faceNorSize;
 			vkCmdCopyBuffer(copyCmd, faceNorStaging.buffer, faceNorBuffer.buffer, 1, &copyRegion);
 
+			//这些buffer的descriptor都没有设置过，code中只有uniform buffer设置了
+			//因为用到的是另一个createBuffer方法
 			copyRegion.size = edgeVertSize;
+			edgeVertBuffer.setupDescriptor(edgeVertSize, 0);
 			vkCmdCopyBuffer(copyCmd, edgeVertStaging.buffer, edgeVertBuffer.buffer, 1, &copyRegion);
 
 			copyRegion.size = edgeIdxSize;
 			vkCmdCopyBuffer(copyCmd, edgeIdxStaging.buffer, edgeIdxBuffer.buffer, 1, &copyRegion);
+
+			if (device->queueFamilyIndices.graphics != device->queueFamilyIndices.compute)
+			{
+				VkBufferMemoryBarrier buffer_barrier =
+				{
+					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+					nullptr,
+					VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+					0,
+					device->queueFamilyIndices.graphics,
+					device->queueFamilyIndices.compute,
+					edgeVertBuffer.buffer,
+					0,
+					edgeVertBuffer.size
+				};
+
+				vkCmdPipelineBarrier(
+					copyCmd,
+					VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+					VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+					0,
+					0, nullptr,
+					1, &buffer_barrier,
+					0, nullptr);
+			}
 
 			device->flushCommandBuffer(copyCmd, transferQueue, true);
 
@@ -791,6 +974,38 @@ public:
 		void analyzeEdgePixels2(vks::VulkanDevice* device, int32_t height, int32_t width, VkQueue transferQueue, const Camera& camera) {
 			std::unordered_map<int32_t, std::unordered_set<int32_t>> edgeList;
 			edgePixels = static_cast<int32_t*>(edgePixelsRawData);
+			//std::vector<int32_t> edgePixels(width * height * 4);
+			//std::memcpy(edgePixels.data(), edgePixelsRawData, width * height * 4);
+			std::vector<uint8_t> pixels(height * width * 4);
+			for(int i = 0; i < width * height * 4; i+=4) {
+				int32_t objID = edgePixels[i];
+				int32_t heID = edgePixels[i + 1];
+				int32_t color = edgePixels[i + 2];
+				int32_t a = edgePixels[i + 3];
+				if(color == 1) {
+					if (a == 2) {
+						pixels[i] = 255;
+						pixels[i + 1] = 0;
+						pixels[i + 2] = 0;
+						pixels[i + 3] = 255;
+					}
+					else {
+						pixels[i] = 255;
+						pixels[i + 1] = 255;
+						pixels[i + 2] = 255;
+						pixels[i + 3] = 255;
+					}
+				}
+				else {
+					pixels[i] = 0;
+					pixels[i + 1] = 0;
+					pixels[i + 2] = 0;
+					pixels[i + 3] = 255;
+				}
+			}
+			const std::string& filename = getAssetPath() + "models/test/combined/excavator_yellow_smooth/pic/1.png";
+			int stride = width * 4;
+			stbi_write_png(filename.c_str(), int(width), int(height), 4, pixels.data(), stride);
 			for (int y = 0; y < height; ++y) {
 				for (int x = 0; x < width; ++x) {
 					int index = (y * width + x) * 4;
@@ -876,6 +1091,154 @@ public:
 			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, lockedEdgeVertBuffer.buffer, 1, &copyRegion);
 
 			copyRegion.size = finIdx.size() * sizeof(int);
+			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, lockedEdgeIdxBuffer.buffer, 1, &copyRegion);
+			device->flushCommandBuffer(copyCmd, transferQueue, true);
+
+			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
+		}
+
+		void calculateCameraAABB(Camera& camera, vks::VulkanDevice* device, VkQueue transferQueue, int scale) {
+			//将aabb的中心转换至camera坐标系
+			glm::vec3 cW = 0.5f * (aabbSceneMin + aabbSceneMax);   // 中心
+			glm::vec3 rW = 0.5f * (aabbSceneMax - aabbSceneMin);   // 半径(extents)
+			glm::mat4 V = camera.matrices.view;
+			glm::mat3 A; // 旋转矩阵的绝对值
+			A[0] = glm::abs(V[0]);
+			A[1] = glm::abs(V[1]);
+			A[2] = glm::abs(V[2]);
+			glm::vec3 cV = glm::vec3(V * glm::vec4(cW, 1));
+			glm::vec3 rV = A * rW;
+			glm::mat4 invV = glm::inverse(V);
+			//重新算出bounding box
+			glm::vec3 newAABBCameraMin = cV - rV;
+			glm::vec3 newAABBCameraMax = cV + rV;
+
+			aabbCameraMin = newAABBCameraMin;
+			aabbCameraMax = newAABBCameraMax;
+
+			float lrs = (aabbCameraMax.x - aabbCameraMin.x) / scale;
+			float tbs = (aabbCameraMax.y - aabbCameraMin.y) / scale;
+			float lrsh = 0.5f * lrs;
+			float tbsh = 0.5f * tbs;
+			float lrh = (newAABBCameraMax.x - newAABBCameraMin.x) * 0.5f;
+			float tbh = (newAABBCameraMax.y - newAABBCameraMin.y) * 0.5f;
+
+			camera.orthoLeft = -lrh;
+			camera.orthoRight = lrh;
+			camera.orthoTop = tbh;
+			camera.orthoBottom = -tbh;
+			camera.znear = 0.01f;
+			camera.zfar = (newAABBCameraMax.z - newAABBCameraMin.z) + 1.f;
+
+			float x = (newAABBCameraMax.x + newAABBCameraMin.x) * 0.5f;
+			float y = (newAABBCameraMax.y + newAABBCameraMin.y) * 0.5f;
+			float z = newAABBCameraMax.z + 0.1f;
+			camera.position = glm::vec3(invV * glm::vec4(x, y, z, 1));
+			camera.positionOrig = camera.position;
+
+			camera.positions.clear();
+			for (int i = 0; i < scale; ++i) {
+				float y = aabbCameraMax.y - (i * tbs) - tbsh;
+				for (int j = 0; j < scale; ++j) {
+					float x = aabbCameraMin.x + (j * lrs) + lrsh;
+					glm::vec3 xyzW = glm::vec3(invV * glm::vec4(x, y, z, 1.f));
+					camera.positions.push_back(xyzW);
+				}
+			}
+
+
+			std::vector<Vertex> tmpEdgeVert;
+			std::vector<int> tmpEdgeIdx;
+
+			// view-space 八个角
+			glm::vec3 cornersV[8] = {
+				{newAABBCameraMin.x, newAABBCameraMin.y, newAABBCameraMin.z},
+				{newAABBCameraMax.x, newAABBCameraMin.y, newAABBCameraMin.z},
+				{newAABBCameraMin.x, newAABBCameraMax.y, newAABBCameraMin.z},
+				{newAABBCameraMax.x, newAABBCameraMax.y, newAABBCameraMin.z},
+				{newAABBCameraMin.x, newAABBCameraMin.y, newAABBCameraMax.z},
+				{newAABBCameraMax.x, newAABBCameraMin.y, newAABBCameraMax.z},
+				{newAABBCameraMin.x, newAABBCameraMax.y, newAABBCameraMax.z},
+				{newAABBCameraMax.x, newAABBCameraMax.y, newAABBCameraMax.z},
+			};
+
+			// 变回世界
+			glm::vec3 cornersW[8];
+			for (int i = 0; i < 8; ++i) {
+				cornersW[i] = glm::vec3(invV * glm::vec4(cornersV[i], 1.0f));
+			}
+
+			// 12 条边（每条边两个端点索引）
+			static const int E[12][2] = {
+				{0,1},{0,2},{0,4},
+				{1,3},{1,5},
+				{2,3},{2,6},
+				{3,7},
+				{4,5},{4,6},
+				{5,7},
+				{6,7}
+			};
+
+			// 4) 生成线段顶点和索引
+			tmpEdgeVert.reserve(24);
+			tmpEdgeIdx.reserve(24);
+
+			for (int e = 0; e < 12; ++e) {
+				const glm::vec3& a = cornersW[E[e][0]];
+				const glm::vec3& b = cornersW[E[e][1]];
+				tmpEdgeVert.push_back(Vertex(a, 1));  
+				tmpEdgeVert.push_back(Vertex(b, 1));
+				tmpEdgeIdx.push_back(2 * e + 0);
+				tmpEdgeIdx.push_back(2 * e + 1);
+			}
+			lockedEdgeIdxCnt = 24;
+			struct StagingBuffer {
+				VkBuffer buffer;
+				VkDeviceMemory memory;
+			} vertexStaging, indexStaging;
+			vkDestroyBuffer(device->logicalDevice, lockedEdgeVertBuffer.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, lockedEdgeVertBuffer.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, lockedEdgeIdxBuffer.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, lockedEdgeIdxBuffer.memory, nullptr);
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				tmpEdgeVert.size() * sizeof(Vertex),
+				&vertexStaging.buffer,
+				&vertexStaging.memory,
+				tmpEdgeVert.data()));
+			// Index data
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				tmpEdgeIdx.size() * sizeof(int),
+				&indexStaging.buffer,
+				&indexStaging.memory,
+				tmpEdgeIdx.data()));
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				tmpEdgeVert.size() * sizeof(Vertex),
+				&lockedEdgeVertBuffer.buffer,
+				&lockedEdgeVertBuffer.memory));
+			// Index buffer
+			VK_CHECK_RESULT(device->createBuffer(
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				tmpEdgeIdx.size() * sizeof(int),
+				&lockedEdgeIdxBuffer.buffer,
+				&lockedEdgeIdxBuffer.memory));
+
+			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+			VkBufferCopy copyRegion = {};
+
+			copyRegion.size = tmpEdgeVert.size() * sizeof(Vertex);
+			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, lockedEdgeVertBuffer.buffer, 1, &copyRegion);
+
+			copyRegion.size = tmpEdgeIdx.size() * sizeof(int);
 			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, lockedEdgeIdxBuffer.buffer, 1, &copyRegion);
 			device->flushCommandBuffer(copyCmd, transferQueue, true);
 
@@ -1011,7 +1374,10 @@ public:
 	int uFactor = 1;
 	int vFactor = 1;
 	bool lockedView = false;
-	bool prevLockedView = false;
+	bool savePic = false;
+	bool vectorize = false;
+	int savePicCnt = 0;
+	int scaleCnt = scale * scale;
 	
 
 	struct {
@@ -1070,20 +1436,31 @@ public:
 		glm::mat4 view;
 	} uniformDataLockedEdge;
 
+	struct UniformDataCompute1 {
+		unsigned int edgeVertSize;
+	} uniformDataCompute1;
+
 	struct {
 		vks::Buffer offscreen{ VK_NULL_HANDLE };
 		vks::Buffer composition{ VK_NULL_HANDLE };
 		vks::Buffer edge{ VK_NULL_HANDLE };
 		vks::Buffer lockedEdge{ VK_NULL_HANDLE };
+		vks::Buffer compute1{ VK_NULL_HANDLE };
 	} uniformBuffers;
+
+	struct {
+		vks::Buffer compute1{ VK_NULL_HANDLE };
+	}storageBuffers;
 
 	struct {
 		VkPipeline offscreen{ VK_NULL_HANDLE };
 		VkPipeline composition{ VK_NULL_HANDLE };
 		VkPipeline edge{ VK_NULL_HANDLE };
 		VkPipeline lockedEdge{ VK_NULL_HANDLE };
+		VkPipeline compute1{ VK_NULL_HANDLE };
 	} pipelines;
 	VkPipelineLayout pipelineLayout{ VK_NULL_HANDLE };
+	VkPipelineLayout pipelineLayoutCompute{ VK_NULL_HANDLE };
 
 	struct {
 		VkDescriptorSet model{ VK_NULL_HANDLE };
@@ -1091,17 +1468,21 @@ public:
 		VkDescriptorSet composition{ VK_NULL_HANDLE };
 		VkDescriptorSet edge{ VK_NULL_HANDLE };
 		VkDescriptorSet lockedEdge{ VK_NULL_HANDLE };
+		VkDescriptorSet compute1{ VK_NULL_HANDLE };
 	} descriptorSets;
 
 	VkDescriptorSetLayout descriptorSetLayout{ VK_NULL_HANDLE };
+	VkDescriptorSetLayout descriptorSetLayoutCompute1{ VK_NULL_HANDLE };
 
 	// Framebuffers holding the deferred attachments
+
 	struct FrameBufferAttachment {
 		VkImage image;
 		VkDeviceMemory mem;
 		VkImageView view;
 		VkFormat format;
 	};
+	std::array<FrameBufferAttachment, scale * scale> scaleSamples{};
 	struct FrameBuffer {
 		int32_t width, height;
 		VkFramebuffer frameBuffer;
@@ -1110,6 +1491,23 @@ public:
 		FrameBufferAttachment depth;
 		VkRenderPass renderPass;
 	} offScreenFrameBuf{};
+
+	struct Compute {
+		uint32_t queueFamilyIndex;					// Used to check if compute and graphics queue families differ and require additional barriers
+		VkQueue queue;								// Separate queue for compute commands (queue family may differ from the one used for graphics)
+		VkCommandPool commandPool;					// Use a separate command pool (queue family may differ from the one used for graphics)
+		//VkCommandBuffer commandBuffer;				// Command buffer storing the dispatch commands and barriers
+		//VkSemaphore semaphore;                      // Execution dependency between compute & graphic submission
+		VkDescriptorPool descriptorPool;
+		//VkDescriptorSetLayout descriptorSetLayout;	// Compute shader binding layout
+		//VkDescriptorSet descriptorSet;				// Compute shader bindings
+		//VkPipelineLayout pipelineLayout;			// Layout of the compute pipeline
+		//VkPipeline pipeline;						// Compute pipeline for updating particle positions
+	} compute;
+
+	struct Graphics {
+		uint32_t queueFamilyIndex;
+	}graphics;
 
 	FrameBuffer edgeFrameBuf{};
 	FrameBuffer lockedEdgeFrameBuf{};
@@ -1121,15 +1519,16 @@ public:
 	VkCommandBuffer offScreenCmdBuffer{ VK_NULL_HANDLE };
 	VkCommandBuffer edgeCmdBuffer{ VK_NULL_HANDLE };
 	VkCommandBuffer lockedEdgeCmdBuffer{ VK_NULL_HANDLE };
+	VkCommandBuffer computeCmdBuffer;
 
 	// Semaphore used to synchronize between offscreen and final scene rendering
 	VkSemaphore offscreenSemaphore{ VK_NULL_HANDLE };
 	VkSemaphore edgeSemaphore{ VK_NULL_HANDLE };
 	VkSemaphore lockedEdgeSemaphore{ VK_NULL_HANDLE };
-
+	VkSemaphore compute1Semaphore;
 	VulkanExample() : VulkanExampleBase()
 	{
-		title = "Deferred shading";
+		title = "Vectorized Hidden Line";
 		camera.type = Camera::CameraType::firstperson;
 		camera.movementSpeed = 5.0f;
 #ifndef __ANDROID__
@@ -1227,6 +1626,15 @@ public:
 		}
 	};
 
+
+	void getEnabledExtensions() override {
+		// 设备扩展：非语义调试打印
+		enabledDeviceExtensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
+
+		// （可选）如果你还需要实例扩展，也在这里加，例如：
+		// enabledInstanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+	};
+
 	// Create a frame buffer attachment
 	void createAttachment(
 		VkFormat format,
@@ -1264,6 +1672,66 @@ public:
 		image.samples = VK_SAMPLE_COUNT_1_BIT;
 		image.tiling = VK_IMAGE_TILING_OPTIMAL;
 		image.usage = usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+		VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
+		VkMemoryRequirements memReqs;
+
+		VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &attachment->image));
+		vkGetImageMemoryRequirements(device, attachment->image, &memReqs);
+		memAlloc.allocationSize = memReqs.size;
+		memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &attachment->mem));
+		VK_CHECK_RESULT(vkBindImageMemory(device, attachment->image, attachment->mem, 0));
+
+		VkImageViewCreateInfo imageView = vks::initializers::imageViewCreateInfo();
+		imageView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		imageView.format = format;
+		imageView.subresourceRange = {};
+		imageView.subresourceRange.aspectMask = aspectMask;
+		imageView.subresourceRange.baseMipLevel = 0;
+		imageView.subresourceRange.levelCount = 1;
+		imageView.subresourceRange.baseArrayLayer = 0;
+		imageView.subresourceRange.layerCount = 1;
+		imageView.image = attachment->image;
+		VK_CHECK_RESULT(vkCreateImageView(device, &imageView, nullptr, &attachment->view));
+	}
+
+	void createAttachment2(
+		VkFormat format,
+		VkImageUsageFlagBits usage,
+		FrameBufferAttachment* attachment)
+	{
+		VkImageAspectFlags aspectMask = 0;
+		VkImageLayout imageLayout;
+
+		attachment->format = format;
+
+		if (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+		{
+			aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		}
+		if (usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
+		{
+			aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			if (format >= VK_FORMAT_D16_UNORM_S8_UINT)
+				aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+			imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		}
+
+		assert(aspectMask > 0);
+
+		VkImageCreateInfo image = vks::initializers::imageCreateInfo();
+		image.imageType = VK_IMAGE_TYPE_2D;
+		image.format = format;
+		image.extent.width = offScreenFrameBuf.width;
+		image.extent.height = offScreenFrameBuf.height;
+		image.extent.depth = 1;
+		image.mipLevels = 1;
+		image.arrayLayers = 1;
+		image.samples = VK_SAMPLE_COUNT_1_BIT;
+		image.tiling = VK_IMAGE_TILING_OPTIMAL;
+		image.usage = usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
 		VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
 		VkMemoryRequirements memReqs;
@@ -1445,6 +1913,71 @@ public:
 		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &colorSampler));
 	}
 
+	void prepareCompute() {
+		// Create a compute capable device queue
+		// The VulkanDevice::createLogicalDevice functions finds a compute capable queue and prefers queue families that only support compute
+		// Depending on the implementation this may result in different queue family indices for graphics and computes,
+		// requiring proper synchronization (see the memory and pipeline barriers)
+		vkGetDeviceQueue(device, compute.queueFamilyIndex, 0, &compute.queue);
+
+
+		// Pool
+		std::vector<VkDescriptorPoolSize> poolSizes = {
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16)
+		};
+		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
+		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &compute.descriptorPool));
+
+		std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
+			// Binding 0 : 
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16),
+			// Binding 1 : 
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
+			// Binding 2 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2)
+		};
+		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute1));
+
+		// Sets
+		VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(compute.descriptorPool, &descriptorSetLayoutCompute1, 1);
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.compute1));
+
+		//write
+		std::vector<VkDescriptorImageInfo> imgInfos(scaleCnt);
+		for (uint32_t i = 0; i < scaleCnt; ++i)
+		{
+			imgInfos[i].sampler = colorSampler; // 如使用 immutable samplers，这里可以留空
+			imgInfos[i].imageView = scaleSamples[i].view;
+			imgInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		}
+		std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
+			// Binding 0 : 
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				0,
+				imgInfos.data(),
+				imgInfos.size()),
+			// Binding 1 : 
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				1,
+				&mesh.edgeVertBuffer.descriptor),
+			// Binding 2 :
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				2,
+				&uniformBuffers.compute1.descriptor)
+		};
+		
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
+		
+	}
 
 	void prepareEdgeFramebuffer()
 	{
@@ -1469,6 +2002,13 @@ public:
 			VK_FORMAT_R32G32B32A32_SINT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			&edgeFrameBuf.position);
+		for(auto& img : scaleSamples){
+			createAttachment2(
+				VK_FORMAT_R32G32B32A32_SINT,
+				VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+				&img);
+		}
+		
 
 		// Depth attachment
 
@@ -1825,7 +2365,21 @@ public:
 		positionBarrier.subresourceRange.baseArrayLayer = 0;
 		positionBarrier.subresourceRange.layerCount = 1;
 
+		VkBufferMemoryBarrier edgeBufAcqBarrier =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			0,
+			VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+			compute.queueFamilyIndex,
+			graphics.queueFamilyIndex,
+			mesh.edgeVertBuffer.buffer,
+			0,
+			mesh.edgeVertBuffer.size
+		};
+
 		VkImageMemoryBarrier barriers[] = { colorBarrier, positionBarrier };
+		
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer, &cmdBufInfo));
 
@@ -1837,6 +2391,16 @@ public:
 			0, nullptr,
 			0, nullptr,
 			2, barriers
+		);
+
+		vkCmdPipelineBarrier(
+			edgeCmdBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+			0,
+			0, nullptr,
+			1, &edgeBufAcqBarrier,
+			0, nullptr
 		);
 
 		vkCmdBeginRenderPass(edgeCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -1857,6 +2421,28 @@ public:
 		//vkCmdDraw(edgeCmdBuffer, 2, 1, 0, 0);
 
 		vkCmdEndRenderPass(edgeCmdBuffer);
+
+		VkBufferMemoryBarrier edgeBufRelBarrier =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+			0,
+			graphics.queueFamilyIndex,
+			compute.queueFamilyIndex,
+			mesh.edgeVertBuffer.buffer,
+			0,
+			mesh.edgeVertBuffer.size
+		};
+
+		vkCmdPipelineBarrier(
+			edgeCmdBuffer,
+			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			0,
+			0, nullptr,
+			1, &edgeBufRelBarrier,
+			0, nullptr);
 
 		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer));
 	}
@@ -1908,6 +2494,80 @@ public:
 		VK_CHECK_RESULT(vkEndCommandBuffer(lockedEdgeCmdBuffer));
 	}
 
+	void buildComputeCommandBuffer() {
+		VkCommandPoolCreateInfo cmdPoolInfo = {};
+		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		cmdPoolInfo.queueFamilyIndex = compute.queueFamilyIndex;
+		cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+		VK_CHECK_RESULT(vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &compute.commandPool));
+
+		computeCmdBuffer = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, compute.commandPool);
+
+		// Create a semaphore used to synchronize offscreen rendering and usage
+		VkSemaphoreCreateInfo semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
+		VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &compute1Semaphore));
+		
+
+		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+		VK_CHECK_RESULT(vkBeginCommandBuffer(computeCmdBuffer, &cmdBufInfo));
+
+		if (graphics.queueFamilyIndex != compute.queueFamilyIndex)
+		{
+			VkBufferMemoryBarrier acBarrier =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				0,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				graphics.queueFamilyIndex,
+				compute.queueFamilyIndex,
+				mesh.edgeVertBuffer.buffer,
+				0,
+				mesh.edgeVertBuffer.size
+			};
+
+			vkCmdPipelineBarrier(
+				computeCmdBuffer,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				0,
+				0, nullptr,
+				1, &acBarrier,
+				0, nullptr);
+		}
+
+		vkCmdBindPipeline(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute1);
+		vkCmdBindDescriptorSets(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute, 0, 1, &descriptorSets.compute1, 0, 0);
+		vkCmdDispatch(computeCmdBuffer, (1980 * 1080 * 4) / 64, 1, 1);
+		
+		if (graphics.queueFamilyIndex != compute.queueFamilyIndex)
+		{
+			VkBufferMemoryBarrier rlBarrier =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				0,
+				compute.queueFamilyIndex,
+				graphics.queueFamilyIndex,
+				mesh.edgeVertBuffer.buffer,
+				0,
+				mesh.edgeVertBuffer.size
+			};
+
+			vkCmdPipelineBarrier(
+				computeCmdBuffer,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				0,
+				0, nullptr,
+				1, &rlBarrier,
+				0, nullptr);
+		}
+
+		vkEndCommandBuffer(computeCmdBuffer);
+	}
+
 	void loadAssets()
 	{
 		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors;
@@ -1923,7 +2583,7 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/cylinder", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_smooth_normal", vulkanDevice, queue, glTFLoadingFlags);
-		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/car_uv", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_lowpoly", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/navy_debug", vulkanDevice, queue, glTFLoadingFlags);
@@ -1944,6 +2604,11 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/wrong_linewidth", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/sphere_bump", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/two_cube", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/excavator_yellow", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/excavator_yellow2", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/spine_test", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/spine_test2", vulkanDevice, queue, glTFLoadingFlags);
+		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/excavator_yellow_smooth", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		//view independent
 		
@@ -2153,7 +2818,7 @@ public:
 		VkPipelineRasterizationStateCreateInfo rasterizationState = vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE, 0);
 		VkPipelineColorBlendAttachmentState blendAttachmentState = vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE);
 		VkPipelineColorBlendStateCreateInfo colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
-		VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL);
+		VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
 		VkPipelineViewportStateCreateInfo viewportState = vks::initializers::pipelineViewportStateCreateInfo(1, 1, 0);
 		VkPipelineMultisampleStateCreateInfo multisampleState = vks::initializers::pipelineMultisampleStateCreateInfo(VK_SAMPLE_COUNT_1_BIT, 0);
 		std::vector<VkDynamicState> dynamicStateEnables = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -2173,8 +2838,8 @@ public:
 
 		// Final fullscreen composition pass pipeline
 		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "appelhiddenline/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "appelhiddenline/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		// Empty vertex input state, vertices are generated by the vertex shader
 		VkPipelineVertexInputStateCreateInfo emptyInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
 		pipelineCI.pVertexInputState = &emptyInputState;
@@ -2197,8 +2862,8 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 
 		// Offscreen pipeline
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "appelhiddenline/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "appelhiddenline/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 
 		// Separate render pass
 		pipelineCI.renderPass = offScreenFrameBuf.renderPass;
@@ -2224,22 +2889,29 @@ public:
 		colorBlendState.attachmentCount = static_cast<uint32_t>(blendAttachmentStates2.size());
 		colorBlendState.pAttachments = blendAttachmentStates2.data();
 		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-		rasterizationState.lineWidth = 5.f;
+		rasterizationState.lineWidth = 3.f;
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "appelhiddenline/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "appelhiddenline/edge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = edgeFrameBuf.renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.edge));
 
 
 		colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
-		rasterizationState.lineWidth = 5.f;
-		shaderStages[0] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gbufferhiddenline/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		rasterizationState.lineWidth = 3.f;
+		shaderStages[0] = loadShader(getShadersPath() + "appelhiddenline/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "appelhiddenline/lockededge.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineCI.renderPass = lockedEdgeFrameBuf.renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.lockedEdge));
+
+
+		pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayoutCompute1, 1);
+		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayoutCompute));
+		VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayoutCompute, 0);
+		computePipelineCreateInfo.stage = loadShader(getShadersPath() + "appelhiddenline/edgespacing.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+		VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.compute1));
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
@@ -2251,17 +2923,21 @@ public:
 		// Edge vertex shader
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.edge, sizeof(UniformDataEdge)))
 
-			// Locked Edge vertex shader
-			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.lockedEdge, sizeof(UniformDataLockedEdge)))
+		// Locked Edge vertex shader
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.lockedEdge, sizeof(UniformDataLockedEdge)))
 
-			// Deferred fragment shader
-			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.composition, sizeof(UniformDataComposition)));
+		// Deferred fragment shader
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.composition, sizeof(UniformDataComposition)));
+
+		// Compute shader 1
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.compute1, sizeof(UniformDataCompute1)));
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.offscreen.map());
 		VK_CHECK_RESULT(uniformBuffers.edge.map());
 		VK_CHECK_RESULT(uniformBuffers.lockedEdge.map());
 		VK_CHECK_RESULT(uniformBuffers.composition.map());
+		VK_CHECK_RESULT(uniformBuffers.compute1.map());
 
 		// Setup instanced model positions
 		uniformDataOffscreen.instancePos[0] = glm::vec4(0.0f);
@@ -2273,6 +2949,7 @@ public:
 		updateUniformBufferEdge();
 		updateUniformBufferLockedEdge();
 		updateUniformBufferComposition();
+		updateUniformBufferCompute1();
 	}
 
 	// Update matrices used for the offscreen rendering of the scene
@@ -2314,6 +2991,11 @@ public:
 		uniformDataLockedEdge.view = camera.matrices.view;
 		uniformDataLockedEdge.model = glm::mat4(1.0f);
 		memcpy(uniformBuffers.lockedEdge.mapped, &uniformDataLockedEdge, sizeof(UniformDataLockedEdge));
+	}
+
+	void updateUniformBufferCompute1() {
+		uniformDataCompute1.edgeVertSize = mesh.edgeVert.size();
+		memcpy(uniformBuffers.compute1.mapped, &uniformDataCompute1, sizeof(UniformDataCompute1));
 	}
 
 	// Update lights and parameters passed to the composition shaders
@@ -2401,7 +3083,35 @@ public:
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
 	}
 
+
+	void copyImgToImg(VkImage srcImage, VkImage dstImage, uint32_t width, uint32_t height) {
+		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcImage);
+		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstImage);
+		
+		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		VkImageSubresourceLayers subResource = {};
+		subResource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		subResource.baseArrayLayer = 0;
+		subResource.mipLevel = 0;
+		subResource.layerCount = 1;
+		VkImageCopy copyRegion = {};
+		copyRegion.srcSubresource = subResource;
+		copyRegion.srcOffset = { 0, 0, 0 };
+		copyRegion.dstSubresource = subResource;
+		copyRegion.dstOffset = { 0, 0, 0 };
+		copyRegion.extent.width = width;
+		copyRegion.extent.height = height;
+		copyRegion.extent.depth = 1;
+		vkCmdCopyImage(
+			tmpCmdBuf,
+			srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1, &copyRegion);
+		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
+	}
+
 	void copyGPUtoCPU(uint32_t width, uint32_t height, VkImage image, VkBuffer dstBuffer) {
+		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image);
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 
 		VkBufferImageCopy region = {};
@@ -2425,6 +3135,52 @@ public:
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 		vkQueueWaitIdle(queue);
 		vkFreeCommandBuffers(device, cmdPool, 1, &tmpCmdBuf);
+	}
+
+	void savePicOnCPU(const std::string filename, VkImage img, uint32_t width, uint32_t height) {
+		vks::Buffer cpuBuffer;
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			width * height * sizeof(glm::vec4),
+			&cpuBuffer.buffer,
+			&cpuBuffer.memory));
+		copyGPUtoCPU(width, height, img, cpuBuffer.buffer);
+		void* rawData;
+		vkMapMemory(device, cpuBuffer.memory, 0, width * height * sizeof(glm::vec4), 0, &rawData);
+		int32_t* edgePixels = static_cast<int32_t*>(rawData);
+		std::vector<uint8_t> pixels(height * width * 4);
+		//慢
+		for (int i = 0; i < width * height * 4; i += 4) {
+			int32_t objID = edgePixels[i];
+			int32_t heID = edgePixels[i + 1];
+			int32_t color = edgePixels[i + 2];
+			int32_t a = edgePixels[i + 3];
+			if (color == 1) {
+				if (a == 2) {
+					pixels[i] = 255;
+					pixels[i + 1] = 0;
+					pixels[i + 2] = 0;
+					pixels[i + 3] = 255;
+				}
+				else {
+					pixels[i] = 255;
+					pixels[i + 1] = 255;
+					pixels[i + 2] = 255;
+					pixels[i + 3] = 255;
+				}
+			}
+			else {
+				pixels[i] = 0;
+				pixels[i + 1] = 0;
+				pixels[i + 2] = 0;
+				pixels[i + 3] = 255;
+			}
+		}
+		int stride = width * 4;
+		//慢
+		stbi_write_png(filename.c_str(), int(width), int(height), 4, pixels.data(), stride);
+		vkUnmapMemory(device, mesh.cpuImageBuffer.memory);
 	}
 
 	void rebuildLockedEdgeCommandBuffer() {
@@ -2468,25 +3224,81 @@ public:
 		VK_CHECK_RESULT(vkEndCommandBuffer(lockedEdgeCmdBuffer));
 	}
 
+
+	//void renderManyViews(VkCommandBuffer cmd,
+	//	std::array<glm::mat4, scale * scale>& viewProjList,
+	//	std::array<FrameBufferAttachment, scale * scale>& targets) {
+
+	//	// 如使用 UBO：把摄像机矩阵写入映射内存的数组；或用 push constant 每次更新
+	//	for (size_t i = 0; i < targets.size(); ++i) {
+	//		// 更新当前视角
+	//		glm::mat4 viewProj = viewProjList[i];
+	//		// map+memcpy 或 vkCmdPushConstants(… &ubo, …)
+
+	//		// 开离屏 pass
+	//		VkClearValue clearValues[1];
+	//		clearValues[0].color.int32[0] = -1;
+	//		clearValues[0].color.int32[1] = -1;
+	//		clearValues[0].color.int32[2] = 0;
+	//		clearValues[0].color.int32[3] = 0;
+
+	//		VkRenderPassBeginInfo rpBI{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+	//		rpBI.renderPass = edgeFrameBuf.renderPass;
+	//		rpBI.framebuffer = targets[i].framebuffer;
+	//		rpBI.renderArea = { {0,0}, rttExtent };
+	//		rpBI.clearValueCount = useDepth ? 2u : 1u;
+	//		rpBI.pClearValues = clears;
+
+	//		vkCmdBeginRenderPass(cmd, &rpBI, VK_SUBPASS_CONTENTS_INLINE);
+	//		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipeline);
+	//		// 绑定描述集（含你通用资源 + 摄像机 UBO）
+	//		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+	//			offscreenPipelineLayout, 0, 1, &offscreenSet, 0, nullptr);
+	//		// 画场景
+	//		drawScene(cmd);
+	//		vkCmdEndRenderPass(cmd);
+
+	//		// 把当前 color 图像“定格”在可采样布局（若 render pass 的 color.finalLayout 已设为 SAMPLED 可省）
+	//		VkImageMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+	//		barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+	//		barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+	//		barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+	//		barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+	//		barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // 若 finalLayout 是这个就保持不变
+	//		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	//		barrier.image = targets[i].image;
+	//		barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+	//		VkDependencyInfo dep{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	//		dep.imageMemoryBarrierCount = 1;
+	//		dep.pImageMemoryBarriers = &barrier;
+	//		vkCmdPipelineBarrier2(cmd, &dep);
+	//	}
+	//}
+
 	void prepare()
 	{
 #if DLF
-		std::string glslToSpvBat = getShadersPath() + "gbufferhiddenline/glsltospv.bat " + getShadersPath() + "gbufferhiddenline";
+		std::string glslToSpvBat = getShadersPath() + "appelhiddenline/glsltospv.bat " + getShadersPath() + "appelhiddenline";
 		system(glslToSpvBat.c_str());
 		camera.flipY = true;
 #endif
 		VulkanExampleBase::prepare();
+		graphics.queueFamilyIndex = vulkanDevice->queueFamilyIndices.graphics;
+		compute.queueFamilyIndex = vulkanDevice->queueFamilyIndices.compute;
 		loadAssets();
 		prepareOffscreenFramebuffer();
 		prepareEdgeFramebuffer();
 		prepareLockedEdgeFramebuffer(vulkanDevice);
 		prepareUniformBuffers();
+		prepareCompute();
 		setupDescriptors();
 		preparePipelines();
 		buildCommandBuffers();
 		buildDeferredCommandBuffer();
 		buildEdgeCommandBuffer();
 		buildLockedEdgeCommandBuffer();
+		buildComputeCommandBuffer();
 		prepared = true;
 	}
 
@@ -2514,10 +3326,25 @@ public:
 		submitInfo.pCommandBuffers = &offScreenCmdBuffer;
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
+		if (vectorize) {
+			VkPipelineStageFlags waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+			// Submit compute commands
+			VkSubmitInfo computeSubmitInfo = vks::initializers::submitInfo();
+			computeSubmitInfo.commandBufferCount = 1;
+			computeSubmitInfo.pCommandBuffers = &computeCmdBuffer;
+			computeSubmitInfo.waitSemaphoreCount = 1;
+			computeSubmitInfo.pWaitSemaphores = &offscreenSemaphore;
+			computeSubmitInfo.pWaitDstStageMask = &waitStageMask;
+			computeSubmitInfo.signalSemaphoreCount = 1;
+			computeSubmitInfo.pSignalSemaphores = &compute1Semaphore;
+			VK_CHECK_RESULT(vkQueueSubmit(compute.queue, 1, &computeSubmitInfo, VK_NULL_HANDLE));
+		}
 
 		// Edge rendering
 		// Wait for offscreen semaphore
-		submitInfo.pWaitSemaphores = &offscreenSemaphore;
+		submitInfo.pWaitSemaphores = (vectorize ? &compute1Semaphore : &offscreenSemaphore);
+		vectorize = false;
 		submitInfo.pSignalSemaphores = &edgeSemaphore;
 		// Submit work
 		submitInfo.commandBufferCount = 1;
@@ -2546,8 +3373,51 @@ public:
 			copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
 			vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
 			mesh.analyzeEdgePixels2(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue, camera);
-			rebuildLockedEdgeCommandBuffer();
+			vkUnmapMemory(device, mesh.cpuImageBuffer.memory);
+			//rebuildLockedEdgeCommandBuffer();
 			lockedView = false;
+		}
+
+		if (savePic) {
+			if (savePicCnt == 0) {
+				vkDeviceWaitIdle(device);
+				camera.positionOrig = camera.position;
+				camera.orthoLeftOrig = camera.orthoLeft;
+				camera.orthoRightOrig = camera.orthoRight;
+				camera.orthoTopOrig = camera.orthoTop;
+				camera.orthoBottomOrig = camera.orthoBottom;
+				mesh.calculateCameraAABB(camera, vulkanDevice, queue, scale);
+				++savePicCnt;
+			}
+			else if (savePicCnt == 1) {
+				copyImgToImg(edgeFrameBuf.position.image, scaleSamples[0].image, edgeFrameBuf.width, edgeFrameBuf.height);
+				//savePicOnCPU(getAssetPath() + "models/test/combined/excavator_yellow_smooth/pic/0.png", scaleSamples[0].image, edgeFrameBuf.width, edgeFrameBuf.height);
+				changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[0].image);
+				camera.setViewToAABB(mesh.aabbCameraMin, mesh.aabbCameraMax, scale);
+				++savePicCnt;
+			}
+			else if (savePicCnt <= (scaleCnt + 1)) {
+				copyImgToImg(edgeFrameBuf.position.image, scaleSamples[savePicCnt-2].image, edgeFrameBuf.width, edgeFrameBuf.height);
+				//savePicOnCPU(getAssetPath() + "models/test/combined/excavator_yellow_smooth/pic/" + std::to_string(savePicCnt - 1) + ".png", scaleSamples[savePicCnt-2].image, edgeFrameBuf.width, edgeFrameBuf.height);
+				changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[savePicCnt - 2].image);
+				if (savePicCnt == (scaleCnt + 1)) {
+					camera.position = camera.positionOrig;
+					camera.orthoLeft = -(mesh.aabbCameraMax.x - mesh.aabbCameraMin.x) * 0.5f;
+					camera.orthoRight = (mesh.aabbCameraMax.x - mesh.aabbCameraMin.x) * 0.5f;
+					camera.orthoTop = (mesh.aabbCameraMax.y - mesh.aabbCameraMin.y) * 0.5f;
+					camera.orthoBottom = -(mesh.aabbCameraMax.y - mesh.aabbCameraMin.y) * 0.5f;
+					camera.matrices.perspective = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
+					camera.matrices.view = glm::lookAt(camera.position, camera.position + camera.getCamFront(), glm::vec3(0, 1, 0));
+				}
+				else {
+					camera.position = camera.positions[savePicCnt-1];
+				}
+				++savePicCnt;
+			}
+			else {
+				savePicCnt = 0;
+				savePic = false;
+			}
 		}
 
 		submitInfo.pWaitSemaphores = &edgeSemaphore;
@@ -2569,6 +3439,22 @@ public:
 
 		VulkanExampleBase::submitFrame();
 	}
+
+	/*VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+		VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+		VkDebugUtilsMessageTypeFlagsEXT type,
+		const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+		void* pUserData)
+	{
+		if (pCallbackData->pMessageIdName &&
+			strstr(pCallbackData->pMessageIdName, "DEBUG-PRINTF")) {
+			printf("Shader printf: %s\n", pCallbackData->pMessage);
+		}
+		else {
+			printf("Validation: %s\n", pCallbackData->pMessage);
+		}
+		return VK_FALSE;
+	}*/
 
 
 	virtual void render()
@@ -2598,8 +3484,15 @@ public:
 			overlay->sliderFloat("right", &camera.orthoRight, 0.5f, 10.f);
 			overlay->sliderFloat("bottom", &camera.orthoBottom, -10.f, -0.5f);
 			overlay->sliderFloat("top", &camera.orthoTop, 0.5f, 10.f);
+			//ImGui::InputFloat3("CamPos", &camera.position[0]);
 			overlay->checkBox("Orthographic", &camera.orthographic);
 			lockedView = overlay->button("LockedView");
+			if (overlay->button("SavePic")) {
+				savePic = true;
+			};
+			if (overlay->button("Vectorize")) {
+				vectorize = !vectorize;
+			}
 		}
 	}
 };

@@ -16,6 +16,7 @@ include_directories(external/tinygltf)
 include_directories(external/ktx/include)
 include_directories(external/ktx/other_include)
 include_directories(external/occt_vc14-64-combined/occt_vc14-64/inc)
+include_directories(external/stb)
 include_directories(base)
 
 
@@ -27,12 +28,16 @@ OPTION(USE_RELATIVE_ASSET_PATH "Load assets (shaders, models, textures) from a f
 OPTION(FORCE_VALIDATION "Forces validation on for all samples at compile time (prefer using the -v / --validation command line arguments)" OFF)
 
 set(RESOURCE_INSTALL_DIR "" CACHE PATH "Path to install resources to (leave empty for running uninstalled)")
+set(CMAKE_TOOLCHAIN_FILE "…/vcpkg/scripts/buildsystems/vcpkg.cmake")
 
 # Use FindVulkan module added with CMAKE 3.7
 if (NOT CMAKE_VERSION VERSION_LESS 3.7.0)
 	message(STATUS "Using module to find Vulkan")
 	find_package(Vulkan)
 endif()
+
+find_package(CGAL REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 IF(UNIX AND NOT APPLE)
 	set(LINUX TRUE)

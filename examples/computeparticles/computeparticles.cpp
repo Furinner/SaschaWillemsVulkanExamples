@@ -157,7 +157,9 @@ public:
 			// Draw the particle system using the update vertex buffer
 			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
+			VkViewport viewport = vks::initializers::viewport((float)width, -(float)height, 0.0f, 1.0f);
+			viewport.x = 0;
+			viewport.y = (float)height;
 			vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
 
 			VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
@@ -354,6 +356,12 @@ public:
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
+	}
+
+	void getEnabledFeatures() override {
+		if (deviceFeatures.largePoints) {
+			enabledFeatures.largePoints = true;
+		}
 	}
 
 	void prepareGraphics()
@@ -554,7 +562,7 @@ public:
 		else
 		{
 			float normalizedMx = (mouseState.position.x - static_cast<float>(width / 2)) / static_cast<float>(width / 2);
-			float normalizedMy = (mouseState.position.y - static_cast<float>(height / 2)) / static_cast<float>(height / 2);
+			float normalizedMy = -(mouseState.position.y - static_cast<float>(height / 2)) / static_cast<float>(height / 2);
 			compute.uniformData.destX = normalizedMx;
 			compute.uniformData.destY = normalizedMy;
 		}
@@ -600,6 +608,8 @@ public:
 	void prepare()
 	{
 		VulkanExampleBase::prepare();
+		std::string glslToSpvBat = getShadersPath() + "computeparticles/glsltospv.bat " + getShadersPath() + "computeparticles";
+		system(glslToSpvBat.c_str());
 		// We will be using the queue family indices to check if graphics and compute queue families differ
 		// If that's the case, we need additional barriers for acquiring and releasing resources
 		graphics.queueFamilyIndex = vulkanDevice->queueFamilyIndices.graphics;

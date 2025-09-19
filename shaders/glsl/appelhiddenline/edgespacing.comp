@@ -1,0 +1,51 @@
+#version 450
+#extension GL_EXT_debug_printf : enable
+#define SCALECNT 16
+
+struct Vertex{
+    vec3 position;
+    vec3 normal;
+    vec3 faceNor;
+    vec3 symFaceNor;
+    vec2 uv;
+    int objectID;
+    int faceID;
+    int border;
+    int heID;
+    int uniqueID;
+    int debug;
+    int globalHeID;
+};
+
+layout (set = 0, binding = 0) uniform isampler2D scaleSamples[SCALECNT]; // 定长数组
+
+layout (set = 0, binding = 1) buffer Vers
+{
+    Vertex vertices[];
+};
+
+//uniform和buffer一定不能搞错
+layout (set = 0, binding = 2) uniform UBO
+{
+   uint edgeVertSize;
+}ubo;
+
+layout (local_size_x = 64) in;
+
+
+
+void main() 
+{
+//    debugPrintfEXT("nh");
+//    debugPrintfEXT("index=%u pos=(%.2f, %.2f, %.2f)\n", index1, v1.position.x, v1.position.y, v1.position.z);
+//    uint index1 = gl_GlobalInvocationID.x * 2;
+//    uint index2 = index1 + 1;
+//    if (index1 >= ubo.edgeVertSize) 
+//		return;	
+//    Vertex v1 = vertices[index1];
+//    Vertex v2 = vertices[index2];
+//    vertices[index1].position = mix(v1.position, v2.position, 0.25);
+//    vertices[index2].position = mix(v1.position, v2.position, 0.75);
+
+}
+

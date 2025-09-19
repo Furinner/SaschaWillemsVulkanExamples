@@ -163,6 +163,7 @@ public:
 	//uint32_t height = 720;
 	uint32_t width = 1920;
 	uint32_t height = 1080;
+	static const uint32_t scale = 4; // ½«Í¼Æ¬·Ö³É4x4¿é
 
 	vks::UIOverlay ui;
 	CommandLineParser commandLineParser;
@@ -178,7 +179,7 @@ public:
 	/** @brief Example settings that can be changed e.g. by command line arguments */
 	struct Settings {
 		/** @brief Activates validation layers (and message output) when set to true */
-		bool validation = false;
+		bool validation = true;
 		/** @brief Set to true if fullscreen mode has been requested via command line */
 		bool fullscreen = false;
 		/** @brief Set to true if v-sync will be forced for the swapchain */

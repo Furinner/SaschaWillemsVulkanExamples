@@ -63,6 +63,9 @@ function(buildExample EXAMPLE_NAME)
 	add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../external/occt_vc14-64-combined/3rdparty-vc14-64/freetype-2.13.3-x64/bin/freetype.dll" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
 	add_custom_command(TARGET ${EXAMPLE_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/../external/occt_vc14-64-combined/3rdparty-vc14-64/openvr-1.14.15-64/bin/win64/openvr_api.dll" "$<TARGET_FILE_DIR:${EXAMPLE_NAME}>")
 
+	# CGAL
+	target_link_libraries(${EXAMPLE_NAME} CGAL::CGAL)
+
 	file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 	set_target_properties(${EXAMPLE_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 	if(${EXAMPLE_NAME} STREQUAL "texture3d")
@@ -107,6 +110,7 @@ function(buildExamples)
 endfunction(buildExamples)
 
 set(EXAMPLES
+	appelhiddenline
 	bloom
 	bufferdeviceaddress
 	computecloth

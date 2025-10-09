@@ -247,4 +247,4 @@ libs/vulkan/*.so
 !external/**/
 # Un-ignore DLLs inside external/
 !external/**/*.dll
-!assets/models/test/combined/excavator_yellow_smooth/pic
+assets/models/test/combined/excavator_yellow_smooth/pic

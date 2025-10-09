@@ -94,37 +94,59 @@ bool nearlyEqual(float x, float y)
     return abs(x - y) < EPSILON;
 }
 
-bool checkAroundPixel(int picIdx, int px, int py){
+bool checkAroundPixel(int picIdx, int px, int py, int targetEdgeIdx){
+    //确保周围要么是-1，要么是自己
+//    for(int i = -1; i < 2; ++i){
+//        for(int j = -1; j < 2; ++j){
+//            if((i == 0) && (j == 0)){
+//                continue;
+//            }
+//            int val = texelFetch(scaleSamples[picIdx], ivec2(px + i, py + j), 0).y;
+//            if((val != -1) && (val != targetEdgeIdx)){
+//                return false;
+//            }
+//        }
+//    }
+//    return true;
+    
+    //确保周围至少一个自己
     for(int i = -1; i < 2; ++i){
         for(int j = -1; j < 2; ++j){
             if((i == 0) && (j == 0)){
                 continue;
             }
             int val = texelFetch(scaleSamples[picIdx], ivec2(px + i, py + j), 0).y;
-            if(val != -1){
-                return false;
+            if((val == targetEdgeIdx)){
+                return true;
             }
         }
     }
-    return true;
+    return false;
 }
 
-bool checkPic(ivec2 intPart, vec2 fracPart){
+bool checkPic(ivec2 intPart, vec2 fracPart, int targetEdgeIdx){
     int picIdx = intPart.y * 4 + intPart.x;
     vec2 pxy = fracPart * vec2(3840, 2160);
     //float to int，是直接抹除小数部分
     int px = int(pxy.x);
     int py = int(pxy.y);
     int val = texelFetch(scaleSamples[picIdx], ivec2(px, py), 0).y;
-    if(val == -1){
-        if(checkAroundPixel(picIdx, px, py)){
-            //debugPrintfEXT("pos=(%.5f, %.5f, %u, %u, %.5f, %.5f)\n",pxy.x, pxy.y, px, py, fracPart.x, fracPart.y);
-            debugPrintfEXT("pos=(%u)\n",targetEdgeCnt);
-            atomicAdd(edgeSuccessCnt, 1);
+
+//    if((val == -1) || (val == targetEdgeIdx)){
+//        if(checkAroundPixel(picIdx, px, py, targetEdgeIdx)){
+//            return true;
+//        }
+//    }else{
+//        return false;
+//    }
+    if((val == targetEdgeIdx)){
+        return true;
+    }else{
+        if(checkAroundPixel(picIdx, px, py, targetEdgeIdx)){
             return true;
         }
+        return false;
     }
-    return false;
 }
 
 void main() 
@@ -201,7 +223,7 @@ void main()
                 }
             }
         }
-        vec3 testPoint = (v2Pos - v1Pos / 2.f);
+        vec3 testPoint = (v1Pos + v2Pos) * 0.5f;
         vec4 testPoint1 = ubo.proj * vec4(testPoint, 1);
         testPoint = vec3(testPoint1 / testPoint1.w);
         vec2 largeUV = (testPoint.xy + vec2(1)) * 2;
@@ -209,9 +231,11 @@ void main()
         vec2 intPartf;
         vec2 fracPart = modf(largeUV, intPartf);
         ivec2 intPart =  ivec2(intPartf);
-        if(checkPic(intPart, fracPart)){
+        //debugPrintfEXT("pos=(%u, %.5f, %.5f, %.5f, %.5f, %.5f,%.5f,%.5f,%.5f)\n",targetEdgeIdx, v1Pos.x, v1Pos.y, v2Pos.x, v2Pos.y, largeUV.x,largeUV.y, intPartf.x, intPartf.y);
+        if(checkPic(intPart, fracPart, targetEdgeIdx)){
             vertices[targetEdgeIdx * 2].debug = 1;
             vertices[targetEdgeIdx * 2 + 1].debug = 1;
+            atomicAdd(edgeSuccessCnt, 1);
         }
     }else{
         

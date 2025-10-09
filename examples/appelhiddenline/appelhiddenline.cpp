@@ -2646,7 +2646,7 @@ public:
 
 		vkCmdPipelineBarrier(
 			edgeCmdBuffer,
-			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+			VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
 			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 			0,
 			0, nullptr,
@@ -2881,7 +2881,7 @@ public:
 		vkCmdBindPipeline(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute1);
 		vkCmdBindDescriptorSets(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute1, 0, 1, &descriptorSets.compute1, 0, 0);
 		//vkCmdDispatch(computeCmdBuffer, (3840 * 2160) * 16 / 64, 1, 1);
-		vkCmdDispatch(computeCmdBuffer, (mesh.edgeVert.size() / 2) / 64, 1, 1);
+		vkCmdDispatch(computeCmdBuffer, ((mesh.edgeVert.size() / 2) / 64) + 1, 1, 1);
 		{
 			VkBufferMemoryBarrier successCntBufBar{
 					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -2970,8 +2970,6 @@ public:
 				0, nullptr);
 		}
 
-
-
 		vkEndCommandBuffer(computeCmdBuffer);
 
 
@@ -3033,7 +3031,7 @@ public:
 		}
 		vkCmdBindPipeline(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute2);
 		vkCmdBindDescriptorSets(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute2, 0, 1, &descriptorSets.compute2, 0, 0);
-		vkCmdDispatch(computeCmdBuffer2, (mesh.edgeVert.size() / 2) / 64, 1, 1);
+		vkCmdDispatch(computeCmdBuffer2, ((mesh.edgeVert.size() / 2) / 64) + 1, 1, 1);
 		{
 			VkBufferMemoryBarrier rlBarrier =
 			{
@@ -3535,11 +3533,11 @@ public:
 
 	void updateUniformBufferCompute() {
 		//uniformDataCompute1.edgeVertSize = mesh.edgeVert.size();
-		uniformDataCompute1.edgeVertSize = mesh.edgeVert.size();
+		uniformDataCompute1.edgeVertSize = mesh.edgeVert.size() / 2;
 		uniformDataCompute1.view = camera.matrices.view;
 		uniformDataCompute1.proj = camera.matrices.perspective;
 		memcpy(uniformBuffers.compute1.mapped, &uniformDataCompute1, sizeof(UniformDataCompute1));
-		uniformDataCompute2.edgeVertSize = mesh.edgeVert.size();
+		uniformDataCompute2.edgeVertSize = mesh.edgeVert.size() / 2;
 		uniformDataCompute2.view = camera.matrices.view;
 		uniformDataCompute2.proj = camera.matrices.perspective;
 		memcpy(uniformBuffers.compute2.mapped, &uniformDataCompute2, sizeof(UniformDataCompute1));
@@ -3890,6 +3888,7 @@ public:
 			computeSubmitInfo.pWaitDstStageMask = &waitStageMask;
 			computeSubmitInfo.pSignalSemaphores = &compute1Semaphore;
 			VK_CHECK_RESULT(vkQueueSubmit(compute.queue, 1, &computeSubmitInfo, VK_NULL_HANDLE));
+			//vkDeviceWaitIdle(device);
 			void* mapped = nullptr;
 			vkMapMemory(device, stagingBuffers.edgeSuccessCnt.memory, 0, sizeof(uint32_t), 0, &mapped);
 			tmpUsage.edgeSuccessCnt = static_cast<uint32_t*>(mapped)[0];
@@ -3907,8 +3906,8 @@ public:
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &edgeCmdBuffer;
 		submitInfo.pWaitDstStageMask = (vectorize ? &waitStageMask : &waitStageMask2);
-		vectorize = false;
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+		vectorize = false;
 		/*void* mapped = nullptr;
 		vkMapMemory(device, stagingBuffers.edge.memory, 0, sizeof(uint32_t), 0, &mapped);
 		tmpUsage.edgeCnt = static_cast<uint32_t*>(mapped)[0];*/

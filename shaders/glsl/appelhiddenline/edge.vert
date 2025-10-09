@@ -1,4 +1,6 @@
 #version 450
+#extension GL_EXT_debug_printf : enable
+
 
 layout (binding = 0) uniform UBO 
 {
@@ -7,6 +9,18 @@ layout (binding = 0) uniform UBO
 	mat4 view;
 	int orthographic;
 } ubo;
+
+
+layout (binding = 10) buffer SBO1
+{
+	uint edgeCnt;
+} sbo1;
+
+layout (binding = 11) buffer SBO2
+{
+	int edgeList[];
+} sbo2;
+
 
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec3 inNormal;
@@ -46,6 +60,7 @@ void main()
 //		y = 3;
 //	}
 //	gl_Position = vec4(x, y, 1, 1);
+	//debugPrintfEXT("index=%u", sbo1.edgeCnt);
 	vec3 viewPos = vec3(ubo.view * ubo.model * vec4(inPos,1));
 	
 	//move all vertices towards positive z a small amount.
@@ -66,6 +81,8 @@ void main()
 	outSymFaceNor = mat3(ubo.view) * inSymFaceNor;
 	outDebug = inDebug;
 
+	bool startPoint = ((gl_VertexIndex & 1u) == 0u);
+
 	vec3 pixelNor;
 	if(bool(ubo.orthographic)){
 		pixelNor = vec3(0.f, 0.f, -1.f);
@@ -74,14 +91,22 @@ void main()
 		pixelNor = normalize(closerViewPos);
 		//pixelNor = -mat3(ubo.view)[2];
 	}
-
+	
 	if(inBorder == 1){
 		outBorder = inBorder;
+		if(startPoint){
+			uint idx = atomicAdd(sbo1.edgeCnt, 1);
+			sbo2.edgeList[idx] = inGlobalHeID;
+		}
 	}else{
 		float checkVal1 = dot(mat3(ubo.view) * inFaceNor, pixelNor);
 		float checkVal2 = dot(mat3(ubo.view) * inSymFaceNor, pixelNor);
 		if((checkVal1 * checkVal2) <= 0.f){
 			outBorder = 1;
+			if(startPoint){
+				uint idx = atomicAdd(sbo1.edgeCnt, 1);
+				sbo2.edgeList[idx] = inGlobalHeID;
+			}
 		}else{
 			outBorder = inBorder;
 		}

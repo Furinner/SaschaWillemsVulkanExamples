@@ -1,6 +1,7 @@
 #version 450
 #extension GL_EXT_debug_printf : enable
 #define SCALECNT 16
+//compute1
 
 struct Vertex{
     vec3 position;
@@ -28,24 +29,192 @@ layout (set = 0, binding = 1) buffer Vers
 layout (set = 0, binding = 2) uniform UBO
 {
    uint edgeVertSize;
+   mat4 view;
+   mat4 proj;
 }ubo;
+
+layout (set = 0, binding = 3) buffer SBO1
+{
+   uint targetEdgeCnt;
+};
+
+layout (set = 0, binding = 4) buffer SBO2
+{
+   int targetEdgeIdxList[];
+};
+
+layout (set = 0, binding = 5) buffer SBO3
+{
+   float targetEdgeAABB[];
+};
+
+layout (set = 0, binding = 6) buffer SBO4
+{
+   uint edgeSuccessCnt;
+};
 
 layout (local_size_x = 64) in;
 
+//maxx, minx, maxy, miny
+bool twoBBInter(float ab1, float ab2, float ab3, float ab4, float oab1, float oab2, float oab3, float oab4){
+    if((ab1 < oab2) || (ab2 > oab1)){
+        return false;
+    }
+    if((ab3 < oab4) || (ab4 > oab3)){
+        return false;
+    }
+    return true;
+}
 
+bool segmentIntersect(vec2 p1, vec2 p2, vec2 p3, vec2 p4, out float t1, out float t2, out vec2 inter)
+{
+    vec2 r = p2 - p1;
+    vec2 s = p4 - p3;
+
+    //cross(r,s)
+    float denom = r.x * s.y - r.y * s.x;
+    if (abs(denom) < 1e-8)
+        return false;
+
+    vec2 diff = p3 - p1;
+    t1 = (diff.x * s.y - diff.y * s.x) / denom;
+    t2 = (diff.x * r.y - diff.y * r.x) / denom;
+
+    if (t1 >= 0.0 && t1 <= 1.0 && t2 >= 0.0 && t2 <= 1.0) {
+        inter = p1 + t1 * r;
+        return true;
+    }
+    return false;
+}
+
+
+bool nearlyEqual(float x, float y)
+{
+    const float EPSILON = 1e-6;  // 可根据精度需求调整
+    return abs(x - y) < EPSILON;
+}
+
+bool checkAroundPixel(int picIdx, int px, int py){
+    for(int i = -1; i < 2; ++i){
+        for(int j = -1; j < 2; ++j){
+            if((i == 0) && (j == 0)){
+                continue;
+            }
+            int val = texelFetch(scaleSamples[picIdx], ivec2(px + i, py + j), 0).y;
+            if(val != -1){
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool checkPic(ivec2 intPart, vec2 fracPart){
+    int picIdx = intPart.y * 4 + intPart.x;
+    vec2 pxy = fracPart * vec2(3840, 2160);
+    //float to int，是直接抹除小数部分
+    int px = int(pxy.x);
+    int py = int(pxy.y);
+    int val = texelFetch(scaleSamples[picIdx], ivec2(px, py), 0).y;
+    if(val == -1){
+        if(checkAroundPixel(picIdx, px, py)){
+            //debugPrintfEXT("pos=(%.5f, %.5f, %u, %u, %.5f, %.5f)\n",pxy.x, pxy.y, px, py, fracPart.x, fracPart.y);
+            debugPrintfEXT("pos=(%u)\n",targetEdgeCnt);
+            atomicAdd(edgeSuccessCnt, 1);
+            return true;
+        }
+    }
+    return false;
+}
 
 void main() 
 {
 //    debugPrintfEXT("nh");
-//    debugPrintfEXT("index=%u pos=(%.2f, %.2f, %.2f)\n", index1, v1.position.x, v1.position.y, v1.position.z);
-//    uint index1 = gl_GlobalInvocationID.x * 2;
-//    uint index2 = index1 + 1;
-//    if (index1 >= ubo.edgeVertSize) 
-//		return;	
-//    Vertex v1 = vertices[index1];
-//    Vertex v2 = vertices[index2];
-//    vertices[index1].position = mix(v1.position, v2.position, 0.25);
-//    vertices[index2].position = mix(v1.position, v2.position, 0.75);
+//    debugPrintfEXT("index=%u pos=(%.2f, %.2f, %.2f)\n", index1, vertices[0].position.x, vertices[0].position.y, vertices[0].position.z);
+//    uint index = gl_GlobalInvocationID.x * 100;
+//    for(uint i = 0; i < 100; ++i){
+//        uint imgIdx = index / (3840u * 3840u);
+//        index = index - (imgIdx * (3840u * 2160u));
+//        //pixel coord
+//        uint py = index / 3840u;
+//        uint px = index - (py * 3840u);
+//        int globalHeID = texelFetch(scaleSamples[imgIdx], ivec2(int(px), int(py)), 0).y;
+//        if(globalHeID > -1){
+//            vertices[globalHeID * 2].debug = 1;
+//            vertices[globalHeID * 2 + 1].debug = 1;
+//        };
+//        index += 1;
+//    };
 
+
+//    uint index = gl_GlobalInvocationID.x;
+//    uint imgIdx = index / (3840 * 2160);
+//    index = index - (imgIdx * (3840 * 2160));
+//    //pixel coord
+//    uint py = index / 3840;
+//    uint px = index - (py * 3840);
+//    float x = py;
+//    float y = px;
+//    int globalHeID = texelFetch(scaleSamples[imgIdx], ivec2(int(px), int(py)), 0).y;
+//    if(globalHeID > -1){
+//        vertices[globalHeID * 2].debug = 1;
+//        vertices[globalHeID * 2 + 1].debug = 1;
+//    };
+
+    if(gl_GlobalInvocationID.x < targetEdgeCnt){
+        int targetEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
+        Vertex v1 = vertices[targetEdgeIdx * 2];
+        Vertex v2 = vertices[targetEdgeIdx * 2 + 1];
+        vec3 v1Pos = vec3(ubo.view * (vec4(v1.position, 1)));
+        vec3 v2Pos = vec3(ubo.view * (vec4(v2.position, 1)));
+        float ab1 = targetEdgeAABB[targetEdgeIdx * 4];   //maxx
+        float ab2 = targetEdgeAABB[targetEdgeIdx * 4 + 1];  //minx
+        float ab3 = targetEdgeAABB[targetEdgeIdx * 4 + 2];  //maxy
+        float ab4 = targetEdgeAABB[targetEdgeIdx * 4 + 3];  //miny
+        int numInt = 0;
+        float t1s[10];
+        //debugPrintfEXT("pos=(%u, %.5f, %.5f, %.5f, %.5f, %.5f,%.5f,%.5f,%.5f)\n",targetEdgeIdx, v1Pos.x, v1Pos.y, v2Pos.x, v2Pos.y, ab1, ab2, ab3, ab4);
+        for(int i = 0; i < targetEdgeCnt; ++i){
+            if(i == gl_GlobalInvocationID.x){
+                continue;
+            }
+            int currEdgeIdx = targetEdgeIdxList[i];
+            Vertex currv1 = vertices[currEdgeIdx * 2];
+            Vertex currv2 = vertices[currEdgeIdx * 2 + 1];
+            vec3 currv1Pos = vec3(ubo.view * (vec4(currv1.position, 1)));
+            vec3 currv2Pos = vec3(ubo.view * (vec4(currv2.position, 1)));
+            float currab1 = targetEdgeAABB[currEdgeIdx * 4];
+            float currab2 = targetEdgeAABB[currEdgeIdx * 4 + 1];
+            float currab3 = targetEdgeAABB[currEdgeIdx * 4 + 2];
+            float currab4 = targetEdgeAABB[currEdgeIdx * 4 + 3];
+            if(twoBBInter(ab1, ab2, ab3, ab4, currab1, currab2, currab3, currab4)){
+                float t1;
+                float t2;
+                vec2 inter;
+                if(segmentIntersect(v1Pos.xy, v2Pos.xy, currv1Pos.xy, currv2Pos.xy, t1, t2, inter)){
+                    if((nearlyEqual(t1, 0.f) || nearlyEqual(t1, 1.f)) && (nearlyEqual(t2, 0.f) ||nearlyEqual(t2, 1.f))){
+                        //很可能只是首尾相接，或首首，尾尾
+                    }else{
+                        t1s[numInt] = t1;
+                        ++numInt;
+                    }
+                }
+            }
+        }
+        vec3 testPoint = (v2Pos - v1Pos / 2.f);
+        vec4 testPoint1 = ubo.proj * vec4(testPoint, 1);
+        testPoint = vec3(testPoint1 / testPoint1.w);
+        vec2 largeUV = (testPoint.xy + vec2(1)) * 2;
+        largeUV.y = 4 - largeUV.y;
+        vec2 intPartf;
+        vec2 fracPart = modf(largeUV, intPartf);
+        ivec2 intPart =  ivec2(intPartf);
+        if(checkPic(intPart, fracPart)){
+            vertices[targetEdgeIdx * 2].debug = 1;
+            vertices[targetEdgeIdx * 2 + 1].debug = 1;
+        }
+    }else{
+        
+    }
 }
 

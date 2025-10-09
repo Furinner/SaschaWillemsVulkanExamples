@@ -674,8 +674,8 @@ public:
 			size_t edgeVertSize = edgeVert.size() * sizeof(Vertex);
 			size_t edgeIdxSize = edgeIdx.size() * sizeof(int);
 			for (int i = 0; i < edgeVert.size(); i+=2) {
-				edgeVert[i].globalHeID = i;
-				edgeVert[i + 1].globalHeID = i + 1;
+				edgeVert[i].globalHeID = i/2;
+				edgeVert[i + 1].globalHeID = i/2;
 			}
 			struct StagingBuffer {
 				VkBuffer buffer;
@@ -1437,8 +1437,10 @@ public:
 	} uniformDataLockedEdge;
 
 	struct UniformDataCompute1 {
-		unsigned int edgeVertSize;
-	} uniformDataCompute1;
+		alignas(4) unsigned int edgeVertSize;
+		alignas(16) glm::mat4 view;
+		alignas(16) glm::mat4 proj;
+	} uniformDataCompute1, uniformDataCompute2;
 
 	struct {
 		vks::Buffer offscreen{ VK_NULL_HANDLE };
@@ -1446,11 +1448,27 @@ public:
 		vks::Buffer edge{ VK_NULL_HANDLE };
 		vks::Buffer lockedEdge{ VK_NULL_HANDLE };
 		vks::Buffer compute1{ VK_NULL_HANDLE };
+		vks::Buffer compute2{ VK_NULL_HANDLE };
 	} uniformBuffers;
 
 	struct {
+		vks::Buffer edgeCnt{ VK_NULL_HANDLE };
+		vks::Buffer edgeList{ VK_NULL_HANDLE };
+		vks::Buffer edgeAABB{ VK_NULL_HANDLE };
+		vks::Buffer edgeSuccessCnt{ VK_NULL_HANDLE };
 		vks::Buffer compute1{ VK_NULL_HANDLE };
+		vks::Buffer compute2{ VK_NULL_HANDLE };
 	}storageBuffers;
+
+	struct {
+		vks::Buffer edge{ VK_NULL_HANDLE };
+		vks::Buffer edgeSuccessCnt{ VK_NULL_HANDLE };
+	}stagingBuffers;
+
+	struct {
+		int edgeCnt;
+		uint32_t edgeSuccessCnt;
+	}tmpUsage;
 
 	struct {
 		VkPipeline offscreen{ VK_NULL_HANDLE };
@@ -1458,9 +1476,13 @@ public:
 		VkPipeline edge{ VK_NULL_HANDLE };
 		VkPipeline lockedEdge{ VK_NULL_HANDLE };
 		VkPipeline compute1{ VK_NULL_HANDLE };
+		VkPipeline compute2{ VK_NULL_HANDLE };
 	} pipelines;
 	VkPipelineLayout pipelineLayout{ VK_NULL_HANDLE };
-	VkPipelineLayout pipelineLayoutCompute{ VK_NULL_HANDLE };
+	// 用到的地方：createPipeline, vkCmdBindDescriptorSets
+	// 简单来说，如果descriptorLayout不一样，PipelineLayout就也会不一样
+	VkPipelineLayout pipelineLayoutCompute1{ VK_NULL_HANDLE };
+	VkPipelineLayout pipelineLayoutCompute2{ VK_NULL_HANDLE };
 
 	struct {
 		VkDescriptorSet model{ VK_NULL_HANDLE };
@@ -1469,10 +1491,12 @@ public:
 		VkDescriptorSet edge{ VK_NULL_HANDLE };
 		VkDescriptorSet lockedEdge{ VK_NULL_HANDLE };
 		VkDescriptorSet compute1{ VK_NULL_HANDLE };
+		VkDescriptorSet compute2{ VK_NULL_HANDLE };
 	} descriptorSets;
 
 	VkDescriptorSetLayout descriptorSetLayout{ VK_NULL_HANDLE };
 	VkDescriptorSetLayout descriptorSetLayoutCompute1{ VK_NULL_HANDLE };
+	VkDescriptorSetLayout descriptorSetLayoutCompute2{ VK_NULL_HANDLE };
 
 	// Framebuffers holding the deferred attachments
 
@@ -1519,13 +1543,15 @@ public:
 	VkCommandBuffer offScreenCmdBuffer{ VK_NULL_HANDLE };
 	VkCommandBuffer edgeCmdBuffer{ VK_NULL_HANDLE };
 	VkCommandBuffer lockedEdgeCmdBuffer{ VK_NULL_HANDLE };
-	VkCommandBuffer computeCmdBuffer;
+	VkCommandBuffer computeCmdBuffer;  //edgespacing
+	VkCommandBuffer computeCmdBuffer2; //edgecleaning
 
 	// Semaphore used to synchronize between offscreen and final scene rendering
 	VkSemaphore offscreenSemaphore{ VK_NULL_HANDLE };
 	VkSemaphore edgeSemaphore{ VK_NULL_HANDLE };
 	VkSemaphore lockedEdgeSemaphore{ VK_NULL_HANDLE };
 	VkSemaphore compute1Semaphore;
+	VkSemaphore compute2Semaphore;
 	VulkanExample() : VulkanExampleBase()
 	{
 		title = "Vectorized Hidden Line";
@@ -1552,6 +1578,9 @@ public:
 		camera.orthographic = false;
 		camera.setRotation(glm::vec3(-0.f, 0.f, 0.0f));
 		camera.setPerspective(60.f, (float)width / (float)height, 0.01f, 256.0f);
+
+		camera.position = { -12.8998909f, 7.70880222f, 35.7017822f };
+		camera.setRotation(glm::vec3(- 3.f, -4.f, 0.f));
 	}
 
 	~VulkanExample()
@@ -1920,11 +1949,10 @@ public:
 		// requiring proper synchronization (see the memory and pipeline barriers)
 		vkGetDeviceQueue(device, compute.queueFamilyIndex, 0, &compute.queue);
 
-
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
@@ -1936,14 +1964,38 @@ public:
 			// Binding 1 : 
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
 			// Binding 2 :
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
+			// Binding 3 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
+			// Binding 4 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
+			// Binding 5 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
+			// Binding 6 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute1));
+		setLayoutBindings = {			
+			// Binding 0 : 
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0),
+			// Binding 1 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
+			// Binding 2 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
+			// Binding 3 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
+			// Binding 4 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4)
+		};
+		descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute2));
 
 		// Sets
 		VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(compute.descriptorPool, &descriptorSetLayoutCompute1, 1);
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.compute1));
+		allocInfo = vks::initializers::descriptorSetAllocateInfo(compute.descriptorPool, &descriptorSetLayoutCompute2, 1);
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.compute2));
 
 		//write
 		std::vector<VkDescriptorImageInfo> imgInfos(scaleCnt);
@@ -1972,11 +2024,68 @@ public:
 				descriptorSets.compute1,
 				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 				2,
-				&uniformBuffers.compute1.descriptor)
+				&uniformBuffers.compute1.descriptor),
+			// Binding 3
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				3,
+				&storageBuffers.edgeCnt.descriptor),
+			// Binding 4
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				4,
+				&storageBuffers.edgeList.descriptor),
+			// Binding 5
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				5,
+				&storageBuffers.edgeAABB.descriptor),
+			// Binding 6
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				6,
+				&storageBuffers.edgeSuccessCnt.descriptor)
 		};
 		
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		
+		writeDescriptorSets = {
+			// Binding 0 : 
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				0,
+				&mesh.edgeVertBuffer.descriptor),
+			// Binding 1 :
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				1,
+				&uniformBuffers.compute2.descriptor),
+			// Binding 2 : 
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				2,
+				&storageBuffers.edgeCnt.descriptor),
+			// Binding 3 : 
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				3,
+				&storageBuffers.edgeList.descriptor),
+			// Binding 4 :
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				4,
+				&storageBuffers.edgeAABB.descriptor),
+		};
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 	}
 
 	void prepareEdgeFramebuffer()
@@ -1986,6 +2095,42 @@ public:
 		//offScreenFrameBuf.height = 1080;
 		edgeFrameBuf.width = width * 2;
 		edgeFrameBuf.height = height * 2;
+
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.edgeCnt,
+			sizeof(uint32_t)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.edgeList,
+			mesh.edgeIdx.size() * sizeof(int32_t)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.edgeAABB,
+			mesh.edgeIdx.size() * 4 * sizeof(float)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.edgeSuccessCnt,
+			sizeof(uint32_t)));
+		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
+		
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&stagingBuffers.edge,
+			sizeof(uint32_t)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&stagingBuffers.edgeSuccessCnt,
+			sizeof(uint32_t)));
+
 
 		//self-added
 		/*VK_CHECK_RESULT(vulkanDevice->createBuffer(
@@ -2364,19 +2509,47 @@ public:
 		positionBarrier.subresourceRange.levelCount = 1;
 		positionBarrier.subresourceRange.baseArrayLayer = 0;
 		positionBarrier.subresourceRange.layerCount = 1;
-
+		bool sameFamily = (compute.queueFamilyIndex == graphics.queueFamilyIndex);
 		VkBufferMemoryBarrier edgeBufAcqBarrier =
 		{
 			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 			nullptr,
 			0,
 			VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
-			compute.queueFamilyIndex,
-			graphics.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
 			mesh.edgeVertBuffer.buffer,
 			0,
 			mesh.edgeVertBuffer.size
 		};
+
+		VkBufferMemoryBarrier edgeBufAcqBarrier2 =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			0,
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+			storageBuffers.edgeCnt.buffer,
+			0,
+			storageBuffers.edgeCnt.size
+		};
+
+		VkBufferMemoryBarrier edgeBufAcqBarrier3 =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			0,
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+			storageBuffers.edgeList.buffer,
+			0,
+			storageBuffers.edgeList.size
+		};
+
+		VkBufferMemoryBarrier storageBufferBarriersArr[2] = { edgeBufAcqBarrier2, edgeBufAcqBarrier3 };
 
 		VkImageMemoryBarrier barriers[] = { colorBarrier, positionBarrier };
 		
@@ -2403,6 +2576,41 @@ public:
 			0, nullptr
 		);
 
+		vkCmdPipelineBarrier(
+			edgeCmdBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+			0,
+			0, nullptr,
+			2, storageBufferBarriersArr,
+			0, nullptr
+		);
+
+		
+		vkCmdFillBuffer(edgeCmdBuffer, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+		//edgeSBO2
+		VkBufferMemoryBarrier edgeSBOBarrier2 =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+			VK_QUEUE_FAMILY_IGNORED,
+			VK_QUEUE_FAMILY_IGNORED,
+			storageBuffers.edgeCnt.buffer,
+			0,
+			VK_WHOLE_SIZE
+		};
+		vkCmdPipelineBarrier(
+			edgeCmdBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+			0,
+			0, nullptr,
+			1, &edgeSBOBarrier2,
+			0, nullptr
+		);
+
 		vkCmdBeginRenderPass(edgeCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 		VkViewport viewport = vks::initializers::viewport((float)edgeFrameBuf.width, -(float)edgeFrameBuf.height, 0.0f, 1.0f);
@@ -2422,14 +2630,15 @@ public:
 
 		vkCmdEndRenderPass(edgeCmdBuffer);
 
+		//edgeVertBuffer的所有权还给compute queue
 		VkBufferMemoryBarrier edgeBufRelBarrier =
 		{
 			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 			nullptr,
 			VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
 			0,
-			graphics.queueFamilyIndex,
-			compute.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
 			mesh.edgeVertBuffer.buffer,
 			0,
 			mesh.edgeVertBuffer.size
@@ -2438,11 +2647,70 @@ public:
 		vkCmdPipelineBarrier(
 			edgeCmdBuffer,
 			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 			0,
 			0, nullptr,
 			1, &edgeBufRelBarrier,
 			0, nullptr);
+
+		VkBufferMemoryBarrier edgeBufRelBarrier2 =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			VK_ACCESS_SHADER_WRITE_BIT,
+			0,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+			storageBuffers.edgeCnt.buffer,
+			0,
+			storageBuffers.edgeCnt.size
+		};
+		VkBufferMemoryBarrier edgeBufRelBarrier3 =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			VK_ACCESS_SHADER_WRITE_BIT,
+			0,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+			sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+			storageBuffers.edgeList.buffer,
+			0,
+			storageBuffers.edgeList.size
+		};
+		VkBufferMemoryBarrier edgeBufRelBarrierArr2[2] = { edgeBufRelBarrier2, edgeBufRelBarrier3 };
+		vkCmdPipelineBarrier(
+			edgeCmdBuffer,
+			VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			0,
+			0, nullptr,
+			2, edgeBufRelBarrierArr2,
+			0, nullptr);
+		/*VkBufferCopy copyRegion = {};
+		copyRegion.size = sizeof(uint32_t);
+		vkCmdCopyBuffer(edgeCmdBuffer, storageBuffers.edgeCnt.buffer, stagingBuffers.edge.buffer, 1, &copyRegion);*/
+
+		/*VkBufferMemoryBarrier edgeSBOBarrier2 =
+		{
+			VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			nullptr,
+			VK_ACCESS_TRANSFER_READ_BIT,
+			VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_QUEUE_FAMILY_IGNORED,
+			VK_QUEUE_FAMILY_IGNORED,
+			storageBuffers.edgeCnt.buffer,
+			0,
+			VK_WHOLE_SIZE
+		};
+		vkCmdPipelineBarrier(
+			edgeCmdBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0,
+			0, nullptr,
+			1, &edgeSBOBarrier2,
+			0, nullptr
+		);*/
 
 		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer));
 	}
@@ -2502,29 +2770,55 @@ public:
 		VK_CHECK_RESULT(vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &compute.commandPool));
 
 		computeCmdBuffer = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, compute.commandPool);
-
 		// Create a semaphore used to synchronize offscreen rendering and usage
 		VkSemaphoreCreateInfo semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
 		VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &compute1Semaphore));
-		
+
 
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 		VK_CHECK_RESULT(vkBeginCommandBuffer(computeCmdBuffer, &cmdBufInfo));
-
-		if (graphics.queueFamilyIndex != compute.queueFamilyIndex)
+		bool sameFamily = (graphics.queueFamilyIndex == compute.queueFamilyIndex);
 		{
 			VkBufferMemoryBarrier acBarrier =
 			{
 				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 				nullptr,
 				0,
-				VK_ACCESS_SHADER_WRITE_BIT,
-				graphics.queueFamilyIndex,
-				compute.queueFamilyIndex,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
 				mesh.edgeVertBuffer.buffer,
 				0,
 				mesh.edgeVertBuffer.size
 			};
+
+			VkBufferMemoryBarrier acBarrier2 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				0,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				storageBuffers.edgeCnt.buffer,
+				0,
+				storageBuffers.edgeCnt.size
+			};
+
+			VkBufferMemoryBarrier acBarrier3 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				0,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				storageBuffers.edgeList.buffer,
+				0,
+				storageBuffers.edgeList.size
+			};
+
+			VkBufferMemoryBarrier acB[3] = { acBarrier, acBarrier2, acBarrier3 };
 
 			vkCmdPipelineBarrier(
 				computeCmdBuffer,
@@ -2532,15 +2826,98 @@ public:
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 				0,
 				0, nullptr,
-				1, &acBarrier,
+				3, acB,
 				0, nullptr);
+
+			VkBufferMemoryBarrier edgeAABBBarrier =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				VK_ACCESS_SHADER_READ_BIT,
+				VK_QUEUE_FAMILY_IGNORED,
+				VK_QUEUE_FAMILY_IGNORED,
+				storageBuffers.edgeAABB.buffer,
+				0,
+				storageBuffers.edgeAABB.size
+			};
+
+			vkCmdPipelineBarrier(
+				computeCmdBuffer,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,  
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,  
+				0,
+				0, nullptr,
+				1, &edgeAABBBarrier,
+				0, nullptr
+			);
+
+			vkCmdFillBuffer(computeCmdBuffer, storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+			VkBufferMemoryBarrier edgeSucCntBarrier =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				VK_QUEUE_FAMILY_IGNORED,
+				VK_QUEUE_FAMILY_IGNORED,
+				storageBuffers.edgeSuccessCnt.buffer,
+				0,
+				storageBuffers.edgeSuccessCnt.size
+			};
+
+			vkCmdPipelineBarrier(
+				computeCmdBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				0,
+				0, nullptr,
+				1, &edgeSucCntBarrier,
+				0, nullptr
+			);
+
 		}
 
 		vkCmdBindPipeline(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute1);
-		vkCmdBindDescriptorSets(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute, 0, 1, &descriptorSets.compute1, 0, 0);
-		vkCmdDispatch(computeCmdBuffer, (1980 * 1080 * 4) / 64, 1, 1);
-		
-		if (graphics.queueFamilyIndex != compute.queueFamilyIndex)
+		vkCmdBindDescriptorSets(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute1, 0, 1, &descriptorSets.compute1, 0, 0);
+		//vkCmdDispatch(computeCmdBuffer, (3840 * 2160) * 16 / 64, 1, 1);
+		vkCmdDispatch(computeCmdBuffer, (mesh.edgeVert.size() / 2) / 64, 1, 1);
+		{
+			VkBufferMemoryBarrier successCntBufBar{
+					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+					nullptr,
+					VK_ACCESS_SHADER_WRITE_BIT,          // srcAccessMask: compute 写
+					VK_ACCESS_TRANSFER_READ_BIT,         // dstAccessMask: 之后要被拷贝读
+					VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+					storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE
+			};
+			vkCmdPipelineBarrier(computeCmdBuffer,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, // srcStage
+				VK_PIPELINE_STAGE_TRANSFER_BIT,       // dstStage
+				0, 0, nullptr, 1, &successCntBufBar, 0, nullptr);
+			VkBufferCopy copyRegion = {};
+			copyRegion.size = sizeof(uint32_t);
+			vkCmdCopyBuffer(computeCmdBuffer, storageBuffers.edgeSuccessCnt.buffer, stagingBuffers.edgeSuccessCnt.buffer, 1, &copyRegion);
+			
+			VkBufferMemoryBarrier toHost{
+			    VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER, nullptr,
+			    VK_ACCESS_TRANSFER_WRITE_BIT,
+			    VK_ACCESS_HOST_READ_BIT,
+			    VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED,
+				stagingBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE
+			};
+			vkCmdPipelineBarrier(
+				computeCmdBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,   // srcStage
+				VK_PIPELINE_STAGE_HOST_BIT,       // dstStage
+				0,
+				0, nullptr,
+				1, &toHost,
+				0, nullptr);
+			/*void* mapped = nullptr;
+			vkMapMemory(device, stagingBuffers.edgeSuccessCnt.memory, 0, sizeof(uint32_t), 0, &mapped);
+			tmpUsage.edgeSuccessCnt = static_cast<uint32_t*>(mapped)[0];*/
+		}
 		{
 			VkBufferMemoryBarrier rlBarrier =
 			{
@@ -2548,24 +2925,168 @@ public:
 				nullptr,
 				VK_ACCESS_SHADER_WRITE_BIT,
 				0,
-				compute.queueFamilyIndex,
-				graphics.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
 				mesh.edgeVertBuffer.buffer,
 				0,
 				mesh.edgeVertBuffer.size
 			};
 
+			VkBufferMemoryBarrier rlBarrier2 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				0,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				storageBuffers.edgeCnt.buffer,
+				0,
+				storageBuffers.edgeCnt.size
+			};
+
+			VkBufferMemoryBarrier rlBarrier3 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				0,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				storageBuffers.edgeList.buffer,
+				0,
+				storageBuffers.edgeList.size
+			};
+
+			VkBufferMemoryBarrier rlBarrierArr[3] = { rlBarrier, rlBarrier2, rlBarrier3 };
+
 			vkCmdPipelineBarrier(
 				computeCmdBuffer,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 				0,
 				0, nullptr,
-				1, &rlBarrier,
+				3, rlBarrierArr,
 				0, nullptr);
 		}
 
+
+
 		vkEndCommandBuffer(computeCmdBuffer);
+
+
+
+		//computeCmdBuf2
+		computeCmdBuffer2 = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, compute.commandPool);
+		semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
+		VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &compute2Semaphore));
+		cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+		VK_CHECK_RESULT(vkBeginCommandBuffer(computeCmdBuffer2, &cmdBufInfo));
+		{
+			VkBufferMemoryBarrier acBarrier =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				0,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				mesh.edgeVertBuffer.buffer,
+				0,
+				mesh.edgeVertBuffer.size
+			};
+
+			VkBufferMemoryBarrier acBarrier2 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				0,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				storageBuffers.edgeCnt.buffer,
+				0,
+				storageBuffers.edgeCnt.size
+			};
+
+			VkBufferMemoryBarrier acBarrier3 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				0,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				storageBuffers.edgeList.buffer,
+				0,
+				storageBuffers.edgeList.size
+			};
+			VkBufferMemoryBarrier acBarrierArr[3] = { acBarrier, acBarrier2, acBarrier3 };
+			vkCmdPipelineBarrier(
+				computeCmdBuffer2,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				0,
+				0, nullptr,
+				3, acBarrierArr,
+				0, nullptr);
+		}
+		vkCmdBindPipeline(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute2);
+		vkCmdBindDescriptorSets(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute2, 0, 1, &descriptorSets.compute2, 0, 0);
+		vkCmdDispatch(computeCmdBuffer2, (mesh.edgeVert.size() / 2) / 64, 1, 1);
+		{
+			VkBufferMemoryBarrier rlBarrier =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				0,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				mesh.edgeVertBuffer.buffer,
+				0,
+				mesh.edgeVertBuffer.size
+			};
+
+			VkBufferMemoryBarrier rlBarrier2 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				0,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				storageBuffers.edgeCnt.buffer,
+				0,
+				storageBuffers.edgeCnt.size
+			};
+
+			VkBufferMemoryBarrier rlBarrier3 =
+			{
+				VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				nullptr,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				0,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : compute.queueFamilyIndex,
+				sameFamily ? VK_QUEUE_FAMILY_IGNORED : graphics.queueFamilyIndex,
+				storageBuffers.edgeList.buffer,
+				0,
+				storageBuffers.edgeList.size
+			};
+
+			VkBufferMemoryBarrier rlBarrierArr[3] = { rlBarrier, rlBarrier2, rlBarrier3 };
+
+			vkCmdPipelineBarrier(
+				computeCmdBuffer2,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				0,
+				0, nullptr,
+				3, rlBarrierArr,
+				0, nullptr);
+		}
+		vkEndCommandBuffer(computeCmdBuffer2);
+
 	}
 
 	void loadAssets()
@@ -2609,6 +3130,7 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/spine_test", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/spine_test2", vulkanDevice, queue, glTFLoadingFlags);
 		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/excavator_yellow_smooth", vulkanDevice, queue, glTFLoadingFlags);
+		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/mushroom", vulkanDevice, queue, glTFLoadingFlags);
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		//view independent
 		
@@ -2671,7 +3193,7 @@ public:
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3)
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 5);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
@@ -2697,7 +3219,11 @@ public:
 			// Binding 8 : Edge texture target
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 8),
 			// Binding 9 : Locked Edge texture target
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 9)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 9),
+			// Binding 10 : Vertex Shader Storage buffer
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 10),
+			// Binding 11 : Vertex Shader Storage buffer 2
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 11),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
@@ -2792,6 +3318,10 @@ public:
 		writeDescriptorSets = {
 			// Binding 0: Vertex shader uniform buffer
 			vks::initializers::writeDescriptorSet(descriptorSets.edge, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.edge.descriptor),
+			// Binding 10: Vertex Shader Storage buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.edge, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10, &storageBuffers.edgeCnt.descriptor),
+			// Binding 11: Vertex Shader Storage buffer 2
+			vks::initializers::writeDescriptorSet(descriptorSets.edge, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 11, &storageBuffers.edgeList.descriptor),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
@@ -2908,10 +3438,16 @@ public:
 
 
 		pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayoutCompute1, 1);
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayoutCompute));
-		VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayoutCompute, 0);
+		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayoutCompute1));
+		VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayoutCompute1, 0);
 		computePipelineCreateInfo.stage = loadShader(getShadersPath() + "appelhiddenline/edgespacing.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
 		VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.compute1));
+
+		pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayoutCompute2, 1);
+		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayoutCompute2));
+		computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayoutCompute2, 0);
+		computePipelineCreateInfo.stage = loadShader(getShadersPath() + "appelhiddenline/edgecleaning.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+		VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.compute2));
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
@@ -2932,12 +3468,16 @@ public:
 		// Compute shader 1
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.compute1, sizeof(UniformDataCompute1)));
 
+		// Compute shader 2
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.compute2, sizeof(UniformDataCompute1)));
+
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.offscreen.map());
 		VK_CHECK_RESULT(uniformBuffers.edge.map());
 		VK_CHECK_RESULT(uniformBuffers.lockedEdge.map());
 		VK_CHECK_RESULT(uniformBuffers.composition.map());
 		VK_CHECK_RESULT(uniformBuffers.compute1.map());
+		VK_CHECK_RESULT(uniformBuffers.compute2.map());
 
 		// Setup instanced model positions
 		uniformDataOffscreen.instancePos[0] = glm::vec4(0.0f);
@@ -2949,7 +3489,7 @@ public:
 		updateUniformBufferEdge();
 		updateUniformBufferLockedEdge();
 		updateUniformBufferComposition();
-		updateUniformBufferCompute1();
+		updateUniformBufferCompute();
 	}
 
 	// Update matrices used for the offscreen rendering of the scene
@@ -2993,9 +3533,16 @@ public:
 		memcpy(uniformBuffers.lockedEdge.mapped, &uniformDataLockedEdge, sizeof(UniformDataLockedEdge));
 	}
 
-	void updateUniformBufferCompute1() {
+	void updateUniformBufferCompute() {
+		//uniformDataCompute1.edgeVertSize = mesh.edgeVert.size();
 		uniformDataCompute1.edgeVertSize = mesh.edgeVert.size();
+		uniformDataCompute1.view = camera.matrices.view;
+		uniformDataCompute1.proj = camera.matrices.perspective;
 		memcpy(uniformBuffers.compute1.mapped, &uniformDataCompute1, sizeof(UniformDataCompute1));
+		uniformDataCompute2.edgeVertSize = mesh.edgeVert.size();
+		uniformDataCompute2.view = camera.matrices.view;
+		uniformDataCompute2.proj = camera.matrices.perspective;
+		memcpy(uniformBuffers.compute2.mapped, &uniformDataCompute2, sizeof(UniformDataCompute1));
 	}
 
 	// Update lights and parameters passed to the composition shaders
@@ -3108,6 +3655,7 @@ public:
 			dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 			1, &copyRegion);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
+		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, srcImage);
 	}
 
 	void copyGPUtoCPU(uint32_t width, uint32_t height, VkImage image, VkBuffer dstBuffer) {
@@ -3318,38 +3866,53 @@ public:
 
 		// Offscreen rendering
 		// Wait for swap chain presentation to finish
+		VkPipelineStageFlags waitStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		submitInfo.pWaitSemaphores = &semaphores.presentComplete;
 		// Signal ready with offscreen semaphore
 		submitInfo.pSignalSemaphores = &offscreenSemaphore;
 		// Submit work
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &offScreenCmdBuffer;
+		submitInfo.pWaitDstStageMask = &waitStageMask;
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
 		if (vectorize) {
-			VkPipelineStageFlags waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+			waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 
 			// Submit compute commands
 			VkSubmitInfo computeSubmitInfo = vks::initializers::submitInfo();
 			computeSubmitInfo.commandBufferCount = 1;
-			computeSubmitInfo.pCommandBuffers = &computeCmdBuffer;
 			computeSubmitInfo.waitSemaphoreCount = 1;
+			computeSubmitInfo.signalSemaphoreCount = 1;
+			//compute1
+			computeSubmitInfo.pCommandBuffers = &computeCmdBuffer;
 			computeSubmitInfo.pWaitSemaphores = &offscreenSemaphore;
 			computeSubmitInfo.pWaitDstStageMask = &waitStageMask;
-			computeSubmitInfo.signalSemaphoreCount = 1;
 			computeSubmitInfo.pSignalSemaphores = &compute1Semaphore;
 			VK_CHECK_RESULT(vkQueueSubmit(compute.queue, 1, &computeSubmitInfo, VK_NULL_HANDLE));
+			void* mapped = nullptr;
+			vkMapMemory(device, stagingBuffers.edgeSuccessCnt.memory, 0, sizeof(uint32_t), 0, &mapped);
+			tmpUsage.edgeSuccessCnt = static_cast<uint32_t*>(mapped)[0];
+			vkDeviceWaitIdle(device);
 		}
 
 		// Edge rendering
 		// Wait for offscreen semaphore
+		waitStageMask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+		VkPipelineStageFlags waitStageMask2 = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 		submitInfo.pWaitSemaphores = (vectorize ? &compute1Semaphore : &offscreenSemaphore);
-		vectorize = false;
 		submitInfo.pSignalSemaphores = &edgeSemaphore;
 		// Submit work
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &edgeCmdBuffer;
+		submitInfo.pWaitDstStageMask = (vectorize ? &waitStageMask : &waitStageMask2);
+		vectorize = false;
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+		/*void* mapped = nullptr;
+		vkMapMemory(device, stagingBuffers.edge.memory, 0, sizeof(uint32_t), 0, &mapped);
+		tmpUsage.edgeCnt = static_cast<uint32_t*>(mapped)[0];*/
+
 
 		//if (prevLockedView != lockedView) {
 		//	if (prevLockedView == false) {
@@ -3380,7 +3943,6 @@ public:
 
 		if (savePic) {
 			if (savePicCnt == 0) {
-				vkDeviceWaitIdle(device);
 				camera.positionOrig = camera.position;
 				camera.orthoLeftOrig = camera.orthoLeft;
 				camera.orthoRightOrig = camera.orthoRight;
@@ -3408,6 +3970,22 @@ public:
 					camera.orthoBottom = -(mesh.aabbCameraMax.y - mesh.aabbCameraMin.y) * 0.5f;
 					camera.matrices.perspective = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
 					camera.matrices.view = glm::lookAt(camera.position, camera.position + camera.getCamFront(), glm::vec3(0, 1, 0));
+					updateUniformBufferCompute();
+					for (int i = 0; i < 100; ++i) {
+						glm::vec3 currPos = glm::vec3(camera.matrices.view * glm::vec4(mesh.edgeVert[i].position, 1));
+					}
+					//compute2
+					waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+					VkSubmitInfo computeSubmitInfo = vks::initializers::submitInfo();
+					computeSubmitInfo.commandBufferCount = 1;
+					computeSubmitInfo.waitSemaphoreCount = 1;
+					computeSubmitInfo.signalSemaphoreCount = 0;
+					computeSubmitInfo.pCommandBuffers = &computeCmdBuffer2;
+					computeSubmitInfo.pWaitSemaphores = &edgeSemaphore;
+					computeSubmitInfo.pWaitDstStageMask = &waitStageMask;
+					VK_CHECK_RESULT(vkQueueSubmit(compute.queue, 1, &computeSubmitInfo, VK_NULL_HANDLE));
+					//阻塞当前线程，直到该 device 上所有的队列（graphics/compute/transfer 等）都完成了之前提交的所有工作
+					vkDeviceWaitIdle(device);
 				}
 				else {
 					camera.position = camera.positions[savePicCnt-1];
@@ -3420,21 +3998,23 @@ public:
 			}
 		}
 
-		submitInfo.pWaitSemaphores = &edgeSemaphore;
-		// Signal ready with render complete semaphore
-		submitInfo.pSignalSemaphores = &semaphores.renderComplete;
-		// Submit work
-		submitInfo.pCommandBuffers = &lockedEdgeCmdBuffer;
-		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+		//submitInfo.pWaitSemaphores = &edgeSemaphore;
+		//// Signal ready with render complete semaphore
+		//submitInfo.pSignalSemaphores = &semaphores.renderComplete;
+		//// Submit work
+		//submitInfo.pCommandBuffers = &lockedEdgeCmdBuffer;
+		//VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
 
 		// Scene rendering
 		// Wait for offscreen semaphore
+		waitStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		submitInfo.pWaitSemaphores = &edgeSemaphore;
 		// Signal ready with render complete semaphore
 		submitInfo.pSignalSemaphores = &semaphores.renderComplete;
 		// Submit work
 		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
+		submitInfo.pWaitDstStageMask = &waitStageMask;
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
 		VulkanExampleBase::submitFrame();
@@ -3465,6 +4045,7 @@ public:
 		updateUniformBufferOffscreen();
 		updateUniformBufferEdge();
 		updateUniformBufferLockedEdge();
+		updateUniformBufferCompute();
 		draw();
 	}
 
@@ -3491,7 +4072,7 @@ public:
 				savePic = true;
 			};
 			if (overlay->button("Vectorize")) {
-				vectorize = !vectorize;
+				vectorize = true;
 			}
 		}
 	}

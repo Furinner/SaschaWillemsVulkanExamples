@@ -1,0 +1,112 @@
+#version 450
+#extension GL_EXT_debug_printf : enable
+#define SCALECNT 16
+//compute2
+
+//const float FLT_MAX = 3.402823466e+38;
+
+struct Vertex{
+    vec3 position;
+    vec3 normal;
+    vec3 faceNor;
+    vec3 symFaceNor;
+    vec2 uv;
+    int objectID;
+    int faceID;
+    int border;
+    int heID;
+    int uniqueID;
+    int debug;
+    int globalHeID;
+};
+
+layout (set = 0, binding = 0) buffer Vers
+{
+    Vertex vertices[];
+};
+
+//uniform和buffer一定不能搞错
+layout (set = 0, binding = 1) uniform UBO
+{
+   uint edgeVertSize;
+   mat4 view;
+   mat4 proj;
+}ubo;
+
+layout (set = 0, binding = 2) buffer SBO1
+{
+   uint targetEdgeCnt;
+};
+
+layout (set = 0, binding = 3) buffer SBO2
+{
+   int targetEdgeIdxList[];
+};
+
+layout (set = 0, binding = 4) buffer SBO3
+{
+   float targetEdgeAABB[];
+};
+
+layout (local_size_x = 64) in;
+
+
+
+void main() 
+{
+//    debugPrintfEXT("nh");
+//    debugPrintfEXT("index=%u pos=(%.2f, %.2f, %.2f)\n", 1, vertices[0].position.x, vertices[0].position.y, vertices[0].position.z);
+//    Vertex v1 = vertices[targetEdgeIdxList[targetEdgeCnt] * 2];
+//    debugPrintfEXT("index=%u pos=(%.2f, %.2f, %.2f)\n", targetEdgeCnt, v1.position.x, v1.position.y, v1.position.z);
+//    uint index1 = gl_GlobalInvocationID.x * 2;
+//    uint index2 = index1 + 1;
+//
+//    if( index1 >= ubo.edgeVertSize ) return;
+//
+//    vertices[index1].debug = 0;
+//    vertices[index2].debug = 0;
+    if(gl_GlobalInvocationID.x < ubo.edgeVertSize){
+        uint index1 = gl_GlobalInvocationID.x * 2;
+        uint index2 = index1 + 1;
+        vertices[index1].debug = 0;
+        vertices[index2].debug = 0;
+    }
+
+    if(gl_GlobalInvocationID.x < targetEdgeCnt){
+        int targetEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
+        uint index1 = targetEdgeIdx * 2;
+        uint index2 = index1 + 1;
+        Vertex v1 = vertices[index1];
+        Vertex v2 = vertices[index2];
+        vec3 v1Pos = vec3(ubo.view * (vec4(v1.position, 1)));
+        vec3 v2Pos = vec3(ubo.view * (vec4(v2.position, 1)));
+        float maxx;
+        float minx;
+        float maxy;
+        float miny;
+        if(v1Pos.x > v2Pos.x){
+            maxx = v1Pos.x;
+            minx = v2Pos.x;
+        }else{
+            maxx = v2Pos.x;
+            minx = v1Pos.x;
+        }
+        if(v1Pos.y > v2Pos.y){
+            maxy = v1Pos.y;
+            miny = v2Pos.y;
+        }else{
+            maxy = v2Pos.y;
+            miny = v1Pos.y;
+        }
+        index1 = targetEdgeIdx * 4;
+        index2 = index1 + 1;
+        uint index3 = index1 + 2;
+        uint index4 = index1 + 3;
+        targetEdgeAABB[index1] = maxx;
+        targetEdgeAABB[index2] = minx;
+        targetEdgeAABB[index3] = maxy;
+        targetEdgeAABB[index4] = miny;
+        //debugPrintfEXT("pos=(%u, %.5f, %.5f, %.5f, %.5f, %.5f,%.5f,%.5f,%.5f)\n",targetEdgeIdx, v1.position.x, v1.position.y, v2.position.x, v2.position.y, v1Pos.x, v1Pos.y, v2Pos.x, v2Pos.y);
+    }
+}
+

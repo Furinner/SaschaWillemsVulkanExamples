@@ -35,7 +35,7 @@ void main()
         outPosition = ivec4(-1,-1,1,2);
     }else if(inBorder == 1){
 		//outPosition = ivec4(inObjectID,inHeID,1,1);
-        outPosition = ivec4(inObjectID,inHeID,1,1);
+        outPosition = ivec4(inObjectID,inGlobalHeID,1,1);
 	}else{
 		discard;
 	}

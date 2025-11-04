@@ -33,11 +33,13 @@ layout (set = 0, binding = 1) uniform UBO
    mat4 proj;
 }ubo;
 
+//符合的edge数
 layout (set = 0, binding = 2) buffer SBO1
 {
    uint targetEdgeCnt;
 };
 
+//每个edge的GlobalHeID
 layout (set = 0, binding = 3) buffer SBO2
 {
    int targetEdgeIdxList[];
@@ -66,7 +68,7 @@ void main()
 //    vertices[index1].debug = 0;
 //    vertices[index2].debug = 0;
     if(gl_GlobalInvocationID.x < ubo.edgeVertSize){
-        debugPrintfEXT("pos=(%u,", targetEdgeCnt);
+        //debugPrintfEXT("pos=(%u,", targetEdgeCnt);
         uint index1 = gl_GlobalInvocationID.x * 2;
         uint index2 = index1 + 1;
         vertices[index1].debug = 0;

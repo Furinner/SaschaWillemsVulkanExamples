@@ -36,9 +36,6 @@ if (NOT CMAKE_VERSION VERSION_LESS 3.7.0)
 	find_package(Vulkan)
 endif()
 
-find_package(CGAL REQUIRED)
-find_package(Eigen3 REQUIRED)
-
 IF(UNIX AND NOT APPLE)
 	set(LINUX TRUE)
 ENDIF()

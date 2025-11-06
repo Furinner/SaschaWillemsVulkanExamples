@@ -31,8 +31,12 @@ float nextDown(float x) {
 //this fragment won't affect color, depth and stencil attachment.
 void main() 
 {
-    if(inDebug == 1){
-        outPosition = ivec4(inObjectID,inGlobalHeID,1,2);
+    if(inDebug >= 1){
+        if(inDebug == 1){
+            outPosition = ivec4(inObjectID,inGlobalHeID,1,2);
+        }else{
+            outPosition = ivec4(inObjectID,inGlobalHeID,1,inDebug);
+        }
     }else if(inBorder == 1){
 		//outPosition = ivec4(inObjectID,inHeID,1,1);
         outPosition = ivec4(inObjectID,inGlobalHeID,1,1);

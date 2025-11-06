@@ -2122,12 +2122,12 @@ public:
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.edgeList,
-			mesh.edgeIdx.size() * sizeof(int32_t)));
+			mesh.edgeIdx.size() * sizeof(int32_t) / 2));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.edgeAABB,
-			mesh.edgeIdx.size() * 4 * sizeof(float)));
+			mesh.edgeIdx.size() * 2 * sizeof(float)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -2559,7 +2559,8 @@ public:
 				VK_PIPELINE_STAGE_TRANSFER_BIT,
 				VK_ACCESS_TRANSFER_WRITE_BIT,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
+			);
 		}
 		vkCmdBeginRenderPass(edgeCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -2657,7 +2658,16 @@ public:
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer2, &cmdBufInfo));
 
+		std::vector<VkBuffer> buffers = { storageBuffers.edgeCnt.buffer };
 		vkCmdFillBuffer(edgeCmdBuffer2, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+		vks::Buffer::bufferBarrier(
+			edgeCmdBuffer2,
+			buffers,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
+		);
 
 		vkCmdBeginRenderPass(edgeCmdBuffer2, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -3761,17 +3771,16 @@ public:
 					camera.matrices.perspective = glm::ortho(camera.orthoLeft, camera.orthoRight, camera.orthoBottom, camera.orthoTop, camera.znear, camera.zfar);
 					camera.matrices.view = glm::lookAt(camera.position, camera.position + camera.getCamFront(), glm::vec3(0, 1, 0));
 					updateUniformBufferCompute();
-					for (int i = 0; i < 100; ++i) {
-						glm::vec3 currPos = glm::vec3(camera.matrices.view * glm::vec4(mesh.edgeVert[i].position, 1));
-					}
+
 					//compute2
 					waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 					VkSubmitInfo computeSubmitInfo = vks::initializers::submitInfo();
 					computeSubmitInfo.commandBufferCount = 1;
 					computeSubmitInfo.waitSemaphoreCount = 1;
-					computeSubmitInfo.signalSemaphoreCount = 0;
+					computeSubmitInfo.signalSemaphoreCount = 1;
 					computeSubmitInfo.pCommandBuffers = &computeCmdBuffer2;
 					computeSubmitInfo.pWaitSemaphores = &edgeSemaphore;
+					computeSubmitInfo.pSignalSemaphores = &compute2Semaphore;
 					computeSubmitInfo.pWaitDstStageMask = &waitStageMask;
 					VK_CHECK_RESULT(vkQueueSubmit(compute.queue, 1, &computeSubmitInfo, VK_NULL_HANDLE));
 					//阻塞当前线程，直到该 device 上所有的队列（graphics/compute/transfer 等）都完成了之前提交的所有工作
@@ -3799,12 +3808,19 @@ public:
 		// Scene rendering
 		// Wait for offscreen semaphore
 		waitStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-		submitInfo.pWaitSemaphores = &edgeSemaphore;
 		// Signal ready with render complete semaphore
 		submitInfo.pSignalSemaphores = &semaphores.renderComplete;
 		// Submit work
 		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
 		submitInfo.pWaitDstStageMask = &waitStageMask;
+		if (savePicCnt == (scaleCnt + 2)) {
+			//两个 vkQueueSubmit() 不能同时去 wait 同一个 binary semaphore
+			//所以这里不能是edgeSemaphore
+			submitInfo.pWaitSemaphores = &compute2Semaphore;
+		}
+		else {
+			submitInfo.pWaitSemaphores = &edgeSemaphore;
+		}
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
 		VulkanExampleBase::submitFrame();

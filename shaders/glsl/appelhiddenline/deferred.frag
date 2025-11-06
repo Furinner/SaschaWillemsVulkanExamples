@@ -576,6 +576,9 @@ vec3 case12(int size, vec2 inUV, vec2 tex_offset){
 	ivec4 center_edge =  texture(samplerEdge, inUV).rgba;
 	if(center_edge.a == 2){
 		return vec3(1, 0, 0);
+	}else if(center_edge.a > 2){
+		vec3 result = vec3((center_edge.a - 3) * 540.f / 10000.f);
+		return clamp(result, vec3(0), vec3(1));
 	}
 	if(center_edge.b == 1){
 		return vec3(1);

@@ -189,8 +189,8 @@ namespace vks
 
 
 	void Buffer::bufferBarrier(VkCommandBuffer cb, const std::vector<VkBuffer>& buffers,
-		VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage,
-		VkAccessFlags srcAccess, VkAccessFlags dstAccess) {
+		VkPipelineStageFlags srcStage, VkAccessFlags srcAccess, 
+		VkPipelineStageFlags dstStage, VkAccessFlags dstAccess) {
 		std::vector<VkBufferMemoryBarrier> barriers(buffers.size());
 		for (size_t i = 0; i < buffers.size(); ++i) {
 			barriers[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;

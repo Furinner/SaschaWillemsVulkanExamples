@@ -76,15 +76,14 @@ void main()
     }
 
     if(gl_GlobalInvocationID.x < targetEdgeCnt){
-        int targetEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
-        uint index1 = targetEdgeIdx * 2;
-        uint index2 = index1 + 1;
-        Vertex v1 = vertices[index1];
-        Vertex v2 = vertices[index2];
+        int globalEdgeId = targetEdgeIdxList[gl_GlobalInvocationID.x];
+        Vertex v1 = vertices[globalEdgeId * 2];
+        Vertex v2 = vertices[globalEdgeId * 2 + 1];
         //vertices[index1].debug = 1;
         //vertices[index2].debug = 1;
-        vec3 v1Pos = vec3(ubo.view * (vec4(v1.position, 1)));
-        vec3 v2Pos = vec3(ubo.view * (vec4(v2.position, 1)));
+        //计算AABB
+        vec3 v1Pos = vec3(ubo.proj * ubo.view * (vec4(v1.position, 1)));
+        vec3 v2Pos = vec3(ubo.proj * ubo.view * (vec4(v2.position, 1)));
         float maxx;
         float minx;
         float maxy;
@@ -103,14 +102,13 @@ void main()
             maxy = v2Pos.y;
             miny = v1Pos.y;
         }
-        index1 = targetEdgeIdx * 4;
-        index2 = index1 + 1;
-        uint index3 = index1 + 2;
-        uint index4 = index1 + 3;
-        targetEdgeAABB[index1] = maxx;
-        targetEdgeAABB[index2] = minx;
-        targetEdgeAABB[index3] = maxy;
-        targetEdgeAABB[index4] = miny;
+        //这里不能使用gl_GlobalInvocationID.x进行索引
+        //因为globalEdgeId每帧都在变化，因为它是在edgeCmdBuf中更改的
+        //而edgeCmdBuf每帧都在运行，所以这里索引只能用globalHeID
+        targetEdgeAABB[globalEdgeId * 4] = maxx;
+        targetEdgeAABB[globalEdgeId * 4 + 1] = minx;
+        targetEdgeAABB[globalEdgeId * 4 + 2] = maxy;
+        targetEdgeAABB[globalEdgeId * 4 + 3] = miny;
         //debugPrintfEXT("pos=(%u, %.5f, %.5f, %.5f, %.5f, %.5f,%.5f,%.5f,%.5f)\n",targetEdgeIdx, v1.position.x, v1.position.y, v2.position.x, v2.position.y, v1Pos.x, v1Pos.y, v2Pos.x, v2Pos.y);
     }
 }

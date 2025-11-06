@@ -81,6 +81,8 @@ void main()
         uint index2 = index1 + 1;
         Vertex v1 = vertices[index1];
         Vertex v2 = vertices[index2];
+        //vertices[index1].debug = 1;
+        //vertices[index2].debug = 1;
         vec3 v1Pos = vec3(ubo.view * (vec4(v1.position, 1)));
         vec3 v2Pos = vec3(ubo.view * (vec4(v2.position, 1)));
         float maxx;

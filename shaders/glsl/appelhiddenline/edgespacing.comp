@@ -187,6 +187,8 @@ void main()
         int targetEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
         Vertex v1 = vertices[targetEdgeIdx * 2];
         Vertex v2 = vertices[targetEdgeIdx * 2 + 1];
+        vertices[targetEdgeIdx * 2].debug = 1;
+        vertices[targetEdgeIdx * 2 + 1].debug = 1;
         vec3 v1Pos = vec3(ubo.view * (vec4(v1.position, 1)));
         vec3 v2Pos = vec3(ubo.view * (vec4(v2.position, 1)));
         float ab1 = targetEdgeAABB[targetEdgeIdx * 4];   //maxx
@@ -237,8 +239,7 @@ void main()
             vertices[targetEdgeIdx * 2 + 1].debug = 1;
             atomicAdd(edgeSuccessCnt, 1);
         }
-    }else{
-        
     }
+
 }
 

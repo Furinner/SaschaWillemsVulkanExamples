@@ -42,5 +42,16 @@ namespace vks
 		VkResult flush(VkDeviceSize size = VK_WHOLE_SIZE, VkDeviceSize offset = 0);
 		VkResult invalidate(VkDeviceSize size = VK_WHOLE_SIZE, VkDeviceSize offset = 0);
 		void destroy();
+
+		static void releaseBuffers(VkCommandBuffer cb, const std::vector<VkBuffer>& buffers,
+			uint32_t srcFamily, uint32_t dstFamily, VkPipelineStageFlags srcStage,
+			VkPipelineStageFlags srcAccess, bool sameFamily);
+		static void acquireBuffers(VkCommandBuffer cb, const std::vector<VkBuffer>& buffers,
+			uint32_t srcFamily, uint32_t dstFamily, VkPipelineStageFlags dstStage,
+			VkPipelineStageFlags dstAccess, bool sameFamily);
+
+		static void bufferBarrier(VkCommandBuffer cb, const std::vector<VkBuffer>& buffer,
+			VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage,
+			VkAccessFlags srcAccess, VkAccessFlags dstAccess);
 	};
 }

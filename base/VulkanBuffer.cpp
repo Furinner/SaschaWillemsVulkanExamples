@@ -132,4 +132,85 @@ namespace vks
 			vkFreeMemory(device, memory, nullptr);
 		}
 	}
+
+	void Buffer::releaseBuffers(VkCommandBuffer cb, const std::vector<VkBuffer>& buffers,
+		uint32_t srcFamily, uint32_t dstFamily, VkPipelineStageFlags srcStage,
+		VkAccessFlags srcAccess, bool sameFamily) {
+		std::vector<VkBufferMemoryBarrier> barriers(buffers.size());
+		for (size_t i = 0; i < buffers.size(); ++i) {
+			barriers[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+			barriers[i].pNext = nullptr;
+			barriers[i].srcAccessMask = srcAccess;
+			barriers[i].dstAccessMask = 0;
+			barriers[i].srcQueueFamilyIndex = sameFamily ? VK_QUEUE_FAMILY_IGNORED : srcFamily;
+			barriers[i].dstQueueFamilyIndex = sameFamily ? VK_QUEUE_FAMILY_IGNORED : dstFamily;
+			barriers[i].buffer = buffers[i];
+			barriers[i].offset = 0;
+			barriers[i].size = VK_WHOLE_SIZE;
+		}
+		vkCmdPipelineBarrier(
+			cb,
+			srcStage,                                       // release: 源阶段
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,           // 无需后续阶段
+			0,
+			0, nullptr,
+			static_cast<uint32_t>(barriers.size()),
+			barriers.data(),
+			0, nullptr);
+		
+	}
+
+	void Buffer::acquireBuffers(VkCommandBuffer cb, const std::vector<VkBuffer>& buffers,
+		uint32_t srcFamily, uint32_t dstFamily, VkPipelineStageFlags dstStage,
+		VkAccessFlags dstAccess, bool sameFamily) {
+		std::vector<VkBufferMemoryBarrier> barriers(buffers.size());
+		for (size_t i = 0; i < buffers.size(); ++i) {
+			barriers[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+			barriers[i].pNext = nullptr;
+			barriers[i].srcAccessMask = 0;
+			barriers[i].dstAccessMask = dstAccess;
+			barriers[i].srcQueueFamilyIndex = sameFamily ? VK_QUEUE_FAMILY_IGNORED : srcFamily;
+			barriers[i].dstQueueFamilyIndex = sameFamily ? VK_QUEUE_FAMILY_IGNORED : dstFamily;
+			barriers[i].buffer = buffers[i];
+			barriers[i].offset = 0;
+			barriers[i].size = VK_WHOLE_SIZE;
+		}
+
+		vkCmdPipelineBarrier(
+			cb,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,              // acquire: 无前序阶段
+			dstStage,                                       // 目标访问阶段
+			0,                                              // dependencyFlags
+			0, nullptr,                                     // memory barrier
+			static_cast<uint32_t>(barriers.size()),         // buffer barrier 数量
+			barriers.data(),                                // barrier 数组
+			0, nullptr);                                    // image barrier
+	}
+
+
+	void Buffer::bufferBarrier(VkCommandBuffer cb, const std::vector<VkBuffer>& buffers,
+		VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage,
+		VkAccessFlags srcAccess, VkAccessFlags dstAccess) {
+		std::vector<VkBufferMemoryBarrier> barriers(buffers.size());
+		for (size_t i = 0; i < buffers.size(); ++i) {
+			barriers[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+			barriers[i].pNext = nullptr;
+			barriers[i].srcAccessMask = srcAccess;
+			barriers[i].dstAccessMask = dstAccess;
+			barriers[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barriers[i].buffer = buffers[i];
+			barriers[i].offset = 0;
+			barriers[i].size = VK_WHOLE_SIZE;
+		}
+		vkCmdPipelineBarrier(
+			cb,
+			srcStage,                                       // fill buffer 所属阶段
+			dstStage,                                       // 目标访问阶段
+			0,                                              
+			0, nullptr,                                     
+			static_cast<uint32_t>(barriers.size()),         // buffer barrier 数量
+			barriers.data(),                                // barrier 数组
+			0, nullptr);
+	}
 };

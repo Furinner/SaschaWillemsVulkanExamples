@@ -45,6 +45,26 @@ class Texture
 	void      updateDescriptor();
 	void      destroy();
 	ktxResult loadKTXFile(std::string filename, ktxTexture **target);
+
+	static void transitionColorAttachmentsToShaderRead(
+		VkCommandBuffer cmdBuffer,
+		const std::vector<VkImage>& images,
+		VkImageLayout oldLayout,
+		VkImageLayout newLayout,
+		VkAccessFlags srcAccess,
+		VkAccessFlags dstAccess,
+		VkPipelineStageFlags srcStage,
+		VkPipelineStageFlags dstStage,
+		VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+	);
+
+	static void transitionImageLayoutOnce(
+		VkImageLayout oldLayout,
+		VkImageLayout newLayout,
+		VkImage image,
+		vks::VulkanDevice* vulkanDevice,
+		VkQueue queue
+	);
 };
 
 class Texture2D : public Texture
@@ -94,4 +114,5 @@ class TextureCubeMap : public Texture
 	    VkImageUsageFlags  imageUsageFlags = VK_IMAGE_USAGE_SAMPLED_BIT,
 	    VkImageLayout      imageLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 };
+	
 }        // namespace vks

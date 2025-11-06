@@ -30,17 +30,17 @@ layout (binding = 4) uniform UBO
 	int orthographic;
 } ubo;
 
-layout (binding = 5) buffer FaceInfo
+layout (binding = 5) readonly buffer FaceInfo
 {
     int faceInfos[];
 };
 
-layout (binding = 6) buffer FaceData
+layout (binding = 6) readonly buffer FaceData
 {
     int faceData[];
 };
 
-layout (binding = 7) buffer FaceNor
+layout (binding = 7) readonly buffer FaceNor
 {
 	vec4 faceNor[];
 };

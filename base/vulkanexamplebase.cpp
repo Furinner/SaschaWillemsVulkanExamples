@@ -137,6 +137,7 @@ VkResult VulkanExampleBase::createInstance()
 		instanceExtensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
 	}
 
+
 	if (instanceExtensions.size() > 0) {
 		instanceCreateInfo.enabledExtensionCount = (uint32_t)instanceExtensions.size();
 		instanceCreateInfo.ppEnabledExtensionNames = instanceExtensions.data();

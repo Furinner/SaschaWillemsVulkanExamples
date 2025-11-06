@@ -866,4 +866,80 @@ namespace vks
 		updateDescriptor();
 	}
 
+	void Texture::transitionColorAttachmentsToShaderRead(
+		VkCommandBuffer cmdBuffer,
+		const std::vector<VkImage>& images,
+		VkImageLayout oldLayout,
+		VkImageLayout newLayout,
+		VkAccessFlags srcAccess, //barrier之前你对该图像做了哪类访问
+		VkAccessFlags dstAccess, //barrier之后你将以哪类访问去读/写该图像
+		VkPipelineStageFlags srcStage, //哪个管线前需要srcAccess
+		VkPipelineStageFlags dstStage, //表示接下来哪些管线阶段要去dstAccess
+		VkImageAspectFlags aspectMask
+		)
+	{
+		std::vector<VkImageMemoryBarrier> barriers(images.size());
+
+		for (size_t i = 0; i < images.size(); ++i) {
+			VkImageMemoryBarrier& barrier = barriers[i];
+			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			barrier.pNext = nullptr;
+			barrier.srcAccessMask = srcAccess;
+			barrier.dstAccessMask = dstAccess; 
+			//barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;  // 写完 color attachment
+			//barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;             // 要被 shader 读
+			barrier.oldLayout = oldLayout;
+			barrier.newLayout = newLayout;
+			barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			barrier.image = images[i];
+
+			barrier.subresourceRange.aspectMask = aspectMask;
+			barrier.subresourceRange.baseMipLevel = 0;
+			barrier.subresourceRange.levelCount = 1;
+			barrier.subresourceRange.baseArrayLayer = 0;
+			barrier.subresourceRange.layerCount = 1;
+		}
+
+		vkCmdPipelineBarrier(
+			cmdBuffer,
+			srcStage,
+			dstStage,
+			0,
+			0, nullptr,
+			0, nullptr,
+			static_cast<uint32_t>(barriers.size()),
+			barriers.data()
+		);
+	}
+
+	void Texture::transitionImageLayoutOnce(
+		VkImageLayout oldLayout,
+		VkImageLayout newLayout,
+		VkImage image,
+		vks::VulkanDevice* vulkanDevice,
+		VkQueue queue)
+	{
+		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		VkImageMemoryBarrier barrier = {};
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.oldLayout = oldLayout;
+		barrier.newLayout = newLayout;
+		barrier.image = image;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseMipLevel = 0;
+		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 1;
+
+		vkCmdPipelineBarrier(
+			tmpCmdBuf,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier
+		);
+		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
+	}
 }

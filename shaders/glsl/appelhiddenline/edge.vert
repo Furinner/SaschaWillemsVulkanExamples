@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_debug_printf : enable
+#extension GL_KHR_vulkan_glsl : enable
 
 
 layout (binding = 0) uniform UBO 

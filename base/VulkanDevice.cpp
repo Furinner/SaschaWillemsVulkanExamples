@@ -297,7 +297,7 @@ namespace vks
 		{
 			return result;
 		}
-
+		
 		// Create a default command pool for graphics command buffers
 		commandPool = createCommandPool(queueFamilyIndices.graphics);
 

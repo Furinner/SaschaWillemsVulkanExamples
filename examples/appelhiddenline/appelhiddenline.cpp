@@ -18,6 +18,7 @@
 #include <memory>
 #include <limits>
 #include <unordered_set>
+#include "mesh.h"
 
 //#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 //#include <CGAL/Surface_mesh.h>
@@ -90,7 +91,7 @@ public:
 		//if my first variable is glm::vec2 uv, then glm::vec3 pos, now the start point of pos is 8 byte, which is not a multiple of 16 byte.
 		//thus we change it to alignas(16) glm::vec3 pos, it will fill the empty 8 bytes and make the start point of pos be 16 byte.
 		//thus, alignas(16) automatically fill the bytes to make the variable behind has a start memory point be multiple of 16.
-		alignas(16) glm::vec3 position;
+		alignas(16) glm::vec3 position = glm::vec3(0);
 		alignas(16) glm::vec3 normal;
 		alignas(16) glm::vec3 faceNor = glm::vec3(0);
 		alignas(16) glm::vec3 symFaceNor = glm::vec3(0);
@@ -101,6 +102,7 @@ public:
 		alignas(4) int heID = -1;
 		alignas(4) int uniqueID; //unique id in obj
 		alignas(4) int debug = 0;
+		//一个edge两个vertex，一个globalHeID
 		alignas(4) int globalHeID = -1;
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
@@ -108,6 +110,12 @@ public:
 		Vertex(glm::vec3 position) :position(position) {};
 		Vertex(Vertex* ver) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
 		Vertex(glm::vec3 position, int debug) :position(position), debug(debug) {};
+		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec3 faceNor, glm::vec3 symFaceNor,
+			glm::vec2 uv, int objectID, int faceID, int border, int heID, int uniqueID, int debug, int globalHeID)
+			:position(position), normal(normal), faceNor(faceNor), symFaceNor(symFaceNor), uv(uv), objectID(objectID),
+			faceID(faceID), border(border), heID(heID), uniqueID(uniqueID), debug(debug), globalHeID(globalHeID)
+		{};
+		
 		bool operator==(const Vertex& other) const {
 			return fequal(position.x, other.position.x) && (fequal(position.y, other.position.y) && (fequal(position.z, other.position.z)));
 		}
@@ -289,7 +297,7 @@ public:
 			}
 		};
 
-		void getAllEdges(std::vector<int>& edgeIdx, std::vector<Vertex>& edgeVert) {
+		void getAllEdges(std::vector<uint32_t>& edgeIdx, std::vector<Vertex>& edgeVert) {
 			if (he1 != nullptr) {
 				int newIdx = edgeIdx.size();
 				edgeIdx.push_back(newIdx);
@@ -360,7 +368,7 @@ public:
 		std::vector<int> neighborFacesData{};
 		std::vector<int> objFaceCnt{};  //the starting face idx of each obj
 		std::vector<glm::vec4> faceNors{};
-		std::vector<int> edgeIdx{};
+		std::vector<uint32_t> edgeIdx{};
 		std::vector<Vertex> edgeVert{};
 		std::vector<std::array<glm::vec3, 2>> aabbMeshes;
 		glm::vec3 aabbSceneMin = glm::vec3(std::numeric_limits<float>::max());
@@ -384,6 +392,8 @@ public:
 		size_t vertexBuffersSize2 = 0;
 		size_t indexBuffersSize = 0;
 		size_t facesSize = 0;
+		OCCCompound occCompound;
+		int origEdgeVertSize;
 
 		void create(std::vector<std::vector<uint32_t>>& indexBuffers, std::vector<std::vector<vkglTF::Vertex>>& vertexBuffers, vks::VulkanDevice* device, VkQueue transferQueue) {
 			int objectID = 0;
@@ -397,7 +407,7 @@ public:
 				std::unordered_map<std::string, HalfEdge*> symHEs;
 				std::vector<std::vector<int>> neighborFaces;
 				for (int i = 0; i < vertexBuffer.size(); ++i) {
-					vertexBuffer[i].pos *= 5.f;
+					//vertexBuffer[i].pos *= 5.f;
 					glm::vec3 pos = vertexBuffer[i].pos;
 					glm::vec3 nor = vertexBuffer[i].normal;
 					glm::vec2 uv = vertexBuffer[i].uv;
@@ -665,22 +675,47 @@ public:
 				vertices2Data.push_back(tmpVer);
 			}
 
+			//改
+			index = occCompound.mesh.indices1;
+			edgeIdx = occCompound.mesh.indices2;
+			for (int i = 0; i < occCompound.mesh.vertices2.size(); i += 2) {
+				occCompound.mesh.vertices2[i].globalHeID = i / 2;
+				occCompound.mesh.vertices2[i + 1].globalHeID = i / 2;
+			}
+			vertices2Data.clear();
+			for (auto& v : occCompound.mesh.vertices1) {
+				vertices2Data.push_back(Vertex(v.pos, v.nor, v.faceNor, v.symFaceNor,
+					v.uv, v.objID, v.faceID, v.border, v.heID, v.uniqueID, v.debug, v.globalHeID));
+			}
+			edgeVert.clear();
+			for (auto& v : occCompound.mesh.vertices2) {
+				edgeVert.push_back(Vertex(v.pos, v.nor, v.faceNor, v.symFaceNor,
+					v.uv, v.objID, v.faceID, v.border, v.heID, v.uniqueID, v.debug, v.globalHeID));
+			}
+			origEdgeVertSize = edgeVert.size();
+			int extraSize = 40000;
+			for (int i = 0; i < extraSize; ++i) {
+				edgeVert.push_back(Vertex(glm::vec3(0), glm::vec3(0), glm::vec3(0), glm::vec3(0),
+					glm::vec2(0), -1, -1, -1, -1, -1, 0, origEdgeVertSize + i));
+			}
+			for (int i = 0; i < extraSize; ++i) {
+				edgeIdx.push_back(edgeIdx.size());
+			}
+			vertexBuffersSize2 = vertices2Data.size();
+			indexBuffersSize = index.size();
+
 			size_t vertexBufferSize = vertexBuffersSize2 * sizeof(Vertex);
-			//size_t vertexBufferSize = vertexBuffersSize * (2 * sizeof(glm::vec3) + sizeof(int));
 			size_t indexBufferSize = indexBuffersSize * sizeof(uint32_t);
 			size_t faceInfoSize = objFaceCnt.size() * sizeof(int);
 			size_t faceDataSize = neighborFacesData.size() * sizeof(int);
 			size_t faceNorSize = faceNors.size() * sizeof(glm::vec4);
 			size_t edgeVertSize = edgeVert.size() * sizeof(Vertex);
 			size_t edgeIdxSize = edgeIdx.size() * sizeof(int);
-			for (int i = 0; i < edgeVert.size(); i+=2) {
-				edgeVert[i].globalHeID = i/2;
-				edgeVert[i + 1].globalHeID = i/2;
-			}
+			
 			struct StagingBuffer {
 				VkBuffer buffer;
 				VkDeviceMemory memory;
-			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging, edgeVertStaging, edgeIdxStaging;
+			} vertexStaging, indexStaging, faceInfoStaging, faceDataStaging, faceNorStaging, edgeVertStaging, edgeIdxStaging, bEdgesSEStaging;
 
 			// Create staging buffers
 			// Vertex data
@@ -1437,10 +1472,19 @@ public:
 	} uniformDataLockedEdge;
 
 	struct UniformDataCompute1 {
-		alignas(4) unsigned int edgeVertSize;
 		alignas(16) glm::mat4 view;
 		alignas(16) glm::mat4 proj;
-	} uniformDataCompute1, uniformDataCompute2;
+		alignas(4) unsigned int bEdgeCnt;
+		alignas(4) unsigned int edgeVertSize;
+		alignas(4) unsigned int origEdgeCnt;
+	} uniformDataCompute1;
+
+	struct UniformDataCompute2 {
+		alignas(16) glm::mat4 view;
+		alignas(16) glm::mat4 proj;
+		alignas(4) unsigned int edgeVertSize;
+		alignas(4) unsigned int origEdgeCnt;
+	}uniformDataCompute2;
 
 	struct {
 		vks::Buffer offscreen{ VK_NULL_HANDLE };
@@ -1458,6 +1502,7 @@ public:
 		vks::Buffer edgeSuccessCnt{ VK_NULL_HANDLE };
 		vks::Buffer compute1{ VK_NULL_HANDLE };
 		vks::Buffer compute2{ VK_NULL_HANDLE };
+		vks::Buffer bEdgesSE{ VK_NULL_HANDLE };
 	}storageBuffers;
 
 	struct {
@@ -1969,7 +2014,7 @@ public:
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
@@ -1990,6 +2035,8 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
 			// Binding 6 :
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
+			// Binding 7 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute1));
@@ -2065,7 +2112,13 @@ public:
 				descriptorSets.compute1,
 				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				6,
-				&storageBuffers.edgeSuccessCnt.descriptor)
+				&storageBuffers.edgeSuccessCnt.descriptor),
+			// Binding 7
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				7,
+				&storageBuffers.bEdgesSE.descriptor),
 		};
 		
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
@@ -2133,9 +2186,31 @@ public:
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.edgeSuccessCnt,
 			sizeof(uint32_t)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.bEdgesSE,
+			mesh.occCompound.mesh.bEdgesSE.size() * sizeof(int)));
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
+		struct StagingBuffer {
+			VkBuffer buffer;
+			VkDeviceMemory memory;
+		} bEdgesSEStaging;
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			mesh.occCompound.mesh.bEdgesSE.size() * sizeof(int),
+			&bEdgesSEStaging.buffer,
+			&bEdgesSEStaging.memory,
+			mesh.occCompound.mesh.bEdgesSE.data()));
+		VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		VkBufferCopy copyRegion = {};
+		copyRegion.size = mesh.occCompound.mesh.bEdgesSE.size() * sizeof(int);
+		vkCmdCopyBuffer(copyCmd, bEdgesSEStaging.buffer, storageBuffers.bEdgesSE.buffer, 1, &copyRegion);
+		vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
+
 		
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -2164,6 +2239,12 @@ public:
 			VK_FORMAT_R32G32B32A32_SINT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			&edgeFrameBuf.position);
+
+		createAttachment(
+			VK_FORMAT_R32G32B32A32_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&edgeFrameBuf.normal);
+
 		for(auto& img : scaleSamples){
 			createAttachment2(
 				VK_FORMAT_R32G32B32A32_SINT,
@@ -2181,17 +2262,17 @@ public:
 
 
 		// Set up separate renderpass with references to the color and depth attachments
-		std::array<VkAttachmentDescription, 2> attachmentDescs = {};
+		std::array<VkAttachmentDescription, 3> attachmentDescs = {};
 
 		// Init attachment properties
-		for (uint32_t i = 0; i < 2; ++i)
+		for (uint32_t i = 0; i < 3; ++i)
 		{
 			//diff: edge should change loadOp to VK_ATTACHMENT_LOAD_OP_LOAD
 			attachmentDescs[i].samples = VK_SAMPLE_COUNT_1_BIT;
 			attachmentDescs[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 			attachmentDescs[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 			attachmentDescs[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			if (i == 1)
+			if (i == 2)
 			{
 				//diff: if share depth attachmentm, its initial layout should match the final layout
 				//of last depth attachment
@@ -2209,13 +2290,15 @@ public:
 
 		// Formats
 		attachmentDescs[0].format = edgeFrameBuf.position.format;
-		attachmentDescs[1].format = offScreenFrameBuf.depth.format;
+		attachmentDescs[1].format = edgeFrameBuf.normal.format;
+		attachmentDescs[2].format = offScreenFrameBuf.depth.format;
 
 		std::vector<VkAttachmentReference> colorReferences;
 		colorReferences.push_back({ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+		colorReferences.push_back({ 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
 
 		VkAttachmentReference depthReference = {};
-		depthReference.attachment = 1;
+		depthReference.attachment = 2;
 		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
 		VkSubpassDescription subpass = {};
@@ -2262,9 +2345,10 @@ public:
 
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &edgeFrameBuf.renderPass));
 
-		std::array<VkImageView, 2> attachments;
+		std::array<VkImageView, 3> attachments;
 		attachments[0] = edgeFrameBuf.position.view;
-		attachments[1] = offScreenFrameBuf.depth.view;
+		attachments[1] = edgeFrameBuf.normal.view;
+		attachments[2] = offScreenFrameBuf.depth.view;
 
 		VkFramebufferCreateInfo fbufCreateInfo = {};
 		fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -2487,11 +2571,12 @@ public:
 
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 
-		VkClearValue clearValues[1];
+		std::array<VkClearValue, 2> clearValues;
 		clearValues[0].color.int32[0] = -1;
 		clearValues[0].color.int32[1] = -1;
 		clearValues[0].color.int32[2] = 0;
 		clearValues[0].color.int32[3] = 0;
+		clearValues[1].color = { {0.0f, 0.0f, 0.0f, 0.0f} };
 
 		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
 		renderPassBeginInfo.renderPass = edgeFrameBuf.renderPass;
@@ -2499,8 +2584,8 @@ public:
 		renderPassBeginInfo.renderArea.extent.width = edgeFrameBuf.width;
 		renderPassBeginInfo.renderArea.extent.height = edgeFrameBuf.height;
 		//diff: render pass don't have any clear values
-		renderPassBeginInfo.clearValueCount = 1;
-		renderPassBeginInfo.pClearValues = clearValues;
+		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassBeginInfo.pClearValues = clearValues.data();
 
 		// Add memory barrier between render passes
 		VkImageMemoryBarrier colorBarrier = {};
@@ -2577,7 +2662,6 @@ public:
 		vkCmdBindDescriptorSets(edgeCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout2, 0, 1, &descriptorSets.edge, 0, nullptr);
 		mesh.bindLineBuffers(edgeCmdBuffer);
 		vkCmdDrawIndexed(edgeCmdBuffer, mesh.edgeIdx.size(), 1, 0, 0, 0);
-		//vkCmdDraw(edgeCmdBuffer, 2, 1, 0, 0);
 
 		vkCmdEndRenderPass(edgeCmdBuffer);
 
@@ -2684,7 +2768,6 @@ public:
 		vkCmdBindDescriptorSets(edgeCmdBuffer2, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout2, 0, 1, &descriptorSets.edge, 0, nullptr);
 		mesh.bindLineBuffers(edgeCmdBuffer2);
 		vkCmdDrawIndexed(edgeCmdBuffer2, mesh.edgeIdx.size(), 1, 0, 0, 0);
-		//vkCmdDraw(edgeCmdBuffer, 2, 1, 0, 0);
 
 		vkCmdEndRenderPass(edgeCmdBuffer2);
 
@@ -2897,9 +2980,24 @@ public:
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/spine_test2", vulkanDevice, queue, glTFLoadingFlags);
 		model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/excavator_yellow_smooth", vulkanDevice, queue, glTFLoadingFlags);
 		//model.loadFromFolder(indexBuffers, vertexBuffers, getAssetPath() + "models/test/combined/mushroom", vulkanDevice, queue, glTFLoadingFlags);
-		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
-		//view independent
 		
+		std::string stpFile = getAssetPath() + "models/test/combined/excavator_yellow/orig/excavator_yellow.stp";
+		//OCCCompound occCompound;
+		mesh.occCompound.read(stpFile);
+		
+		
+		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
+		
+		mesh.aabbSceneMin = glm::vec3(std::numeric_limits<float>::max());
+		mesh.aabbSceneMax = glm::vec3(-std::numeric_limits<float>::max());
+		for (auto& v : mesh.occCompound.mesh.vertices1) {
+			if (v.pos.x < mesh.aabbSceneMin.x) mesh.aabbSceneMin.x = v.pos.x;
+			if (v.pos.y < mesh.aabbSceneMin.y) mesh.aabbSceneMin.y = v.pos.y;
+			if (v.pos.z < mesh.aabbSceneMin.z) mesh.aabbSceneMin.z = v.pos.z;
+			if (v.pos.x > mesh.aabbSceneMax.x) mesh.aabbSceneMax.x = v.pos.x;
+			if (v.pos.y > mesh.aabbSceneMax.y) mesh.aabbSceneMax.y = v.pos.y;
+			if (v.pos.z > mesh.aabbSceneMax.z) mesh.aabbSceneMax.z = v.pos.z;
+		}
 	}
 
 	//Final Composition Command Buffer
@@ -2991,7 +3089,7 @@ public:
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 5);
@@ -3023,6 +3121,8 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 10),
 			// Binding 11 : Vertex Shader Storage buffer 2
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 11),
+			// Binding 12 : Edge texture target 2
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 12)
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
@@ -3056,6 +3156,12 @@ public:
 				edgeFrameBuf.position.view,
 				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+		VkDescriptorImageInfo texDescriptorEdge2 =
+			vks::initializers::descriptorImageInfo(
+				colorSampler,
+				edgeFrameBuf.normal.view,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
 		VkDescriptorImageInfo texDescriptorLockedEdge =
 			vks::initializers::descriptorImageInfo(
 				colorSampler,
@@ -3083,6 +3189,8 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8, &texDescriptorEdge),
 			// Binding 9 : Extra locked texture target
 			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9, &texDescriptorLockedEdge),
+			// Binding 12: Extra edge texture target 2
+			vks::initializers::writeDescriptorSet(descriptorSets.composition, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12, &texDescriptorEdge2),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
@@ -3225,7 +3333,8 @@ public:
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.offscreen));
 
 
-		std::array<VkPipelineColorBlendAttachmentState, 1> blendAttachmentStates2 = {
+		std::array<VkPipelineColorBlendAttachmentState, 2> blendAttachmentStates2 = {
+			vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE),
 			vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE)
 		};
 		colorBlendState.attachmentCount = static_cast<uint32_t>(blendAttachmentStates2.size());
@@ -3240,7 +3349,11 @@ public:
 		pipelineCI.renderPass = edgeFrameBuf.renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.edge));
 
-
+		std::array<VkPipelineColorBlendAttachmentState, 1> blendAttachmentStates3 = {
+			vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE)
+		};
+		colorBlendState.attachmentCount = static_cast<uint32_t>(blendAttachmentStates3.size());
+		colorBlendState.pAttachments = blendAttachmentStates3.data();
 		colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
 		rasterizationState.lineWidth = 3.f;
 		shaderStages[0] = loadShader(getShadersPath() + "appelhiddenline/lockededge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
@@ -3281,7 +3394,7 @@ public:
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.compute1, sizeof(UniformDataCompute1)));
 
 		// Compute shader 2
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.compute2, sizeof(UniformDataCompute1)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.compute2, sizeof(UniformDataCompute2)));
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.offscreen.map());
@@ -3350,11 +3463,14 @@ public:
 		uniformDataCompute1.edgeVertSize = mesh.edgeVert.size() / 2;
 		uniformDataCompute1.view = camera.matrices.view;
 		uniformDataCompute1.proj = camera.matrices.perspective;
+		uniformDataCompute1.bEdgeCnt = mesh.occCompound.mesh.bEdgesSE.size() / 2;
+		uniformDataCompute1.origEdgeCnt = mesh.origEdgeVertSize / 2;
 		memcpy(uniformBuffers.compute1.mapped, &uniformDataCompute1, sizeof(UniformDataCompute1));
 		uniformDataCompute2.edgeVertSize = mesh.edgeVert.size() / 2;
 		uniformDataCompute2.view = camera.matrices.view;
 		uniformDataCompute2.proj = camera.matrices.perspective;
-		memcpy(uniformBuffers.compute2.mapped, &uniformDataCompute2, sizeof(UniformDataCompute1));
+		uniformDataCompute2.origEdgeCnt = mesh.origEdgeVertSize / 2;
+		memcpy(uniformBuffers.compute2.mapped, &uniformDataCompute2, sizeof(UniformDataCompute2));
 	}
 
 	// Update lights and parameters passed to the composition shaders

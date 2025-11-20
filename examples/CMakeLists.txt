@@ -32,11 +32,13 @@ function(buildExample EXAMPLE_NAME)
 	source_group("Shaders\\HLSL" FILES ${SHADERS_HLSL})
 	# Add optional readme / tutorial
 	file(GLOB README_FILES "${EXAMPLE_FOLDER}/*.md")
+	# Add header files to show in VS
+	file(GLOB_RECURSE HEADERS ${EXAMPLE_FOLDER}/*.h ${EXAMPLE_FOLDER}/*.hpp)
 	if(WIN32)
-		add_executable(${EXAMPLE_NAME} WIN32 ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
+		add_executable(${EXAMPLE_NAME} WIN32 ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${HEADERS} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
 		target_link_libraries(${EXAMPLE_NAME} base ${Vulkan_LIBRARY} ${WINLIBS})
 	else(WIN32)
-		add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
+		add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${HEADERS} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
 		target_link_libraries(${EXAMPLE_NAME} base )
 	endif(WIN32)
 	# OCC lib

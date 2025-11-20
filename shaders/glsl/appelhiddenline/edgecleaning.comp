@@ -26,11 +26,13 @@ layout (set = 0, binding = 0) buffer Vers
 };
 
 //uniform和buffer一定不能搞错
+//uniform结构要和CPU上定义的结构内变量一致
 layout (set = 0, binding = 1) uniform UBO
 {
-   uint edgeVertSize;
    mat4 view;
    mat4 proj;
+   uint edgeVertSize;
+   uint origEdgeCnt; //现在简单实现用，用于记录加入假edge前有多少edge
 }ubo;
 
 //符合的edge数
@@ -67,16 +69,26 @@ void main()
 //
 //    vertices[index1].debug = 0;
 //    vertices[index2].debug = 0;
+
+    //所有edge debug设为0
     if(gl_GlobalInvocationID.x < ubo.edgeVertSize){
         //debugPrintfEXT("pos=(%u,", targetEdgeCnt);
         uint index1 = gl_GlobalInvocationID.x * 2;
         uint index2 = index1 + 1;
         vertices[index1].debug = 0;
         vertices[index2].debug = 0;
+        if(gl_GlobalInvocationID.x >= ubo.origEdgeCnt){
+            //debugPrintfEXT("pos=(%u, %u)", ubo.edgeVertSize, ubo.origEdgeCnt);
+            vertices[index1].position = vec3(0);
+            vertices[index2].position = vec3(0);
+
+        }
     }
 
+    //计算AABB
     if(gl_GlobalInvocationID.x < targetEdgeCnt){
         int globalEdgeId = targetEdgeIdxList[gl_GlobalInvocationID.x];
+        //debugPrintfEXT("pos=(%u, %u)", ubo.edgeVertSize, targetEdgeCnt);
         Vertex v1 = vertices[globalEdgeId * 2];
         Vertex v2 = vertices[globalEdgeId * 2 + 1];
         //vertices[index1].debug = 1;

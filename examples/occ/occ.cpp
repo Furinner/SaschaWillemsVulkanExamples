@@ -29,6 +29,7 @@
 #include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Solid.hxx>
+#include <TopoDS_Shell.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Edge.hxx>
@@ -3890,7 +3891,11 @@ public:
 		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/ff1-flying-formula-1-1.snapshot.1/3.stp";
 		//大部分完美，有些curve没trim掉
 		//const char* filename = (getAssetPath() + "models/stp/Extra-230-50ccm/Extra-230-50ccm_5.stp").c_str();
-		std::string filenameTmp = getAssetPath() + "models/stp/Extra-230-50ccm/head2.stp";
+		//std::string filenameTmp = getAssetPath() + "models/stp/Extra-230-50ccm/head2.stp";
+		//std::string filenameTmp = getAssetPath() + "models/stp/Extra-230-50ccm/head1.stp";
+		//std::string filenameTmp = getAssetPath() + "models/stp/Extra-230-50ccm/Extra-230-50ccm_5.stp";
+		//std::string filenameTmp = getAssetPath() + "models/test/combined/excavator_yellow/orig/excavator_yellow.stp";
+		std::string filenameTmp = getAssetPath() + "models/test/combined/excavator_yellow/orig/excavator_yellow.stp";
 		const char* filename = filenameTmp.c_str();
 		// 轮椅
 		//const char* filename = "D:/Program Files/Google/Chrome/Downloads/COMPLETA.STEP";
@@ -3901,78 +3906,108 @@ public:
 			Standard_Integer nbr = reader.TransferRoots();
 
 			// 获取转换后的形状
+			//TopoDS_Compound可以理解为所有body/part的集合
+			//TopoDS_Compound下面是TopoDS_Shape、TopoDS_Solid、TopoDS_Shell、TopoDS_Face、TopoDS_Edge、TopoDS_Vertex
+			/*TopoDS_Compound      ← 多个实体集合（一般作为STEP入口）
+				└── TopoDS_Solid     ← 一个封闭的3D实体（Body）
+					└── TopoDS_Shell ← 外壳 + （可能）内壳
+						└── TopoDS_Face   ← 曲面被 trim 后的 Patch
+						├── Surface(Geom_Surface) ← 精确曲面
+						└── Wire(s)   ← 1条或多条“边界环”
+							└── TopoDS_Edge  ← 拓扑意义上的“边”
+								├── Curve3D(Geom_Curve)     ← 精确3D边曲线
+								├── CurveOnSurface(Geom2d_Curve) ← 在面上的2D参数曲线
+								└── TopoDS_Vertex ← 端点（存储坐标）*/
+			//每个face有一个精确的曲面（Geom_Surface）。有一个或多个wire（外环+内孔）
 			shape = reader.OneShape();
 			//为整个形状或单个边构建 3D 几何
-			BRepLib::BuildCurves3d(shape);
-			
-			// Traverse all faces
-			//int nurbsCount = 0;
-			//for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next()) {
-			//	TopoDS_Face face = TopoDS::Face(exp.Current());
-			//	for (TopExp_Explorer exp(face, TopAbs_EDGE); exp.More(); exp.Next()) {
-			//		TopoDS_Edge edge = TopoDS::Edge(exp.Current());
+			//BRepLib::BuildCurves3d(shape);
+			int cnt1 = 0;
+			int cnt2 = 0;
+			int cnt3 = 0;
+			for (TopExp_Explorer solidExp(shape, TopAbs_SOLID); solidExp.More(); solidExp.Next()) {
+				TopoDS_Solid solid = TopoDS::Solid(solidExp.Current());
+				++cnt1;
+			}
+			for (TopExp_Explorer solidExp(shape, TopAbs_SHELL); solidExp.More(); solidExp.Next()) {
+				TopoDS_Shell solid = TopoDS::Shell(solidExp.Current());
+				++cnt2;
+			}
+			for (TopExp_Explorer solidExp(shape, TopAbs_FACE); solidExp.More(); solidExp.Next()) {
+				TopoDS_Face solid = TopoDS::Face(solidExp.Current());
+				++cnt3;
+			}
 
-			//		Standard_Real first, last;
-			//		Handle(Geom2d_Curve) c2d = BRep_Tool::CurveOnSurface(edge, face, first, last);
+			// 存放一个 edge 在两个面的出现
+			struct SymmetricEdgeUse
+			{
+				TopoDS_Edge edgeOnFace1;
+				TopoDS_Face face1;
 
-			//		// c2d 是参数空间中的边界线，可以用来分析或绘制UV图
-			//	}
+				TopoDS_Edge edgeOnFace2;   // face2 里的同一条 edge（可能 orientation 相反）
+				TopoDS_Face face2;
+			};
 
+			std::vector<SymmetricEdgeUse> result;
 
-			//	// Get the geometric surface of the face
-			//	Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+			// 1. 建立 edge -> faces 映射
+			TopTools_IndexedDataMapOfShapeListOfShape edgeToFaces;
+			TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeToFaces);
 
-			//	// Check if it's a BSpline surface (NURBS)
-			//	Handle(Geom_BSplineSurface) bspline = Handle(Geom_BSplineSurface)::DownCast(surface);
-			//	if (!bspline.IsNull()) {
-			//		nurbsCount++;
+			// 2. 遍历所有 edge
+			for (int i = 1; i <= edgeToFaces.Extent(); ++i)
+			{
+				const TopoDS_Edge& E = TopoDS::Edge(edgeToFaces.FindKey(i));
+				const TopTools_ListOfShape& faces = edgeToFaces.FindFromIndex(i);
 
-			//		int bsplineU = bspline->UDegree();
-			//		int bsplineV = bspline->VDegree();
-			//		int bsplineUKnots = bspline->NbUKnots();
-			//		int bsplineVKnots = bspline->NbVKnots();
-			//		std::cout << "Found NURBS surface #" << nurbsCount << std::endl;
-			//		std::cout << "  UDegree: " << bspline->UDegree() << std::endl;
-			//		std::cout << "  VDegree: " << bspline->VDegree() << std::endl;
-			//		std::cout << "  Num UKnots: " << bspline->NbUKnots() << std::endl;
-			//		std::cout << "  Num VKnots: " << bspline->NbVKnots() << std::endl;
-			//		std::cout << "  Num Control Points: ("
-			//			<< bspline->NbUPoles() << ", "
-			//			<< bspline->NbVPoles() << ")" << std::endl;
+				// 边界 edge：只有 0 或 1 个面，用不到 symmetric 概念
+				if (faces.Extent() < 2)
+					continue;
 
+				// 拿到两个 face
+				TopTools_ListIteratorOfListOfShape it(faces);
+				TopoDS_Face F1 = TopoDS::Face(it.Value()); it.Next();
+				TopoDS_Face F2 = TopoDS::Face(it.Value());
 
-			//	}
-			//}
+				SymmetricEdgeUse pairUse;
+				pairUse.face1 = F1;
+				pairUse.face2 = F2;
 
-			//// 创建面与边之间的反向索引：Edge → [Faces]
-			//TopTools_IndexedDataMapOfShapeListOfShape edgeToFacesMap;
-			//TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeToFacesMap);
+				// 3. 在每个 face 的 wire 里找到这条 edge 在该 face 上的出现
+				auto findEdgeOnFace = [&](const TopoDS_Face& F)->TopoDS_Edge
+					{
+						for (TopExp_Explorer exW(F, TopAbs_WIRE); exW.More(); exW.Next())
+						{
+							const TopoDS_Wire& W = TopoDS::Wire(exW.Current());
+							BRepTools_WireExplorer we(W, F);
+							for (; we.More(); we.Next())
+							{
+								const TopoDS_Edge& eOnF = we.Current();
+								// IsSame 判断是否共享同一个 TEdge
+								if (eOnF.IsSame(E))
+									return eOnF;
+							}
+						}
+						return TopoDS_Edge(); // 空
+					};
 
-			//// 遍历边，找出哪些边被多个面共享
-			//for (int i = 1; i <= edgeToFacesMap.Extent(); ++i) {
-			//	const TopoDS_Edge& edge = TopoDS::Edge(edgeToFacesMap.FindKey(i));
-			//	const TopTools_ListOfShape& faceList = edgeToFacesMap.FindFromIndex(i);
+				pairUse.edgeOnFace1 = findEdgeOnFace(F1);
+				pairUse.edgeOnFace2 = findEdgeOnFace(F2);
 
-			//	if (faceList.Extent() > 1) {
-			//		std::cout << "Edge is shared by " << faceList.Extent() << " faces." << std::endl;
+				// 4. 这里的 edgeOnFace1 / edgeOnFace2 共享同一 TEdge，
+				//    Orientation 通常一个 FORWARD，一个 REVERSED，
+				//    你可以根据 Orientation() 判断“谁是 symmetric”
+				//    比如：
+				//    pairUse.edgeOnFace2.Orientation() == pairUse.edgeOnFace1.Orientation().Reversed()
 
-			//		int nurbsFaceCount = 0;
-			//		for (TopTools_ListIteratorOfListOfShape it(faceList); it.More(); it.Next()) {
-			//			TopoDS_Face face = TopoDS::Face(it.Value());
-			//			Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
-			//			if (!surf.IsNull()) {
-			//				Handle(Geom_BSplineSurface) bs = Handle(Geom_BSplineSurface)::DownCast(surf);
-			//				if (!bs.IsNull()) {
-			//					nurbsFaceCount++;
-			//				}
-			//			}
-			//		}
-
-			//		if (nurbsFaceCount >= 2) {
-			//			std::cout << "  ⮑ At least two of them are NURBS surfaces." << std::endl;
-			//		}
-			//	}
-			//}
+				if (!pairUse.edgeOnFace1.IsNull() && !pairUse.edgeOnFace2.IsNull())
+				{
+					if (pairUse.edgeOnFace2.Orientation() != pairUse.edgeOnFace1.Orientation()) {
+						//result.push_back(std::move(pairUse));
+					}
+					result.push_back(std::move(pairUse));
+				}
+			}
 
 			//Rendering
 			// 对整个模型进行离散化（细分）

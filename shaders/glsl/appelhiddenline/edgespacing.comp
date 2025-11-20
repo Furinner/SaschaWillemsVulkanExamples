@@ -22,15 +22,18 @@ layout (set = 0, binding = 0) uniform isampler2D scaleSamples[SCALECNT]; // 定�
 
 layout (set = 0, binding = 1) buffer Vers
 {
+    //he1 v1, he1 v2, he2 v1, he2 v2,...,
     Vertex vertices[];
 };
 
 //uniform和buffer一定不能搞错
 layout (set = 0, binding = 2) uniform UBO
 {
-   uint edgeVertSize;
    mat4 view;
    mat4 proj;
+   uint bEdgeCnt;
+   uint edgeVertSize;
+   uint origEdgeCnt; //现在简单实现用，用于记录加入假edge前有多少edge
 }ubo;
 
 layout (set = 0, binding = 3) buffer SBO1
@@ -51,6 +54,12 @@ layout (set = 0, binding = 5) buffer SBO3
 layout (set = 0, binding = 6) buffer SBO4
 {
    uint edgeSuccessCnt;
+};
+
+layout (set = 0, binding = 7) buffer SBO5
+{
+   //he1 startIdx, he1 endIdx, he2 startIdx, he2 endIdx,...
+   int bEdgesSE[];
 };
 
 const float FLOAT_MAX = 3.402823466e+38;
@@ -311,6 +320,75 @@ float segmentSegmentDistance3D(vec3 p1, vec3 p2, vec3 q1, vec3 q2)
     return length(c1 - c2);
 }
 
+// ================== 工具函数：2D 叉积 ==================
+// cross2D(a, b) > 0 : b 在 a 的逆时针方向
+// cross2D(a, b) < 0 : b 在 a 的顺时针方向
+// cross2D(a, b) = 0 : a 与 b 共线
+float cross2D(vec2 a, vec2 b)
+{
+    return a.x * b.y - a.y * b.x;
+}
+
+
+bool segmentsIntersect(vec2 p1, vec2 p2,
+                       vec2 q1, vec2 q2,
+                       out vec2 intersection)
+{
+    const float EPS = 1e-6;
+
+    vec2 r = p2 - p1;
+    vec2 s = q2 - q1;
+
+    float rxs     = cross2D(r, s);
+    float q_p_x_r = cross2D(q1 - p1, r);
+
+    // 默认输出先设成 0
+    intersection = vec2(0.0);
+
+    // 共线
+    if (abs(rxs) < EPS && abs(q_p_x_r) < EPS)
+    {
+        return false;
+        // 这里“交点”不唯一，可以根据需要返回某种代表值
+        // 例如返回 q1，或者重叠区间中点，这里简单返回 q1
+        intersection = q1;
+        // 用上面同样的重叠判定
+        float r2 = dot(r, r);
+        if (r2 < EPS) {
+            return length(q1 - p1) < EPS || length(q2 - p1) < EPS;
+        }
+        float t0 = dot(q1 - p1, r) / r2;
+        float t1 = dot(q2 - p1, r) / r2;
+        if (t0 > t1) {
+            float tmp = t0;
+            t0 = t1;
+            t1 = tmp;
+        }
+        return t0 <= 1.0 + EPS && t1 >= 0.0 - EPS;
+    }
+
+    // 平行不共线
+    if (abs(rxs) < EPS && abs(q_p_x_r) >= EPS)
+    {
+        return false;
+    }
+
+    // 一般情况
+    float t = cross2D(q1 - p1, s) / rxs;
+    float u = cross2D(q1 - p1, r) / rxs;
+
+    if (t >= 0.0 && t <= 1.0 &&
+        u >= 0.0 && u <= 1.0)
+    {
+        // 只要相交，就用 t 算出交点
+        //intersection = p1 + t * r;
+        intersection = vec2(t, u);
+        return true;
+    }
+
+    return false;
+}
+
 void main() 
 {
 //    debugPrintfEXT("nh");
@@ -345,58 +423,25 @@ void main()
 //        vertices[globalHeID * 2 + 1].debug = 1;
 //    };
 
-    if(gl_GlobalInvocationID.x < targetEdgeCnt){
-        int globalEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
-        Vertex v1 = vertices[globalEdgeIdx * 2];
-        Vertex v2 = vertices[globalEdgeIdx * 2 + 1];
-        //vertices[targetEdgeIdx * 2].debug = 1;
-        //vertices[targetEdgeIdx * 2 + 1].debug = 1;
-        vec4 v1PosTmp = ubo.proj * ubo.view * (vec4(v1.position, 1));
-        vec4 v2PosTmp = ubo.proj * ubo.view * (vec4(v2.position, 1));
-        vec3 v1Pos = vec3(v1PosTmp / v1PosTmp.w);
-        vec3 v2Pos = vec3(v2PosTmp / v2PosTmp.w);
-        //AABB的值是clip space的
-        float maxx = targetEdgeAABB[globalEdgeIdx * 4];   //maxx
-        float minx = targetEdgeAABB[globalEdgeIdx * 4 + 1];  //minx
-        float maxy = targetEdgeAABB[globalEdgeIdx * 4 + 2];  //maxy
-        float miny = targetEdgeAABB[globalEdgeIdx * 4 + 3];  //miny
 
-        {
-            float dis = FLOAT_MAX;
-            for(int i = 0; i < targetEdgeCnt; ++i){
-                if(i == gl_GlobalInvocationID.x){
-                    continue;
-                }
-                int currEdgeIdx = targetEdgeIdxList[i];
-                float currMaxx = targetEdgeAABB[currEdgeIdx * 4];   //maxx
-                float currMinx = targetEdgeAABB[currEdgeIdx * 4 + 1];  //minx
-                float currMaxy = targetEdgeAABB[currEdgeIdx * 4 + 2];  //maxy
-                float currMiny = targetEdgeAABB[currEdgeIdx * 4 + 3];  //miny
-                Vertex currV1 = vertices[currEdgeIdx * 2];
-                Vertex currV2 = vertices[currEdgeIdx * 2 + 1];
-                vec4 currV1PosTmp = ubo.proj * ubo.view * (vec4(currV1.position, 1));
-                vec4 currV2PosTmp = ubo.proj * ubo.view * (vec4(currV2.position, 1));
-                vec3 currV1Pos = vec3(currV1PosTmp / currV1PosTmp.w);
-                vec3 currV2Pos = vec3(currV2PosTmp / currV2PosTmp.w);
-                float currDis1 = segmentSegmentDistance3D(v1Pos, v2Pos, currV1Pos, currV2Pos);
-                if(currDis1 < 0.0001f){
-                    continue;
-                }
-                float currDis2 = pointSegmentDistance((v1Pos.xy + v2Pos.xy) * 0.5f, currV1Pos.xy, currV2Pos.xy);
-                if(currDis2 < dis){
-                    dis = currDis2;
-                }
-            }
-            float scale = dis * 10000.f;
-            vertices[globalEdgeIdx * 2].debug = int(scale) + 3;
-            vertices[globalEdgeIdx * 2 + 1].debug = int(scale) + 3;
-        };
-
-
-//        if((globalEdgeIdx == 5114)){
-//            vertices[globalEdgeIdx * 2].debug = 1;
-//            vertices[globalEdgeIdx * 2 + 1].debug = 1;
-//            float dis = 1e10;
+//    if(gl_GlobalInvocationID.x < targetEdgeCnt){
+//        int globalEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
+//        Vertex v1 = vertices[globalEdgeIdx * 2];
+//        Vertex v2 = vertices[globalEdgeIdx * 2 + 1];
+//        //vertices[targetEdgeIdx * 2].debug = 1;
+//        //vertices[targetEdgeIdx * 2 + 1].debug = 1;
+//        vec4 v1PosTmp = ubo.proj * ubo.view * (vec4(v1.position, 1));
+//        vec4 v2PosTmp = ubo.proj * ubo.view * (vec4(v2.position, 1));
+//        vec3 v1Pos = vec3(v1PosTmp / v1PosTmp.w);
+//        vec3 v2Pos = vec3(v2PosTmp / v2PosTmp.w);
+//        //AABB的值是clip space的
+//        float maxx = targetEdgeAABB[globalEdgeIdx * 4];   //maxx
+//        float minx = targetEdgeAABB[globalEdgeIdx * 4 + 1];  //minx
+//        float maxy = targetEdgeAABB[globalEdgeIdx * 4 + 2];  //maxy
+//        float miny = targetEdgeAABB[globalEdgeIdx * 4 + 3];  //miny
+//
+//        {
+//            float dis = FLOAT_MAX;
 //            for(int i = 0; i < targetEdgeCnt; ++i){
 //                if(i == gl_GlobalInvocationID.x){
 //                    continue;
@@ -412,66 +457,204 @@ void main()
 //                vec4 currV2PosTmp = ubo.proj * ubo.view * (vec4(currV2.position, 1));
 //                vec3 currV1Pos = vec3(currV1PosTmp / currV1PosTmp.w);
 //                vec3 currV2Pos = vec3(currV2PosTmp / currV2PosTmp.w);
-//                float currDis = segmentSegmentDistance(v1Pos.xy, v2Pos.xy, currV1Pos.xy, currV2Pos.xy);
-//                if(currDis < 0.0001f){
-//                    vertices[currEdgeIdx * 2].debug = 1;
-//                    vertices[currEdgeIdx * 2 + 1].debug = 1;
+//                float currDis1 = segmentSegmentDistance3D(v1Pos, v2Pos, currV1Pos, currV2Pos);
+//                if(currDis1 < 0.0001f){
 //                    continue;
 //                }
-//                if(currDis < dis){
-//                    dis = currDis;
+//                float currDis2 = pointSegmentDistance((v1Pos.xy + v2Pos.xy) * 0.5f, currV1Pos.xy, currV2Pos.xy);
+//                if(currDis2 < dis){
+//                    dis = currDis2;
 //                }
 //            }
-//
-//        }
+//            float scale = dis * 10000.f;
+//            vertices[globalEdgeIdx * 2].debug = int(scale) + 3;
+//            vertices[globalEdgeIdx * 2 + 1].debug = int(scale) + 3;
+//        };
+//    }
 
-        
-        
-//        int numInt = 0;
-//        float t1s[10];
-//        //debugPrintfEXT("pos=(%u, %.5f, %.5f, %.5f, %.5f, %.5f,%.5f,%.5f,%.5f)\n",targetEdgeIdx, v1Pos.x, v1Pos.y, v2Pos.x, v2Pos.y, ab1, ab2, ab3, ab4);
-//        for(int i = 0; i < targetEdgeCnt; ++i){
-//            if(i == gl_GlobalInvocationID.x){
-//                continue;
-//            }
-//            int currEdgeIdx = targetEdgeIdxList[i];
-//            Vertex currv1 = vertices[currEdgeIdx * 2];
-//            Vertex currv2 = vertices[currEdgeIdx * 2 + 1];
-//            vec3 currv1Pos = vec3(ubo.view * (vec4(currv1.position, 1)));
-//            vec3 currv2Pos = vec3(ubo.view * (vec4(currv2.position, 1)));
-//            float currab1 = targetEdgeAABB[currEdgeIdx * 4];
-//            float currab2 = targetEdgeAABB[currEdgeIdx * 4 + 1];
-//            float currab3 = targetEdgeAABB[currEdgeIdx * 4 + 2];
-//            float currab4 = targetEdgeAABB[currEdgeIdx * 4 + 3];
-//            if(twoBBInter(ab1, ab2, ab3, ab4, currab1, currab2, currab3, currab4)){
-//                float t1;
-//                float t2;
-//                vec2 inter;
-//                if(segmentIntersect(v1Pos.xy, v2Pos.xy, currv1Pos.xy, currv2Pos.xy, t1, t2, inter)){
-//                    if((nearlyEqual(t1, 0.f) || nearlyEqual(t1, 1.f)) && (nearlyEqual(t2, 0.f) ||nearlyEqual(t2, 1.f))){
-//                        //很可能只是首尾相接，或首首，尾尾
-//                    }else{
-//                        t1s[numInt] = t1;
-//                        ++numInt;
-//                    }
-//                }
-//            }
-//        }
-//        vec3 testPoint = (v1Pos + v2Pos) * 0.5f;
-//        vec4 testPoint1 = ubo.proj * vec4(testPoint, 1);
-//        testPoint = vec3(testPoint1 / testPoint1.w);
-//        vec2 largeUV = (testPoint.xy + vec2(1)) * 2;
-//        largeUV.y = 4 - largeUV.y;
-//        vec2 intPartf;
-//        vec2 fracPart = modf(largeUV, intPartf);
-//        ivec2 intPart =  ivec2(intPartf);
-//        //debugPrintfEXT("pos=(%u, %.5f, %.5f, %.5f, %.5f, %.5f,%.5f,%.5f,%.5f)\n",targetEdgeIdx, v1Pos.x, v1Pos.y, v2Pos.x, v2Pos.y, largeUV.x,largeUV.y, intPartf.x, intPartf.y);
-//        if(checkPic(intPart, fracPart, targetEdgeIdx)){
-//            vertices[targetEdgeIdx * 2].debug = 1;
-//            vertices[targetEdgeIdx * 2 + 1].debug = 1;
-//            atomicAdd(edgeSuccessCnt, 1);
-//        }
+    if(gl_GlobalInvocationID.x < ubo.bEdgeCnt){
+        int idxS = bEdgesSE[gl_GlobalInvocationID.x * 2];
+        int idxE = bEdgesSE[gl_GlobalInvocationID.x * 2 + 1];
+        if((idxS > 269223) && (idxS < 269225)){
+            
+        }else{
+            return;
+        }
+        //一个seg最多2000个直edge组成，最多10个seg。
+        int interIdx[10];
+        vec3 interPos[10];
+        int visChange[10];
+        int interCnt = 0;
+        for(int i = idxS; i < idxE; i+=2){
+            vec4 mainPos1View = ubo.view * vec4(vertices[i].position,1);
+            vec4 mainPos2View = ubo.view * vec4(vertices[i+1].position,1);
+            vec4 mainPos1Proj = ubo.proj * mainPos1View;
+            vec4 mainPos2Proj = ubo.proj * mainPos2View;
+            vec2 mainPos1 = vec2(mainPos1Proj / mainPos1Proj.w);
+            vec2 mainPos2 = vec2(mainPos2Proj / mainPos2Proj.w);
+            for(int j = 0; j < ubo.bEdgeCnt; ++j){
+                int currIdxS = bEdgesSE[j * 2];
+                int currIdxE = bEdgesSE[j * 2 + 1];
+                for(int k = currIdxS; k < currIdxE; k+=2){
+                    if(k == i)
+                        continue;
+                    vec4 currPos1View = ubo.view * vec4(vertices[k].position, 1);
+                    vec4 currPos2View = ubo.view * vec4(vertices[k+1].position, 1);
+                    vec4 currPos1Proj = ubo.proj * currPos1View;
+                    vec4 currPos2Proj = ubo.proj * currPos2View;
+                    vec2 currPos1 = vec2(currPos1Proj / currPos1Proj.w);
+                    vec2 currPos2 = vec2(currPos2Proj / currPos2Proj.w);
+                    bool isOverlap;
+                    float t;
+                    float u;
+
+                    vec2 intersection;
+                    if(segmentsIntersect(mainPos1, mainPos2, currPos1, currPos2, intersection)){
+                        t = intersection.x;
+                        u = intersection.y;
+                        if(((t > 1e-3) && (t < (1-1e-3))) && ((u > 1e-3) && (u < (1-1e-3)))){
+                            float z1 = mainPos1View.z * (1-t) + mainPos2View.z * t;
+                            float z2 = currPos1View.z * (1-u) + currPos2View.z * u;
+                            if(z1 < z2){
+                                //enter or exit
+                                float ee = cross2D(normalize(mainPos2 - mainPos1), normalize(currPos2 - currPos1));
+                                if((mat3(ubo.view) * vertices[k].faceNor).z < 0){
+                                    //curr面为反面
+                                    if(ee > 0){
+                                        visChange[interCnt] = -1;
+                                    }else{
+                                        visChange[interCnt] = 1;
+                                    }
+                                }else{
+                                    //curr面为正面
+                                    if(ee < 0){
+                                        visChange[interCnt] = -1;
+                                    }else{
+                                        visChange[interCnt] = 1;
+                                    }
+                                }
+                                vertices[k].debug = 2;
+                                vertices[k].normal = vec3(1,0,0);
+                                vertices[k+1].debug = 2;
+                                vertices[k+1].normal = vec3(0,1,0);
+                                interIdx[interCnt] = i;
+                                interPos[interCnt] = vec3(vertices[i].position * (1-t) + vertices[i+1].position * t);
+                                visChange[interCnt] = -3;
+                                ++interCnt;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        debugPrintfEXT("index=%u, %u, %u\n",visChange[0], visChange[1], interCnt);
+        if(interCnt > 0){
+            int vis[11];
+            for(int i = 0; i < 11; ++i){
+                vis[i] = 0;
+            }
+            vis[0] = 0;
+            for(int i = 0; i < interCnt; ++i){
+                vis[i+1] = vis[i] + visChange[i];
+            }
+            //最高降低到0
+            int maxVis = -11;
+            for(int i = 0; i <= interCnt; ++i){
+                if(vis[i] > maxVis){
+                    maxVis = vis[i];
+                }
+            }
+            for(int i = 0; i <= interCnt; ++i){
+                vis[i] -= maxVis;
+            }
+            
+            int tempCnt = 0;
+            for(int i = idxS; i < idxE; i+=2){
+                if(i == interIdx[tempCnt]){
+                    vertices[i].debug = 4;
+                    vertices[i + 1].debug = 4;
+                    
+                    if(visChange[tempCnt] == 1){
+                        uint idxOffset = atomicAdd(edgeSuccessCnt, 2);
+                        vertices[idxOffset + ubo.origEdgeCnt].position = interPos[tempCnt];
+                        vertices[idxOffset + ubo.origEdgeCnt + 1].position = vertices[i+1].position;
+                        vertices[idxOffset + ubo.origEdgeCnt].normal = vec3(1,0,0);
+                        vertices[idxOffset + ubo.origEdgeCnt + 1].normal = vec3(1,0,0);
+                        vertices[idxOffset + ubo.origEdgeCnt].debug = 2;
+                        vertices[idxOffset + ubo.origEdgeCnt + 1].debug = 2;
+                    }
+                    if(visChange[tempCnt] == -1){
+                        uint idxOffset = atomicAdd(edgeSuccessCnt, 2);
+                        vertices[idxOffset + ubo.origEdgeCnt].position = vertices[i].position;
+                        vertices[idxOffset + ubo.origEdgeCnt + 1].position = interPos[tempCnt];
+                        vertices[idxOffset + ubo.origEdgeCnt].normal = vec3(1,0,0);
+                        vertices[idxOffset + ubo.origEdgeCnt + 1].normal = vec3(1,0,0);
+                        vertices[idxOffset + ubo.origEdgeCnt].debug = 2;
+                        vertices[idxOffset + ubo.origEdgeCnt + 1].debug = 2;
+                    }
+                    
+                    if(tempCnt < (interCnt - 1)){
+                        ++tempCnt;
+                    }
+                }else{
+                    if(visChange[tempCnt] == 1){
+                    
+                    }else{
+                        vertices[i].debug = 4;
+                        vertices[i + 1].debug = 4;
+                    }
+                }
+            }
+        }
     }
 
+
+//    if(gl_GlobalInvocationID.x < targetEdgeCnt){
+//        int globalEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
+//        Vertex v1 = vertices[globalEdgeIdx * 2];
+//        Vertex v2 = vertices[globalEdgeIdx * 2 + 1];
+//        //vertices[targetEdgeIdx * 2].debug = 1;
+//        //vertices[targetEdgeIdx * 2 + 1].debug = 1;
+//        vec4 v1PosTmp = ubo.proj * ubo.view * (vec4(v1.position, 1));
+//        vec4 v2PosTmp = ubo.proj * ubo.view * (vec4(v2.position, 1));
+//        vec3 v1Pos = vec3(v1PosTmp / v1PosTmp.w);
+//        vec3 v2Pos = vec3(v2PosTmp / v2PosTmp.w);
+//        //AABB的值是clip space的
+//        float maxx = targetEdgeAABB[globalEdgeIdx * 4];   //maxx
+//        float minx = targetEdgeAABB[globalEdgeIdx * 4 + 1];  //minx
+//        float maxy = targetEdgeAABB[globalEdgeIdx * 4 + 2];  //maxy
+//        float miny = targetEdgeAABB[globalEdgeIdx * 4 + 3];  //miny
+//
+//        {
+//            float dis = FLOAT_MAX;
+//            for(int i = 0; i < targetEdgeCnt; ++i){
+//                if(i == gl_GlobalInvocationID.x){
+//                    continue;
+//                }
+//                int currEdgeIdx = targetEdgeIdxList[i];
+//                float currMaxx = targetEdgeAABB[currEdgeIdx * 4];   //maxx
+//                float currMinx = targetEdgeAABB[currEdgeIdx * 4 + 1];  //minx
+//                float currMaxy = targetEdgeAABB[currEdgeIdx * 4 + 2];  //maxy
+//                float currMiny = targetEdgeAABB[currEdgeIdx * 4 + 3];  //miny
+//                Vertex currV1 = vertices[currEdgeIdx * 2];
+//                Vertex currV2 = vertices[currEdgeIdx * 2 + 1];
+//                vec4 currV1PosTmp = ubo.proj * ubo.view * (vec4(currV1.position, 1));
+//                vec4 currV2PosTmp = ubo.proj * ubo.view * (vec4(currV2.position, 1));
+//                vec3 currV1Pos = vec3(currV1PosTmp / currV1PosTmp.w);
+//                vec3 currV2Pos = vec3(currV2PosTmp / currV2PosTmp.w);
+//                float currDis1 = segmentSegmentDistance3D(v1Pos, v2Pos, currV1Pos, currV2Pos);
+//                if(currDis1 < 0.0001f){
+//                    continue;
+//                }
+//                float currDis2 = pointSegmentDistance((v1Pos.xy + v2Pos.xy) * 0.5f, currV1Pos.xy, currV2Pos.xy);
+//                if(currDis2 < dis){
+//                    dis = currDis2;
+//                }
+//            }
+//            float scale = dis * 10000.f;
+//            vertices[globalEdgeIdx * 2].debug = int(scale) + 3;
+//            vertices[globalEdgeIdx * 2 + 1].debug = int(scale) + 3;
+//        };
+//    }
 }
 

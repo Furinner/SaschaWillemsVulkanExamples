@@ -576,15 +576,14 @@ vec3 case11(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 
 vec3 case12(int size, vec2 inUV, vec2 tex_offset){
 	//edgePure
-//	ivec3 center_edge =  texture(samplerEdge, inUV).rgb;
-//	if(center_edge.b == 1){
-//		return vec3(1);
-//	}
-//
-//	return vec3(0);
-	vec4 center_edge =  texture(samplerEdge2, inUV).rgba;
-	return vec3(center_edge);
+	ivec4 center_edge =  texture(samplerEdge, inUV).rgba;
+	if(center_edge.b == 1){
+		return vec3(1);
+	}
 
+	return vec3(0);
+//	vec4 center_edge =  texture(samplerEdge2, inUV).rgba;
+//	return vec3(center_edge);
 }
 
 vec3 case13(int size, vec2 inUV, vec2 tex_offset){

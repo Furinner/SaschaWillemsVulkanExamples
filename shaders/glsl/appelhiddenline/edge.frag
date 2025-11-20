@@ -12,6 +12,7 @@ layout (location = 8) in flat int inDebug;
 layout (location = 9) in flat int inGlobalHeID;
 
 layout (location = 0) out ivec4 outPosition;
+layout (location = 1) out vec4 outNormal;
 //layout(depth_less) out float gl_FragDepth; //声明只会把深度变小，以保留early-z
 
 float nextDown(float x) {
@@ -31,15 +32,23 @@ float nextDown(float x) {
 //this fragment won't affect color, depth and stencil attachment.
 void main() 
 {
-    if(inDebug >= 1){
-        if(inDebug == 1){
-            outPosition = ivec4(inObjectID,inGlobalHeID,1,2);
+    
+    if(inDebug >= 2){
+//        if(inDebug == 1){
+//            outPosition = ivec4(inObjectID,inGlobalHeID,1,2);
+//        }else{
+//            outPosition = ivec4(inObjectID,inGlobalHeID,1,inDebug);
+//        }
+        if(inDebug == 4){
+            discard;
         }else{
-            outPosition = ivec4(inObjectID,inGlobalHeID,1,inDebug);
+            outPosition = ivec4(inObjectID,inGlobalHeID,1,2);
+            outNormal = vec4(inNormal, 1);
         }
     }else if(inBorder == 1){
 		//outPosition = ivec4(inObjectID,inHeID,1,1);
         outPosition = ivec4(inObjectID,inGlobalHeID,1,1);
+        outNormal = vec4(inNormal,1);
 	}else{
 		discard;
 	}

@@ -5,6 +5,7 @@ layout (binding = 2) uniform sampler2D samplerNormal;
 layout (binding = 3) uniform isampler2D samplerAlbedo;
 layout (binding = 8) uniform isampler2D samplerEdge;
 layout (binding = 9) uniform sampler2D samplerLockedEdge;
+layout (binding = 12) uniform sampler2D samplerEdge2;
 
 layout (location = 0) in vec2 inUV;
 
@@ -574,8 +575,11 @@ vec3 case11(int size, vec2 inUV, vec2 tex_offset, int uFactor, int vFactor){
 vec3 case12(int size, vec2 inUV, vec2 tex_offset){
 	//edgePure
 	ivec4 center_edge =  texture(samplerEdge, inUV).rgba;
+	vec4 center_edge2 =  texture(samplerEdge2, inUV).rgba;
+
 	if(center_edge.a == 2){
-		return vec3(1, 0, 0);
+		//return vec3(1, 0, 0);
+		return vec3(center_edge2.rgb);
 	}else if(center_edge.a > 2){
 		vec3 result = vec3((center_edge.a - 3) * 540.f / 10000.f);
 		return clamp(result, vec3(0), vec3(1));

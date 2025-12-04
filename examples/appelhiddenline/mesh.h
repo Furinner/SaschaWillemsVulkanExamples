@@ -122,8 +122,12 @@ class OCCCompound {
 public:
 	TopoDS_Shape shape;
 	std::vector<OCCEdge> edges;  //带orientation的
+	//三角化后，每一个小bEdge在vertices2中的idx，严格按照edges顺序，每个顶点记一次
+	std::vector<std::vector<int>> bEdgesIdx; 
+	std::vector<std::vector<glm::vec3>> bEdgesNor; //小bEdge的nor，严格按照edges顺序，两个顶点记一次
 	// baseEdgeID : {edgeID1, edgeID2}
 	std::vector<std::vector<int>> baseEdges;  //不带orientation的
+	
 	// faceID : TopoDS_Face
 	std::vector<TopoDS_Face> faces;
 	// 长度为faces的长度+1
@@ -141,5 +145,7 @@ public:
 	void read(const std::string& filename);
 
 	//helper Function
-
+	//void pushback1(int n1, int n2, int n3, glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
+	//void pushback2();
+	//void pushback2(glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
 };

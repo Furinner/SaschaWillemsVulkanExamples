@@ -98,7 +98,7 @@ public:
 		alignas(8) glm::vec2 uv;
 		alignas(4) int objectID;
 		alignas(4) int faceID;
-		alignas(4) int border = 0;
+		alignas(4) int border = 0; //1为有sym的bEdge，2为没sym的bEdge
 		alignas(4) int heID = -1;
 		alignas(4) int uniqueID; //unique id in obj
 		alignas(4) int debug = 0;
@@ -1915,7 +1915,7 @@ public:
 			else
 			{
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			}
 		}
 
@@ -2284,7 +2284,7 @@ public:
 			{
 				attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			}
 		}
 
@@ -2427,7 +2427,7 @@ public:
 			{
 				attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			}
 		}
 
@@ -2697,11 +2697,12 @@ public:
 
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 
-		VkClearValue clearValues[1];
+		std::array<VkClearValue, 2> clearValues;
 		clearValues[0].color.int32[0] = -1;
 		clearValues[0].color.int32[1] = -1;
 		clearValues[0].color.int32[2] = 0;
 		clearValues[0].color.int32[3] = 0;
+		clearValues[1].color = { {0.0f, 0.0f, 0.0f, 0.0f} };
 
 		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
 		renderPassBeginInfo.renderPass = edgeFrameBuf.renderPass;
@@ -2709,8 +2710,8 @@ public:
 		renderPassBeginInfo.renderArea.extent.width = edgeFrameBuf.width;
 		renderPassBeginInfo.renderArea.extent.height = edgeFrameBuf.height;
 		//diff: render pass don't have any clear values
-		renderPassBeginInfo.clearValueCount = 1;
-		renderPassBeginInfo.pClearValues = clearValues;
+		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassBeginInfo.pClearValues = clearValues.data();
 
 		// Add memory barrier between render passes
 		VkImageMemoryBarrier colorBarrier = {};
@@ -3309,8 +3310,8 @@ public:
 		//pipelineCI.pVertexInputState = vkglTF::Vertex::getPipelineVertexInputState({ vkglTF::VertexComponent::Position, vkglTF::VertexComponent::UV, vkglTF::VertexComponent::Color, vkglTF::VertexComponent::Normal, vkglTF::VertexComponent::Tangent });
 
 		//cullMode should change to no culling, so back face can also get into depth attachment.
-		rasterizationState.cullMode = VK_CULL_MODE_NONE;
-
+		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+		//rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		// Offscreen pipeline
 		shaderStages[0] = loadShader(getShadersPath() + "appelhiddenline/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getShadersPath() + "appelhiddenline/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -3781,6 +3782,7 @@ public:
 
 	void draw()
 	{
+		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, edgeFrameBuf.position.image);
 		VulkanExampleBase::prepareFrame();
 		// The scene render command buffer has to wait for the offscreen
 		// rendering to be finished before we can use the framebuffer

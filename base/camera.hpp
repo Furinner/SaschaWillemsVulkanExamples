@@ -190,20 +190,21 @@ public:
 	void magnify(short wheelDelta) {
 		if (orthographic) {
 			wheelDelta = -wheelDelta;
-			float btm = (orthoBottom + orthoTop) / 2.f;
-			float lfm = (orthoLeft + orthoRight) / 2.f;
+			//float btm = (orthoBottom + orthoTop) / 2.f;
+			//float lfm = (orthoLeft + orthoRight) / 2.f;
 			aspect = (orthoRight - orthoLeft) / (orthoTop - orthoBottom);
 			orthoTop += (float)wheelDelta * 0.0005f;
 			orthoBottom -= (float)wheelDelta * 0.0005f;
 			orthoRight += (float)wheelDelta * 0.0005f * aspect;
 			orthoLeft -= (float)wheelDelta * 0.0005f * aspect;
-			if (orthoTop <= btm) {
-				orthoTop = 0.f;
-				orthoBottom = 0.f;
+			if (orthoTop <= 0.f) {
+				//orthoTop = FLT_MIN;
+				orthoTop = 1e-6;
+				orthoBottom = -1e-6;
 			}
-			if (orthoRight <= lfm) {
-				orthoRight = 0.f;
-				orthoLeft = 0.f;
+			if (orthoRight <= 0.f) {
+				orthoRight = 1e-6 * aspect;
+				orthoLeft = -1e-6 * aspect;
 			}
 		}
 		else {

@@ -607,6 +607,7 @@ vec3 case14(int size, vec2 center_uv, vec2 tex_offset){
 	int faceID = texture(samplerAlbedo, center_uv).g;  
 	int objectID = texture(samplerAlbedo, center_uv).r;
 	vec3 normalTex = texture(samplerNormal, center_uv).rgb;
+	return normalTex;
 	if(objectID > -1){
 		int faceIdx = faceInfos[objectID] + faceID;
 		//vec3 viewNor = mat3(ubo.camView) * vec3(faceNor[faceIdx]);

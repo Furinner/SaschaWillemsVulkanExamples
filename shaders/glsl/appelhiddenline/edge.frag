@@ -34,11 +34,6 @@ void main()
 {
     
     if(inDebug >= 2){
-//        if(inDebug == 1){
-//            outPosition = ivec4(inObjectID,inGlobalHeID,1,2);
-//        }else{
-//            outPosition = ivec4(inObjectID,inGlobalHeID,1,inDebug);
-//        }
         if(inDebug == 4){
             discard;
         }else{

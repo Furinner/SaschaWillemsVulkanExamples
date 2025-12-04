@@ -93,7 +93,7 @@ void main()
 		//pixelNor = -mat3(ubo.view)[2];
 	}
 	
-	if(inBorder == 1){
+	if(inBorder >= 1){
 		outBorder = inBorder;
 		if(startPoint){
 			uint idx = atomicAdd(sbo1.edgeCnt, 1);

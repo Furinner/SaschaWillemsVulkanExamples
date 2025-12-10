@@ -46,7 +46,7 @@ class Texture
 	void      destroy();
 	ktxResult loadKTXFile(std::string filename, ktxTexture **target);
 
-	static void transitionColorAttachmentsToShaderRead(
+	static void layoutTransitionBarrier(
 		VkCommandBuffer cmdBuffer,
 		const std::vector<VkImage>& images,
 		VkImageLayout oldLayout,
@@ -58,12 +58,23 @@ class Texture
 		VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 	);
 
-	static void transitionImageLayoutOnce(
+	static void layoutTransitionOnce(
 		VkImageLayout oldLayout,
 		VkImageLayout newLayout,
 		VkImage image,
 		vks::VulkanDevice* vulkanDevice,
 		VkQueue queue
+	);
+
+	static void copyImgToImg(
+		VkImage       srcImage,
+		VkImageLayout srcImageLayout,
+		VkImage       dstImage,
+		VkImageLayout dstImageLayout,
+		uint32_t      width,
+		uint32_t      height,
+		vks::VulkanDevice* vulkanDevice,
+		VkQueue       queue
 	);
 };
 

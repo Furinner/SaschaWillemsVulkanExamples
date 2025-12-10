@@ -15,15 +15,19 @@ void OCCCompound::read(const std::string& filename) {
     {
         int debug = 0;
         debug = debug;
-        float ts[10] = { 0.1, 0.2, 0.3, 0.6, 0.5, 0.6, 0.7, 1, 0.9, 1 };
+        float ts[10] = { 0.3, 0.2, 0.1, 0.01, 0.5, 0.9, 0.7, 0.3, 0.9, 0.1 };
         int visChange[10] = { 1, 1, 1, 1, -1, -1, -1, 1, 1, 1 };
-        int interCnt = 6;
+		int edgeIdx[10] = { 3, 3, 3, 8, 8, 8, 12, 13, 19, 19 };
+        int interCnt = 10;
         int vis[11];
         for (int i = 0; i <= interCnt; ++i) {
             vis[i] = 0;
         }
         for (int i = 0; i <= interCnt; ++i) {
             for (int j = i + 1; j < interCnt; ++j) {
+                if (edgeIdx[j] > edgeIdx[i]) {
+                    continue;
+                }
                 if (ts[j] < ts[i]) {
                     // 交换 ts
                     float tmp = ts[i];
@@ -95,7 +99,7 @@ void OCCCompound::read(const std::string& filename) {
             for (TopExp_Explorer eExp(face, TopAbs_EDGE); eExp.More(); eExp.Next())
             {
                 TopoDS_Edge edge = TopoDS::Edge(eExp.Current());
-                edges.push_back(OCCEdge(edgeID, edge, faceID));
+                bEdges.push_back(OCCEdge(edgeID, edge, faceID));
                 int baseIndex = baseEdgeMap.FindIndex(edge);
                 //OCC中baseIndex是从1开始的，所以这里我们减1
                 --baseIndex;
@@ -108,8 +112,8 @@ void OCCCompound::read(const std::string& filename) {
         }
         for (auto& be : baseEdges) {
             if (be.size() == 2) {
-                edges[be[0]].sym = be[1];
-                edges[be[1]].sym = be[0];
+                bEdges[be[0]].sym = be[1];
+                bEdges[be[1]].sym = be[0];
             }
         }
     }
@@ -180,25 +184,30 @@ void OCCCompound::read(const std::string& filename) {
 
             //先把所有边界边塞进vertices2
             //记录该face的mesh中的边界边，以及在vertices2中的id
+			//不在vertices2中，则记录-1
+            //(key, vertices2中的idx), ...
             std::unordered_map<std::string, int> boundaryHEIdx;
             //按照edge顺序记录该face的mesh中的边界边，在该face三角化中的normal
             std::vector<std::vector<glm::vec3>> keyNors;
-            //通过该三角化中的key，找到对应keyNors
+            //通过该face三角化中的key，找到对应keyNorsTemp
+            //(key, <edges Id, 在该edge上的第几个>)
+            //(n1+n2, <edges Id, keyNorsTemp Idx>), ....
             std::unordered_map<std::string, std::pair<int, int>> keyToKeyNorsIdx;
             //也是记录bEdge在vertices2中的id，只不过这个严格按照edges的顺序
+            //不在vertices2中，则记录-1
             std::vector<std::vector<int>> bEdgesIdx;
             for (int i = faceEdgeCnt[faceID]; i < faceEdgeCnt[faceID + 1]; ++i) {
                 bool shouldLoad = true;
                 std::vector<glm::vec3> keyNorsTemp;
                 std::vector<int> bEdgesIdxTemp;
                 //如果该边界edge有sym，渲染id小的那一个
-                if (edges[i].sym != -1) {
-                    if (edges[i].sym < i) {
+                if (bEdges[i].sym != -1) {
+                    if (bEdges[i].sym < i) {
                         shouldLoad = false;
                     }
                 }
                 Handle(Poly_PolygonOnTriangulation) poly =
-                    BRep_Tool::PolygonOnTriangulation(edges[i].edge, tri, loc);
+                    BRep_Tool::PolygonOnTriangulation(bEdges[i].edge, tri, loc);
                 if (poly.IsNull()) {
                     mesh.bEdgesSE.push_back(-1);
                     mesh.bEdgesSE.push_back(-1);
@@ -208,7 +217,7 @@ void OCCCompound::read(const std::string& filename) {
                 const TColStd_Array1OfInteger& polyNodes = poly->Nodes();
                 
                 //bool needReverse = (face.Orientation() != edges[i].edge.Orientation());
-                bool needReverse = (edges[i].edge.Orientation() == TopAbs_REVERSED);
+                bool needReverse = (bEdges[i].edge.Orientation() == TopAbs_REVERSED);
                 if (needReverse) {
                     for (int j = polyNodes.Upper(); j > polyNodes.Lower(); --j) {
                         int n1 = polyNodes(j);
@@ -260,10 +269,15 @@ void OCCCompound::read(const std::string& filename) {
                     }
                 }
                 int currBEdgeSE2 = mesh.indices2.size();
-                mesh.bEdgesSE.push_back(currBEdgeSE1);
-                mesh.bEdgesSE.push_back(currBEdgeSE2);
                 keyNors.push_back(keyNorsTemp);
                 bEdgesIdx.push_back(bEdgesIdxTemp);
+                if (currBEdgeSE1 == currBEdgeSE2) {
+                    continue;
+                }
+                else {
+                    mesh.bEdgesSE.push_back(currBEdgeSE1);
+                    mesh.bEdgesSE.push_back(currBEdgeSE2);
+                }
             }
 
             //记录该face的mesh中的sym he
@@ -352,8 +366,9 @@ void OCCCompound::read(const std::string& filename) {
             this->bEdgesIdx.insert(this->bEdgesIdx.end(), bEdgesIdx.begin(), bEdgesIdx.end());
         }
 
+		//给bEdge赋予symFaceNor
         for (int edgeId = 0; edgeId < bEdgesIdx.size(); ++edgeId) {
-            int sym = edges[edgeId].sym;
+            int sym = bEdges[edgeId].sym;
             if (sym != -1) {
                 for (int i = 0; i < bEdgesIdx[edgeId].size(); ++i) {
                     //这个存储着vertices2里的id，如果不为-1，说明是要渲染的bEdge

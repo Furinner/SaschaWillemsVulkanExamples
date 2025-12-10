@@ -121,7 +121,7 @@ public:
 class OCCCompound {
 public:
 	TopoDS_Shape shape;
-	std::vector<OCCEdge> edges;  //带orientation的
+	std::vector<OCCEdge> bEdges;  //带orientation的
 	//三角化后，每一个小bEdge在vertices2中的idx，严格按照edges顺序，每个顶点记一次
 	std::vector<std::vector<int>> bEdgesIdx; 
 	std::vector<std::vector<glm::vec3>> bEdgesNor; //小bEdge的nor，严格按照edges顺序，两个顶点记一次

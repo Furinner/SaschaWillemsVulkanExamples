@@ -81,6 +81,11 @@ void main()
 	outFaceNor = mat3(ubo.view) * inFaceNor;
 	outSymFaceNor = mat3(ubo.view) * inSymFaceNor;
 	outDebug = inDebug;
+	outObjectID = inObjectID;
+	outFaceID = inFaceID;
+	outHeID = inHeID;
+	outGlobalHeID = inGlobalHeID;
+	outBorder = inBorder;
 
 	bool startPoint = ((gl_VertexIndex & 1u) == 0u);
 
@@ -96,12 +101,16 @@ void main()
 	if(inBorder >= 1){
 		outBorder = inBorder;
 		if(startPoint){
-			uint idx = atomicAdd(sbo1.edgeCnt, 1);
-			sbo2.edgeList[idx] = inGlobalHeID;
+			//uint idx = atomicAdd(sbo1.edgeCnt, 1);
+			//sbo2.edgeList[idx] = inGlobalHeID;
 		}
 	}else{
+		return;
 		float checkVal1 = dot(mat3(ubo.view) * inFaceNor, pixelNor);
 		float checkVal2 = dot(mat3(ubo.view) * inSymFaceNor, pixelNor);
+		if(checkVal1 == 0.f && checkVal2 == 0.f){
+			return;
+		}
 		if((checkVal1 * checkVal2) <= 0.f){
 			outBorder = 1;
 			if(startPoint){
@@ -112,9 +121,4 @@ void main()
 			outBorder = inBorder;
 		}
 	}
-
-	outObjectID = inObjectID;
-	outFaceID = inFaceID;
-	outHeID = inHeID;
-	outGlobalHeID = inGlobalHeID;
 }

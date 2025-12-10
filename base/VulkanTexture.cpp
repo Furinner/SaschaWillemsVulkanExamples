@@ -866,7 +866,7 @@ namespace vks
 		updateDescriptor();
 	}
 
-	void Texture::transitionColorAttachmentsToShaderRead(
+	void Texture::layoutTransitionBarrier(
 		VkCommandBuffer cmdBuffer,
 		const std::vector<VkImage>& images,
 		VkImageLayout oldLayout,
@@ -913,13 +913,16 @@ namespace vks
 		);
 	}
 
-	void Texture::transitionImageLayoutOnce(
+	void Texture::layoutTransitionOnce(
 		VkImageLayout oldLayout,
 		VkImageLayout newLayout,
 		VkImage image,
 		vks::VulkanDevice* vulkanDevice,
 		VkQueue queue)
 	{
+		if (oldLayout == newLayout) {
+			return;
+		}
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		VkImageMemoryBarrier barrier = {};
 		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -941,5 +944,40 @@ namespace vks
 			1, &barrier
 		);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
+	}
+
+	void Texture::copyImgToImg(
+		VkImage       srcImage,
+		VkImageLayout srcImageLayout,
+		VkImage       dstImage,
+		VkImageLayout dstImageLayout,
+		uint32_t      width,
+		uint32_t      height,
+		vks::VulkanDevice* vulkanDevice,
+		VkQueue       queue
+	) {
+		layoutTransitionOnce(srcImageLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcImage, vulkanDevice, queue);
+		layoutTransitionOnce(dstImageLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstImage, vulkanDevice, queue);
+		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		VkImageSubresourceLayers subResource = {};
+		subResource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		subResource.baseArrayLayer = 0;
+		subResource.mipLevel = 0;
+		subResource.layerCount = 1;
+		VkImageCopy copyRegion = {};
+		copyRegion.srcSubresource = subResource;
+		copyRegion.srcOffset = { 0, 0, 0 };
+		copyRegion.dstSubresource = subResource;
+		copyRegion.dstOffset = { 0, 0, 0 };
+		copyRegion.extent.width = width;
+		copyRegion.extent.height = height;
+		copyRegion.extent.depth = 1;
+		vkCmdCopyImage(
+			tmpCmdBuf,
+			srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1, &copyRegion);
+		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
+		layoutTransitionOnce(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcImageLayout, srcImage, vulkanDevice, queue);
 	}
 }

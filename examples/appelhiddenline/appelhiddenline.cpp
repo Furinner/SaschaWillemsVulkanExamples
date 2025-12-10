@@ -98,7 +98,7 @@ public:
 		alignas(8) glm::vec2 uv;
 		alignas(4) int objectID;
 		alignas(4) int faceID;
-		alignas(4) int border = 0; //1为有sym的bEdge，2为没sym的bEdge
+		alignas(4) int border = -1; //1为有sym的bEdge，2为没sym的bEdge
 		alignas(4) int heID = -1;
 		alignas(4) int uniqueID; //unique id in obj
 		alignas(4) int debug = 0;
@@ -1601,6 +1601,7 @@ public:
 	VkSemaphore lockedEdgeSemaphore{ VK_NULL_HANDLE };
 	VkSemaphore compute1Semaphore;
 	VkSemaphore compute2Semaphore;
+
 	VulkanExample() : VulkanExampleBase()
 	{
 		title = "Vectorized Hidden Line";
@@ -1696,7 +1697,7 @@ public:
 	}
 
 	// Enable physical device features required for this example
-	virtual void getEnabledFeatures() override
+	void getEnabledFeatures() override
 	{
 		// Enable anisotropic filtering if supported
 		if (deviceFeatures.samplerAnisotropy) {
@@ -1943,20 +1944,25 @@ public:
 		// Use subpass dependencies for attachment layout transitions
 		std::array<VkSubpassDependency, 2> dependencies;
 
+		//外部 → subpass 0
 		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL; //outside current render pass
 		dependencies[0].dstSubpass = 0;
+		//这里srcStageMask/srcAccessMask 设置成这样
+		//代表我只要求在 dstStageMask/dstAccessMask 开始前把 layout 转换好，
+		//至于之前发生了什么访问，我不关心，也不等待。
 		dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 		dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[0].srcAccessMask = 0;
 		dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
+		//subpass 0 → 外部
 		dependencies[1].srcSubpass = 0;
 		dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
 		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
 		VkRenderPassCreateInfo renderPassInfo = {};
@@ -2307,31 +2313,24 @@ public:
 		subpass.colorAttachmentCount = static_cast<uint32_t>(colorReferences.size());
 		subpass.pDepthStencilAttachment = &depthReference;
 
-		// Use subpass dependencies for attachment layout transitions
-		std::array<VkSubpassDependency, 3> dependencies;
+		std::array<VkSubpassDependency, 2> dependencies;
 
-		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+		//外部 → subpass 0
+		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL; //outside current render pass
 		dependencies[0].dstSubpass = 0;
 		dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 		dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[0].srcAccessMask = 0;
 		dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
-		dependencies[2].srcSubpass = VK_SUBPASS_EXTERNAL;
-		dependencies[2].dstSubpass = 0;
-		dependencies[2].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-		dependencies[2].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-		dependencies[2].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-		dependencies[2].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-		dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
-
+		//subpass 0 → 外部
 		dependencies[1].srcSubpass = 0;
 		dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
 		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
 		VkRenderPassCreateInfo renderPassInfo = {};
@@ -2451,20 +2450,22 @@ public:
 		// Use subpass dependencies for attachment layout transitions
 		std::array<VkSubpassDependency, 2> dependencies;
 
-		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+		//外部 → subpass 0
+		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL; //outside current render pass
 		dependencies[0].dstSubpass = 0;
 		dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 		dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[0].srcAccessMask = 0;
 		dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
+		//subpass 0 → 外部
 		dependencies[1].srcSubpass = 0;
 		dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
 		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
 		VkRenderPassCreateInfo renderPassInfo = {};
@@ -2492,7 +2493,7 @@ public:
 		fbufCreateInfo.height = lockedEdgeFrameBuf.height;
 		fbufCreateInfo.layers = 1;
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &fbufCreateInfo, nullptr, &lockedEdgeFrameBuf.frameBuffer));
-		vks::Texture::transitionImageLayoutOnce(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			lockedEdgeFrameBuf.position.image, vulkanDevice, queue);
 	}
 
@@ -2526,7 +2527,7 @@ public:
 		renderPassBeginInfo.pClearValues = clearValues.data();
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(offScreenCmdBuffer, &cmdBufInfo));
-
+		
 		vkCmdBeginRenderPass(offScreenCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 		VkViewport viewport = vks::initializers::viewport((float)offScreenFrameBuf.width, -(float)offScreenFrameBuf.height, 0.0f, 1.0f);
@@ -2588,31 +2589,31 @@ public:
 		renderPassBeginInfo.pClearValues = clearValues.data();
 
 		// Add memory barrier between render passes
-		VkImageMemoryBarrier colorBarrier = {};
-		colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		colorBarrier.image = offScreenFrameBuf.albedo.image;
-		colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		colorBarrier.subresourceRange.baseMipLevel = 0;
-		colorBarrier.subresourceRange.levelCount = 1;
-		colorBarrier.subresourceRange.baseArrayLayer = 0;
-		colorBarrier.subresourceRange.layerCount = 1;
+		//VkImageMemoryBarrier colorBarrier = {};
+		//colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		//colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		//colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+		//colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//colorBarrier.image = offScreenFrameBuf.albedo.image;
+		//colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		//colorBarrier.subresourceRange.baseMipLevel = 0;
+		//colorBarrier.subresourceRange.levelCount = 1;
+		//colorBarrier.subresourceRange.baseArrayLayer = 0;
+		//colorBarrier.subresourceRange.layerCount = 1;
 
-		VkImageMemoryBarrier positionBarrier = {};
-		positionBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		positionBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		positionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		positionBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		positionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		positionBarrier.image = offScreenFrameBuf.position.image;
-		positionBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		positionBarrier.subresourceRange.baseMipLevel = 0;
-		positionBarrier.subresourceRange.levelCount = 1;
-		positionBarrier.subresourceRange.baseArrayLayer = 0;
-		positionBarrier.subresourceRange.layerCount = 1;
+		//VkImageMemoryBarrier positionBarrier = {};
+		//positionBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		//positionBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		//positionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+		//positionBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//positionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//positionBarrier.image = offScreenFrameBuf.position.image;
+		//positionBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		//positionBarrier.subresourceRange.baseMipLevel = 0;
+		//positionBarrier.subresourceRange.levelCount = 1;
+		//positionBarrier.subresourceRange.baseArrayLayer = 0;
+		//positionBarrier.subresourceRange.layerCount = 1;
 		bool sameFamily = (compute.queueFamilyIndex == graphics.queueFamilyIndex);
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer, &cmdBufInfo));
@@ -2714,32 +2715,32 @@ public:
 		renderPassBeginInfo.pClearValues = clearValues.data();
 
 		// Add memory barrier between render passes
-		VkImageMemoryBarrier colorBarrier = {};
-		colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		colorBarrier.image = offScreenFrameBuf.albedo.image;
-		colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		colorBarrier.subresourceRange.baseMipLevel = 0;
-		colorBarrier.subresourceRange.levelCount = 1;
-		colorBarrier.subresourceRange.baseArrayLayer = 0;
-		colorBarrier.subresourceRange.layerCount = 1;
+		//VkImageMemoryBarrier colorBarrier = {};
+		//colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		//colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		//colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+		//colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//colorBarrier.image = offScreenFrameBuf.albedo.image;
+		//colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		//colorBarrier.subresourceRange.baseMipLevel = 0;
+		//colorBarrier.subresourceRange.levelCount = 1;
+		//colorBarrier.subresourceRange.baseArrayLayer = 0;
+		//colorBarrier.subresourceRange.layerCount = 1;
 
-		VkImageMemoryBarrier positionBarrier = {};
-		positionBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		positionBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		positionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		positionBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		positionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		positionBarrier.image = offScreenFrameBuf.position.image;
-		positionBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		positionBarrier.subresourceRange.baseMipLevel = 0;
-		positionBarrier.subresourceRange.levelCount = 1;
-		positionBarrier.subresourceRange.baseArrayLayer = 0;
-		positionBarrier.subresourceRange.layerCount = 1;
-		bool sameFamily = (compute.queueFamilyIndex == graphics.queueFamilyIndex);
+		//VkImageMemoryBarrier positionBarrier = {};
+		//positionBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		//positionBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		//positionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+		//positionBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//positionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		//positionBarrier.image = offScreenFrameBuf.position.image;
+		//positionBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		//positionBarrier.subresourceRange.baseMipLevel = 0;
+		//positionBarrier.subresourceRange.levelCount = 1;
+		//positionBarrier.subresourceRange.baseArrayLayer = 0;
+		//positionBarrier.subresourceRange.layerCount = 1;
+		//bool sameFamily = (compute.queueFamilyIndex == graphics.queueFamilyIndex);
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer2, &cmdBufInfo));
 
@@ -2865,7 +2866,7 @@ public:
 		vkCmdBindPipeline(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute1);
 		vkCmdBindDescriptorSets(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute1, 0, 1, &descriptorSets.compute1, 0, 0);
 		//vkCmdDispatch(computeCmdBuffer, (3840 * 2160) * 16 / 64, 1, 1);
-		vkCmdDispatch(computeCmdBuffer, ((mesh.edgeVert.size() / 2) / 64) + 1, 1, 1);
+		vkCmdDispatch(computeCmdBuffer, ((mesh.occCompound.mesh.bEdgesSE.size() / 2) / 64) + 1, 1, 1);
 		{
 			std::vector<VkBuffer> rlBuffers = {
 				mesh.edgeVertBuffer.buffer,
@@ -2985,7 +2986,7 @@ public:
 		std::string stpFile = getAssetPath() + "models/test/combined/excavator_yellow/orig/excavator_yellow.stp";
 		//OCCCompound occCompound;
 		mesh.occCompound.read(stpFile);
-		
+
 		
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
 		
@@ -3025,13 +3026,17 @@ public:
 
 			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufInfo));
 			//由于使用该renderPass的attachment，所以barrier必须写在renderPass外
-			std::vector<VkImage> images = { offScreenFrameBuf.position.image,
+			//但是之前创建renderPass时，这些image的final layout都已经设置为VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+			//所以不需要这里的额外的layout barrier。
+			std::vector<VkImage> images = {
+				offScreenFrameBuf.position.image,
 				offScreenFrameBuf.normal.image,
 				offScreenFrameBuf.albedo.image,
 				edgeFrameBuf.position.image,
+				edgeFrameBuf.normal.image,
 				lockedEdgeFrameBuf.position.image 
 			};
-			vks::Texture::transitionColorAttachmentsToShaderRead(
+			/*vks::Texture::layoutTransitionBarrier(
 				drawCmdBuffers[i],
 				images,
 				VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -3040,7 +3045,7 @@ public:
 				VK_ACCESS_SHADER_READ_BIT,
 				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-			);
+			);*/
 			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 			VkViewport viewport = vks::initializers::viewport((float)width, -(float)height, 0.0f, 1.0f);
@@ -3071,16 +3076,18 @@ public:
 			drawUI(drawCmdBuffers[i]);
 
 			vkCmdEndRenderPass(drawCmdBuffers[i]);
-			vks::Texture::transitionColorAttachmentsToShaderRead(
+			
+			vks::Texture::layoutTransitionBarrier(
 				drawCmdBuffers[i],
 				images,
 				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 				VK_ACCESS_SHADER_READ_BIT,
-				VK_ACCESS_SHADER_WRITE_BIT,
+				VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
 				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
 			);
+
 			VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[i]));
 		}
 	}
@@ -3535,7 +3542,7 @@ public:
 		memcpy(uniformBuffers.composition.mapped, &uniformDataComposition, sizeof(UniformDataComposition));
 	}
 
-	void changeImageLayoutOneTime(VkImageLayout oldLayout, VkImageLayout newLayout, VkImage image) {
+	/*void changeImageLayoutOneTime(VkImageLayout oldLayout, VkImageLayout newLayout, VkImage image) {
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		VkImageMemoryBarrier barrier = {};
 		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -3557,10 +3564,10 @@ public:
 			1, &barrier
 		);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
-	}
+	}*/
 
 
-	void copyImgToImg(VkImage srcImage, VkImage dstImage, uint32_t width, uint32_t height) {
+	/*void copyImgToImg(VkImage srcImage, VkImage dstImage, uint32_t width, uint32_t height) {
 		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcImage);
 		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstImage);
 		
@@ -3585,10 +3592,10 @@ public:
 			1, &copyRegion);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
 		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, srcImage);
-	}
+	}*/
 
 	void copyGPUtoCPU(uint32_t width, uint32_t height, VkImage image, VkBuffer dstBuffer) {
-		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image);
+		//changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image);
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 
 		VkBufferImageCopy region = {};
@@ -3777,12 +3784,22 @@ public:
 		buildEdgeCommandBuffer2();
 		buildLockedEdgeCommandBuffer();
 		buildComputeCommandBuffer();
+		//debug时打印出image的handle
+		printf("Create image handle = %p\n", (void*)offScreenFrameBuf.position.image);
+		printf("Create image handle = %p\n", (void*)offScreenFrameBuf.normal.image);
+		printf("Create image handle = %p\n", (void*)offScreenFrameBuf.albedo.image);
+		printf("Create image handle = %p\n", (void*)edgeFrameBuf.position.image);
+		printf("Create image handle = %p\n", (void*)edgeFrameBuf.normal.image);
+		printf("Create image handle = %p\n", (void*)lockedEdgeFrameBuf.position.image);
+		printf("nygsl!\n");
+		for (int i = 0; i < swapChain.images.size(); ++i) {
+			printf("Create image handle = %p\n", (void*)swapChain.images[i]);
+		}
 		prepared = true;
 	}
 
 	void draw()
 	{
-		changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, edgeFrameBuf.position.image);
 		VulkanExampleBase::prepareFrame();
 		// The scene render command buffer has to wait for the offscreen
 		// rendering to be finished before we can use the framebuffer
@@ -3806,6 +3823,7 @@ public:
 		submitInfo.pCommandBuffers = &offScreenCmdBuffer;
 		submitInfo.pWaitDstStageMask = &waitStageMask;
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+
 
 		if (vectorize) {
 			waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -3850,13 +3868,16 @@ public:
 		
 		if (lockedView) {
 			vkDeviceWaitIdle(device);
-			changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
+			//changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
 			copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
 			vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
 			mesh.analyzeEdgePixels2(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue, camera);
 			vkUnmapMemory(device, mesh.cpuImageBuffer.memory);
 			//rebuildLockedEdgeCommandBuffer();
 			lockedView = false;
+		}
+		else {
+			vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, lockedEdgeFrameBuf.position.image, vulkanDevice, queue);
 		}
 
 		if (savePic) {
@@ -3870,16 +3891,24 @@ public:
 				++savePicCnt;
 			}
 			else if (savePicCnt == 1) {
-				copyImgToImg(edgeFrameBuf.position.image, scaleSamples[0].image, edgeFrameBuf.width, edgeFrameBuf.height);
+				vks::Texture::copyImgToImg(edgeFrameBuf.position.image, 
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					scaleSamples[0].image,
+					VK_IMAGE_LAYOUT_UNDEFINED,
+					edgeFrameBuf.width, edgeFrameBuf.height, vulkanDevice, queue);
 				//savePicOnCPU(getAssetPath() + "models/test/combined/excavator_yellow_smooth/pic/0.png", scaleSamples[0].image, edgeFrameBuf.width, edgeFrameBuf.height);
-				changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[0].image);
+				vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[0].image, vulkanDevice, queue);
 				camera.setViewToAABB(mesh.aabbCameraMin, mesh.aabbCameraMax, scale);
 				++savePicCnt;
 			}
 			else if (savePicCnt <= (scaleCnt + 1)) {
-				copyImgToImg(edgeFrameBuf.position.image, scaleSamples[savePicCnt-2].image, edgeFrameBuf.width, edgeFrameBuf.height);
+				vks::Texture::copyImgToImg(edgeFrameBuf.position.image, 
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					scaleSamples[savePicCnt-2].image, 
+					VK_IMAGE_LAYOUT_UNDEFINED,
+					edgeFrameBuf.width, edgeFrameBuf.height, vulkanDevice, queue);
 				//savePicOnCPU(getAssetPath() + "models/test/combined/excavator_yellow_smooth/pic/" + std::to_string(savePicCnt - 1) + ".png", scaleSamples[savePicCnt-2].image, edgeFrameBuf.width, edgeFrameBuf.height);
-				changeImageLayoutOneTime(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[savePicCnt - 2].image);
+				vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[savePicCnt - 2].image, vulkanDevice, queue);
 				if (savePicCnt == (scaleCnt + 1)) {
 					camera.position = camera.positionOrig;
 					camera.orthoLeft = -(mesh.aabbCameraMax.x - mesh.aabbCameraMin.x) * 0.5f;

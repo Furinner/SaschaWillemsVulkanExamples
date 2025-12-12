@@ -414,9 +414,9 @@ bool segmentsIntersect(vec2 p1, vec2 p2,
     return false;
 }
 
-void findIntersection(int i, int k, inout int visChange[MAX_INTER], inout int interCnt, 
-    inout float ts[MAX_INTER], inout int edgeIdx[MAX_INTER], inout int edgeCnt,
-    inout int debugFB[MAX_INTER]){
+void findIntersection(int i, int k, out int visChange[MAX_INTER], inout int interCnt, 
+    out float ts[MAX_INTER], out int edgeIdx[MAX_INTER], int edgeCnt,
+    out int debugFB[MAX_INTER]){
 
     float t;
     float u;
@@ -494,49 +494,7 @@ void findIntersection(int i, int k, inout int visChange[MAX_INTER], inout int in
                     }
                     debugFB[interCnt] = -1;
                 }
-//                int bEdgeCntIdx = 0;
-//                for(int i = 0; i < ubo.bEdgeCnt; ++i){
-//                    int currIdxS = bEdgesSE[i * 2];
-//                    int currIdxE = bEdgesSE[i * 2 + 1];
-//                    for(int j = currIdxS; j < currIdxE; j+=2){
-//                        if(k == j)
-//                            bEdgeCntIdx = i;
-//                            break;
-//                    }
-//                }
-//                //往前搜索
-//                int debugObjID = vertices[bEdgesSE[bEdgeCntIdx * 2]].objectID;
-//                for(int i = bEdgeCntIdx - 1; i > 0; --i){
-//                    if(vertices[bEdgesSE[i * 2]].objectID == debugObjID){
-//                        for(int j = bEdgesSE[i * 2]; j < bEdgesSE[i * 2 + 1]; j+=2){
-//                            vertices[j].debug = 2;
-//                            vertices[j].normal = vec3(1,0,0);
-//                            vertices[j + 1].debug = 2;
-//                            vertices[j + 1].normal = vec3(0,1,0);
-//                        }
-//                    }else{
-//                        break;
-//                    }
-//                }
-//                //往后搜索
-//                for(int i = bEdgeCntIdx; i < ubo.bEdgeCnt; ++i){
-//                    //debugPrintfEXT("index=%d, %d\n", vertices[bEdgesSE[i * 2]].faceID, debugFaceID);
-//                    if(vertices[bEdgesSE[i * 2]].objectID == debugObjID){
-//                        for(int j = bEdgesSE[i * 2]; j < bEdgesSE[i * 2 + 1]; j+=2){
-//                            vertices[j].debug = 2;
-//                            vertices[j].normal = vec3(1,0,0);
-//                            vertices[j + 1].debug = 2;
-//                            vertices[j + 1].normal = vec3(0,1,0);
-//                        }
-//                    }else{
-//                        break;
-//                    }
-//                }
-
-//                vertices[k].debug = 2;
-//                vertices[k].normal = vec3(1,0,0);
-//                vertices[k+1].debug = 2;
-//                vertices[k+1].normal = vec3(0,1,0);
+                debugPrintfEXT("wtf: %f, %f, %d", t, 1e-3, interCnt);
                 ts[interCnt] = t;
                 edgeIdx[interCnt] = edgeCnt;
                 ++interCnt;
@@ -545,13 +503,12 @@ void findIntersection(int i, int k, inout int visChange[MAX_INTER], inout int in
     }
 }
 
-void visChangeSort(inout int visChange[MAX_INTER], inout int interCnt, 
-    inout float ts[MAX_INTER], inout int vis[MAX_INTER + 1], 
-    in int edgeIdx[MAX_INTER], inout int debugFB[MAX_INTER]){
+void visChangeSort(inout int visChange[MAX_INTER], 
+    inout float ts[MAX_INTER], out int vis[MAX_INTER + 1], 
+    in int edgeIdx[MAX_INTER], in int interCnt){
 
-    for (int i = 0; i <= interCnt; ++i) {
-        vis[i] = 0;
-    }
+    vis[0] = 0;
+
     //根据ts交换visChange
     for (int i = 0; i < interCnt; ++i) {
         for (int j = i + 1; j < interCnt; ++j) {
@@ -577,7 +534,7 @@ void visChangeSort(inout int visChange[MAX_INTER], inout int interCnt,
         vis[i + 1] = vis[i] + visChange[i];
     }
     //vis最高降低到0
-    int maxVis = -100;
+    int maxVis = -10000;
     for (int i = 0; i <= interCnt; ++i) {
         if (vis[i] > maxVis) {
             maxVis = vis[i];
@@ -586,7 +543,6 @@ void visChangeSort(inout int visChange[MAX_INTER], inout int interCnt,
     for (int i = 0; i <= interCnt; ++i) {
         vis[i] -= maxVis;
     }
-
 }
 
 void main() 
@@ -699,18 +655,38 @@ void main()
 //            return;
 //        }
 //      31096 蓝线问题（另一条线刚好交在该线中点，导致没有只查到另一条线）
+//      打开depthWriteEnable解决
 //        if(idxS > 31095 && idxS < 31097){
 //            
 //        }else{
 //            return;
 //        }
-
+//      33094
+//      in / out / inout问题
+//        if(idxS > 33093 && idxS < 33095){
+//
+//        }else{
+//            return;
+//        }
 //      85182 
-        if(idxS > 85181 && idxS < 85183){
-            
+//        if(idxS > 85181 && idxS < 85183){
+//            
+//        }else{
+//            return;
+//        }
+//      21538    
+        if(idxS > 21537 && idxS < 21539){
+
         }else{
             return;
         }
+//      20009 - 39999 检查中
+//        if(idxS > 0 && idxS < 20009){
+//
+//        }else{
+//            return;
+//        }
+        
 
         int debugFB[MAX_INTER];
         float ts[MAX_INTER];
@@ -752,42 +728,22 @@ void main()
         if(silInterCnt > 0){
             return;
         }
+        debugPrintfEXT("%d", interCnt);
+        debugPrintfEXT("edgeIdx: %d, %d, %d, %d", edgeIdx[0], edgeIdx[1], edgeIdx[2], edgeIdx[3]);
+        debugPrintfEXT("ts: %.5f, %.5f, %.5f, %.5f", ts[0], ts[1], ts[2], ts[3]);
+        debugPrintfEXT("visChange: %d, %d, %d, %d", visChange[0], visChange[1], visChange[2], visChange[3]);
         //现存edge先全部消除
         for(int i = idxS; i < idxE; i+=2){
             vertices[i].debug = 4;
             vertices[i + 1].debug = 4;
         };
 
-        visChangeSort(visChange, interCnt, ts, vis, edgeIdx, debugFB);
+        visChangeSort(visChange, ts, vis, edgeIdx, interCnt);
+        debugPrintfEXT("vis: %d, %d, %d, %d", vis[0], vis[1], vis[2], vis[3]);
 
         vec3 renderVers[MAX_BEDGES * 2];
         int renderEdgeIdx = 0;
         int res = -1;
-        debugPrintfEXT("%d, %d, %d", interCnt, idxS, idxE);
-        debugPrintfEXT("ts: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
-            ts[0], ts[1], ts[2], ts[3], ts[4], ts[5], ts[6], ts[7], 
-            ts[8], ts[9], ts[10], ts[11], ts[12], ts[13], ts[14], ts[15], 
-            ts[16], ts[17], ts[18], ts[19], ts[20], ts[21], ts[22], ts[23], ts[24], ts[25], 
-            ts[26], ts[27], ts[28], ts[29], ts[30]);
-        debugPrintfEXT("ts: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f", 
-            ts[31], ts[32], ts[33], ts[34], ts[35],
-            ts[36], ts[37], ts[38], ts[39], ts[40], ts[41], ts[42], ts[43]);
-        debugPrintfEXT("visChange: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d",
-            visChange[0], visChange[1], visChange[2], visChange[3], visChange[4], visChange[5], visChange[6], visChange[7], 
-            visChange[8], visChange[9], visChange[10], visChange[11], visChange[12], visChange[13], visChange[14], visChange[15], 
-            visChange[16], visChange[17], visChange[18], visChange[19], visChange[20], visChange[21], visChange[22], visChange[23], visChange[24], visChange[25], 
-            visChange[26], visChange[27], visChange[28], visChange[29], visChange[30]);
-        debugPrintfEXT("visChange: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d", 
-            visChange[31], visChange[32], visChange[33], visChange[34], visChange[35],
-            visChange[36], visChange[37], visChange[38], visChange[39], visChange[40], visChange[41], visChange[42], visChange[43]);
-        debugPrintfEXT("vis: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d",
-            vis[0], vis[1], vis[2], vis[3], vis[4], vis[5], vis[6], vis[7], 
-            vis[8], vis[9], vis[10], vis[11], vis[12], vis[13], vis[14], vis[15], 
-            vis[16], vis[17], vis[18], vis[19], vis[20], vis[21], vis[22], vis[23], vis[24], vis[25], 
-            vis[26], vis[27], vis[28], vis[29], vis[30]);
-        debugPrintfEXT("vis: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d", 
-            vis[31], vis[32], vis[33], vis[34], vis[35],
-            vis[36], vis[37], vis[38], vis[39], vis[40], vis[41], vis[42], vis[43]);
 
         for(int i = 0; i <= interCnt; ++i){
             if(vis[i] == 0){
@@ -807,7 +763,7 @@ void main()
                     edgeIdxS = edgeIdx[i-1];
                     edgeIdxE = edgeIdx[i];
                 }
-
+                
                 for(int j = edgeIdxS; j <= edgeIdxE; ++j){
                     int gHeID = vertices[idxS + 2 * j].globalHeID;
                     vec3 pos1;
@@ -846,7 +802,6 @@ void main()
                     if(res == 0){
                         continue;
                     }
-                    debugPrintfEXT("%d, %d, %d", edgeIdxS, edgeIdxE, gHeID);
                     currRes = checkPic(checkProj, gHeID);
                         
                     if(currRes == 0){
@@ -906,4 +861,3 @@ void main()
     }
 
 }
-

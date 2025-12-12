@@ -3349,7 +3349,7 @@ public:
 		colorBlendState.pAttachments = blendAttachmentStates2.data();
 		inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 		rasterizationState.lineWidth = 3.f;
-		depthStencilState.depthWriteEnable = VK_FALSE;
+		depthStencilState.depthWriteEnable = VK_TRUE;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		//inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 		shaderStages[0] = loadShader(getShadersPath() + "appelhiddenline/edge.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);

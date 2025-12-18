@@ -4,7 +4,7 @@
 //compute1
 
 const int MAX_INTER = 45;
-const int MAX_BEDGES = 400; //一个bSeg最多由多少bEdges组成
+const int MAX_BEDGES = 300; //一个bSeg最多由多少bEdges组成
 
 
 const int IMG_WIDTH = 3840;
@@ -939,7 +939,7 @@ void main()
                 }
             }
         }
-        
+
         //visChangeSort
         for (int i = 0; i < interCnt; ++i) {
             for (int j = i + 1; j < interCnt; ++j) {
@@ -1085,6 +1085,7 @@ void main()
 
                 int idxS = seiStart + sLinkIntervals[sliStart + sLinkCnt * 2 + 1];
                 int idxE = seiStart + sLinkIntervals[sliStart + sLinkCnt * 2 + 2];
+
                 for(int l = idxS; l < idxE; l+=2){
                     int idx1 = sEdgeIdxs[l];
                     int idx2 = sEdgeIdxs[l + 1];

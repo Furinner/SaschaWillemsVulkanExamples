@@ -21,6 +21,8 @@ static bool segmentsIntersect(glm::vec2 p1, glm::vec2 p2,
     glm::vec2 r = p2 - p1;
     glm::vec2 s = q2 - q1;
 
+    float a = glm::length(r);
+    float b = glm::length(s);
     const float EPS = 1e-8 * (glm::length(r) * glm::length(s) + 1.0f);
 
     float rxs = cross2D(r, s);
@@ -76,10 +78,14 @@ static bool segmentsIntersect(glm::vec2 p1, glm::vec2 p2,
 void OCCCompound::read(const std::string& filename) {
 
 
-	glm::vec2 mainPos1 = glm::vec2(-0.539289f, 0.95730233f);
-	glm::vec2 mainPos2 = glm::vec2(-0.53834945f, 0.95579576f);
-    glm::vec2 currPos1 = glm::vec2(-0.53849548f, 0.95606822f);
-    glm::vec2 currPos2 = glm::vec2(-0.53954238f, 0.95729131f);
+	glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
+	glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
+    glm::vec2 currPos1 = glm::vec2(-0.21734953f, 0.76640475f);
+    glm::vec2 currPos2 = glm::vec2(-0.21732196f, 0.76641756f);
+    //glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
+    //glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
+    //glm::vec2 currPos1 = glm::vec2(-0.21737374f, 0.76642179f);
+    //glm::vec2 currPos2 = glm::vec2(-0.21734953f, 0.76640475f);
     segmentsIntersect(mainPos1, mainPos2, currPos1, currPos2);
 
     const char* filenameTmp = filename.c_str();

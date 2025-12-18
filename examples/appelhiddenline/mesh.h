@@ -149,6 +149,7 @@ public:
 	
 	void read(const std::string& filename);
 
+	void toObjFile(const std::string& filename);
 	//helper Function
 	//void pushback1(int n1, int n2, int n3, glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
 	//void pushback2();

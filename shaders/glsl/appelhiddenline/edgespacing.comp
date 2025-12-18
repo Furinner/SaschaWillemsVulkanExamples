@@ -461,14 +461,23 @@ bool sFindIntersectionB(int idx1, int idx2, int k, out int visChange, out float 
     vec4 currPos2View = ubo.view * vec4(vertices[k+1].position, 1);
     vec4 currPos1 = ubo.proj * currPos1View;
     vec4 currPos2 = ubo.proj * currPos2View;
-    
+    if(k == 274388){
+        debugPrintfEXT("%.8f, %.8f", mainPos1.x, mainPos1.y);
+        debugPrintfEXT("%.8f, %.8f", mainPos2.x, mainPos2.y);
+        debugPrintfEXT("%.8f, %.8f", currPos1.x, currPos1.y);
+        debugPrintfEXT("%.8f, %.8f", currPos2.x, currPos2.y);
+        vertices[k].debug = 2;
+        vertices[k + 1].debug = 2;
+        vertices[k].normal = vec3(1,0,0);
+        vertices[k + 1].normal = vec3(0,1,0);
+    }
     vec3 fn = mat3(ubo.view) * vertices[k].faceNor;
     vec3 sfn = mat3(ubo.view) * vertices[k].symFaceNor;
     //true为正面，false为反面
     bool currFaceOri = fn.z > 0.0;
     //true表示用了symFace，false表示还是该face
     bool currFaceSym = false;
-
+    
     //有sym的bEdge
     if(vertices[k].border == 1){
         //如果两个朝向一致，则对于visibility变化无影响
@@ -488,7 +497,6 @@ bool sFindIntersectionB(int idx1, int idx2, int k, out int visChange, out float 
     }else if(vertices[k].border == 2){
         visChangeVal = 1;
     }
-
     if(segmentsIntersect(mainPos1.xy, mainPos2.xy, currPos1.xy, currPos2.xy, intersection)){
         t = intersection.x;
         u = intersection.y;
@@ -754,7 +762,6 @@ bool findIntersection(int i, int k, out int visChange, out float t, out int debu
 
 void main() 
 {
-
     if(gl_GlobalInvocationID.x < ubo.bEdgeCnt){
         int idxS = bEdgesSE[gl_GlobalInvocationID.x * 2];
         int idxE = bEdgesSE[gl_GlobalInvocationID.x * 2 + 1];
@@ -849,10 +856,10 @@ void main()
                     int currVisChange;
                     bool debugInter = false;
                     if(findIntersection(i, k, currVisChange, currt, currDebugFB, debugInter)){
-//                        vertices[k].debug = 2;
-//                        vertices[k + 1].debug = 2;
-//                        vertices[k].normal = vec3(1,0,0);
-//                        vertices[k + 1].normal = vec3(0,1,0);
+                        vertices[k].debug = 2;
+                        vertices[k + 1].debug = 2;
+                        vertices[k].normal = vec3(1,0,0);
+                        vertices[k + 1].normal = vec3(0,1,0);
                         visChange[interCnt] = currVisChange;
                         ts[interCnt] = currt;
                         debugFB[interCnt] = currDebugFB;
@@ -871,10 +878,10 @@ void main()
                         float currt;
                         int currVisChange;
                         if(findIntersectionSil(i, idx1, idx2, currVisChange, currt)){
-//                            vertices[idx1].debug = 2;
-//                            vertices[idx2].debug = 2;
-//                            vertices[idx1].normal = vec3(1,0,0);
-//                            vertices[idx2].normal = vec3(0,1,0);
+                            vertices[idx1].debug = 2;
+                            vertices[idx2].debug = 2;
+                            vertices[idx1].normal = vec3(1,0,0);
+                            vertices[idx2].normal = vec3(0,1,0);
                             visChange[interCnt] = currVisChange;
                             ts[interCnt] = currt;
                             edgeIdx[interCnt] = edgeCnt;
@@ -939,14 +946,17 @@ void main()
                 }
             }
         }
+//
+//        debugPrintfEXT("%d", interCnt);
+//        debugPrintfEXT("%d, %d, %.8f", edgeIdx[0], visChange[0], ts[0]);
+//        debugPrintfEXT("%d, %d, %.8f", edgeIdx[1], visChange[1], ts[1]);
+//        debugPrintfEXT("%d, %d, %.8f", edgeIdx[2], visChange[2], ts[2]);
 
         //visChangeSort
+        //由于加入了silhouette，edge现在也变成乱序了
         for (int i = 0; i < interCnt; ++i) {
             for (int j = i + 1; j < interCnt; ++j) {
-                if(edgeIdx[j] > edgeIdx[i]){
-                    continue;
-                }
-                if (ts[j] < ts[i]) {
+                if(edgeIdx[j] < edgeIdx[i]){
                     // 交换 ts
                     float tmp = ts[i];
                     ts[i] = ts[j];
@@ -955,12 +965,35 @@ void main()
                     int tmp2 = visChange[i];
                     visChange[i] = visChange[j];
                     visChange[j] = tmp2;
+                    // 交换 edgeIdx
+                    tmp2 = edgeIdx[i];
+                    edgeIdx[i] = edgeIdx[j];
+                    edgeIdx[j] = tmp2;
+                }else if(edgeIdx[j] > edgeIdx[i]){
+                    continue;
+                }else{
+                    if (ts[j] < ts[i]) {
+                        // 交换 ts
+                        float tmp = ts[i];
+                        ts[i] = ts[j];
+                        ts[j] = tmp;
+                        // 交换 visChange
+                        int tmp2 = visChange[i];
+                        visChange[i] = visChange[j];
+                        visChange[j] = tmp2;
+                        // 交换 edgeIdx
+                        tmp2 = edgeIdx[i];
+                        edgeIdx[i] = edgeIdx[j];
+                        edgeIdx[j] = tmp2;
+                    }
                 }
             }
         }
+
         for (int i = 0; i < interCnt; ++i) {
             vis[i + 1] = vis[i] + visChange[i];
         }
+
         int maxVis = -10000;
         for (int i = 0; i <= interCnt; ++i) {
             if (vis[i] > maxVis) {
@@ -1068,9 +1101,15 @@ void main()
         }
     }
 
+
     if(gl_GlobalInvocationID.x < objNum){
         int objId = int(gl_GlobalInvocationID.x);
-    
+//      1481(未与idxS为274388的bEdge相交)
+//        if(objId >= 1481 && objId < 1482){
+//            
+//        }else{
+//            return;
+//        }
         int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * objId;
         int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * objId;
         if(sLinkIntervals[sliStart] > 0){
@@ -1100,6 +1139,10 @@ void main()
                         int currIdxE = bEdgesSE[j * 2 + 1];
                         for(int k = currIdxS; k < currIdxE; k+=2){
                             if(sFindIntersectionB(idx1, idx2, k, visC, t)){
+//                                vertices[k].debug = 2;
+//                                vertices[k + 1].debug = 2;
+//                                vertices[k].normal = vec3(1,0,0);
+//                                vertices[k + 1].normal = vec3(0,1,0);
                                 visChange[interCnt] = visC;
                                 ts[interCnt] = t;
                                 edgeIdx[interCnt] = edgeCnt;
@@ -1109,13 +1152,14 @@ void main()
                     }
                     ++edgeCnt;
                 }
+//                debugPrintfEXT("%d", interCnt);
+//                debugPrintfEXT("%d, %.8f", visChange[0], ts[0]);
+//                debugPrintfEXT("%d, %.8f", visChange[1], ts[1]);
                 //visChangeSort
+                //由于加入了silhouette，edge现在也变成乱序了
                 for (int i = 0; i < interCnt; ++i) {
                     for (int j = i + 1; j < interCnt; ++j) {
-                        if(edgeIdx[j] > edgeIdx[i]){
-                            continue;
-                        }
-                        if (ts[j] < ts[i]) {
+                        if(edgeIdx[j] < edgeIdx[i]){
                             // 交换 ts
                             float tmp = ts[i];
                             ts[i] = ts[j];
@@ -1124,12 +1168,35 @@ void main()
                             int tmp2 = visChange[i];
                             visChange[i] = visChange[j];
                             visChange[j] = tmp2;
+                            // 交换 edgeIdx
+                            tmp2 = edgeIdx[i];
+                            edgeIdx[i] = edgeIdx[j];
+                            edgeIdx[j] = tmp2;
+                        }else if(edgeIdx[j] > edgeIdx[i]){
+                            continue;
+                        }else{
+                            if (ts[j] < ts[i]) {
+                                // 交换 ts
+                                float tmp = ts[i];
+                                ts[i] = ts[j];
+                                ts[j] = tmp;
+                                // 交换 visChange
+                                int tmp2 = visChange[i];
+                                visChange[i] = visChange[j];
+                                visChange[j] = tmp2;
+                                // 交换 edgeIdx
+                                tmp2 = edgeIdx[i];
+                                edgeIdx[i] = edgeIdx[j];
+                                edgeIdx[j] = tmp2;
+                            }
                         }
                     }
                 }
+
                 for (int i = 0; i < interCnt; ++i) {
                     vis[i + 1] = vis[i] + visChange[i];
                 }
+
                 int maxVis = -10000;
                 for (int i = 0; i <= interCnt; ++i) {
                     if (vis[i] > maxVis) {
@@ -1240,4 +1307,9 @@ void main()
             }
         }
     }
+
+
+    
+    
+
 }

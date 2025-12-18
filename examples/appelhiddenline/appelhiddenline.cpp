@@ -104,6 +104,7 @@ public:
 		alignas(4) int debug = 0;
 		//一个edge两个vertex，一个globalHeID
 		alignas(4) int globalHeID = -1;
+		alignas(4) int symUid = -1;
 
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec2 uv, int objectID) :position(position), normal(normal), uv(uv), objectID(objectID) {};
 		Vertex(Vertex* ver, int faceID) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), uniqueID(ver->uniqueID), faceID(faceID) {};
@@ -111,9 +112,9 @@ public:
 		Vertex(Vertex* ver) : position(ver->position), normal(ver->normal), faceNor(ver->faceNor), symFaceNor(ver->symFaceNor), uv(ver->uv), objectID(ver->objectID), faceID(ver->faceID), border(ver->border), uniqueID(ver->uniqueID) {};
 		Vertex(glm::vec3 position, int debug) :position(position), debug(debug) {};
 		Vertex(glm::vec3 position, glm::vec3 normal, glm::vec3 faceNor, glm::vec3 symFaceNor,
-			glm::vec2 uv, int objectID, int faceID, int border, int heID, int uniqueID, int debug, int globalHeID)
+			glm::vec2 uv, int objectID, int faceID, int border, int heID, int uniqueID, int debug, int globalHeID, int symUid)
 			:position(position), normal(normal), faceNor(faceNor), symFaceNor(symFaceNor), uv(uv), objectID(objectID),
-			faceID(faceID), border(border), heID(heID), uniqueID(uniqueID), debug(debug), globalHeID(globalHeID)
+			faceID(faceID), border(border), heID(heID), uniqueID(uniqueID), debug(debug), globalHeID(globalHeID), symUid(symUid)
 		{};
 		
 		bool operator==(const Vertex& other) const {
@@ -685,18 +686,18 @@ public:
 			vertices2Data.clear();
 			for (auto& v : occCompound.mesh.vertices1) {
 				vertices2Data.push_back(Vertex(v.pos, v.nor, v.faceNor, v.symFaceNor,
-					v.uv, v.objID, v.faceID, v.border, v.heID, v.uniqueID, v.debug, v.globalHeID));
+					v.uv, v.objID, v.faceID, v.border, v.heID, v.uniqueID, v.debug, v.globalHeID, v.symUid));
 			}
 			edgeVert.clear();
 			for (auto& v : occCompound.mesh.vertices2) {
 				edgeVert.push_back(Vertex(v.pos, v.nor, v.faceNor, v.symFaceNor,
-					v.uv, v.objID, v.faceID, v.border, v.heID, v.uniqueID, v.debug, v.globalHeID));
+					v.uv, v.objID, v.faceID, v.border, v.heID, v.uniqueID, v.debug, v.globalHeID, v.symUid));
 			}
 			origEdgeVertSize = edgeVert.size();
-			int extraSize = 40000;
+			int extraSize = edgeVert.size() + edgeVert.size() / 2;
 			for (int i = 0; i < extraSize; ++i) {
 				edgeVert.push_back(Vertex(glm::vec3(0), glm::vec3(0), glm::vec3(0), glm::vec3(0),
-					glm::vec2(0), -1, -1, -1, -1, -1, 0, origEdgeVertSize + i));
+					glm::vec2(0), -1, -1, -1, -1, -1, 0, origEdgeVertSize + i, -1));
 			}
 			for (int i = 0; i < extraSize; ++i) {
 				edgeIdx.push_back(edgeIdx.size());
@@ -1391,10 +1392,13 @@ public:
 		int max_neighbor_cnt = MAX_NEIGHBOR_FACE_COUNT;
 		float screenHalfLengthX;
 		float screenHalfLengthY;
-
+	};
+	struct Compute2PushValue {
+		int objNum;
 	};
 	Mesh mesh;
 	PushValue pushVal{};
+	Compute2PushValue pushValComp2{};
 	//
 	//self-added
 	float fov = 60.f;
@@ -1413,7 +1417,8 @@ public:
 	bool vectorize = false;
 	int savePicCnt = 0;
 	int scaleCnt = scale * scale;
-	
+	static const int MAX_VER_CNT = 200;
+	static const int MAX_SIL_LINK_CNT = 4;
 
 	struct {
 		struct {
@@ -1500,9 +1505,16 @@ public:
 		vks::Buffer edgeList{ VK_NULL_HANDLE };
 		vks::Buffer edgeAABB{ VK_NULL_HANDLE };
 		vks::Buffer edgeSuccessCnt{ VK_NULL_HANDLE };
-		vks::Buffer compute1{ VK_NULL_HANDLE };
-		vks::Buffer compute2{ VK_NULL_HANDLE };
 		vks::Buffer bEdgesSE{ VK_NULL_HANDLE };
+		vks::Buffer bEdgeSymObjs{ VK_NULL_HANDLE };
+		//记录每一个obj的sLink数，该obj内起点(obj内从0开始)，该obj内终点
+		//2(2个sLink), 0, 2(第一个sLink的interval), 2, 10(第二个sLink的interval),..., 0(下一个obj),...
+		//每一个obj占(MAX_SIL_LINK_CNT * 2 + 1)个位置。
+		vks::Buffer sLinkIntervals{ VK_NULL_HANDLE };
+		//sLinkIntervals对应到sEdgeIds上
+		//每一个obj占(MAX_SIL_LINK_CNT * MAX_VER_CNT * 2)个位置。
+		vks::Buffer sEdgeIds{ VK_NULL_HANDLE };
+		vks::Buffer sEdgeOris{ VK_NULL_HANDLE };
 	}storageBuffers;
 
 	struct {
@@ -2020,7 +2032,7 @@ public:
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
@@ -2043,6 +2055,14 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
 			// Binding 7 :
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
+			// Binding 8 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 8),
+			// Binding 9 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 9),
+			// Binding 10 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 10),
+			// Binding 11:
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 11),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute1));
@@ -2056,7 +2076,13 @@ public:
 			// Binding 3 :
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
 			// Binding 4 :
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
+			// Binding 5 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
+			// Binding 6 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
+			// Binding 7 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
 		};
 		descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute2));
@@ -2125,6 +2151,30 @@ public:
 				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				7,
 				&storageBuffers.bEdgesSE.descriptor),
+			// Binding 8
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				8,
+				&storageBuffers.sLinkIntervals.descriptor),
+			// Binding 9
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				9,
+				&storageBuffers.sEdgeIds.descriptor),
+			// Binding 10
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				10,
+				&storageBuffers.bEdgeSymObjs.descriptor),
+			// Binding 11
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				11,
+				&storageBuffers.sEdgeOris.descriptor),
 		};
 		
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
@@ -2160,6 +2210,24 @@ public:
 				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				4,
 				&storageBuffers.edgeAABB.descriptor),
+			// Binding 5 :
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				5,
+				&storageBuffers.sLinkIntervals.descriptor),
+			// Binding 6 :
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				6,
+				&storageBuffers.sEdgeIds.descriptor),
+				// Binding 7 :
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				7,
+				&storageBuffers.sEdgeOris.descriptor)
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 	}
@@ -2176,12 +2244,12 @@ public:
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.edgeCnt,
-			sizeof(uint32_t)));
+			sizeof(uint32_t) * mesh.occCompound.faces.size()));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.edgeList,
-			mesh.edgeIdx.size() * sizeof(int32_t) / 2));
+			sizeof(uint32_t) * mesh.occCompound.faces.size() * MAX_VER_CNT * MAX_SIL_LINK_CNT));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -2191,19 +2259,39 @@ public:
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.edgeSuccessCnt,
-			sizeof(uint32_t)));
+			sizeof(int32_t)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.bEdgesSE,
 			mesh.occCompound.mesh.bEdgesSE.size() * sizeof(int)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.bEdgeSymObjs,
+			mesh.occCompound.mesh.bEdgeSymObjs.size() * sizeof(int)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.sLinkIntervals,
+			sizeof(int32_t) * mesh.occCompound.faces.size() * (MAX_SIL_LINK_CNT * 2 + 1)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.sEdgeIds,
+			sizeof(int32_t) * mesh.occCompound.faces.size() * MAX_SIL_LINK_CNT * MAX_VER_CNT * 2));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.sEdgeOris,
+			sizeof(int32_t) * mesh.occCompound.faces.size() * MAX_SIL_LINK_CNT * MAX_VER_CNT));
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
 		struct StagingBuffer {
 			VkBuffer buffer;
 			VkDeviceMemory memory;
-		} bEdgesSEStaging;
+		} bEdgesSEStaging, bEdgeSymObjsStaging;
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -2211,10 +2299,19 @@ public:
 			&bEdgesSEStaging.buffer,
 			&bEdgesSEStaging.memory,
 			mesh.occCompound.mesh.bEdgesSE.data()));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			mesh.occCompound.mesh.bEdgeSymObjs.size() * sizeof(int),
+			&bEdgeSymObjsStaging.buffer,
+			&bEdgeSymObjsStaging.memory,
+			mesh.occCompound.mesh.bEdgeSymObjs.data()));
 		VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		VkBufferCopy copyRegion = {};
 		copyRegion.size = mesh.occCompound.mesh.bEdgesSE.size() * sizeof(int);
 		vkCmdCopyBuffer(copyCmd, bEdgesSEStaging.buffer, storageBuffers.bEdgesSE.buffer, 1, &copyRegion);
+		copyRegion.size = mesh.occCompound.mesh.bEdgeSymObjs.size() * sizeof(int);
+		vkCmdCopyBuffer(copyCmd, bEdgeSymObjsStaging.buffer, storageBuffers.bEdgeSymObjs.buffer, 1, &copyRegion);
 		vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
 
 		
@@ -2621,10 +2718,8 @@ public:
 		{
 			std::vector<VkBuffer> acBuffers = {
 				mesh.edgeVertBuffer.buffer,
-				storageBuffers.edgeCnt.buffer,
 				storageBuffers.edgeList.buffer,
 				storageBuffers.edgeAABB.buffer,
-				storageBuffers.edgeSuccessCnt.buffer
 			};
 			vks::Buffer::acquireBuffers(
 				edgeCmdBuffer,
@@ -2633,6 +2728,21 @@ public:
 				graphics.queueFamilyIndex,
 				VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
 				VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+				sameFamily
+			);
+			//edgeCnt需要被vkCmdFillBuffer，所以需要不同的dstStage和dstAccess
+			//由于vkCmdFillBuffer是在该command buffer提交的queue上执行的，
+			//所以执行vkCmdFillBuffer前，必须转移好。
+			std::vector<VkBuffer> acBuffers2 = {
+				storageBuffers.edgeCnt.buffer
+			};
+			vks::Buffer::acquireBuffers(
+				edgeCmdBuffer,
+				acBuffers2,
+				compute.queueFamilyIndex,
+				graphics.queueFamilyIndex,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
 				sameFamily
 			);
 		}
@@ -2672,7 +2782,6 @@ public:
 				storageBuffers.edgeCnt.buffer,
 				storageBuffers.edgeList.buffer,
 				storageBuffers.edgeAABB.buffer,
-				storageBuffers.edgeSuccessCnt.buffer
 			};
 			vks::Buffer::releaseBuffers(
 				edgeCmdBuffer,
@@ -2777,7 +2886,7 @@ public:
 		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer2));
 	}
 
-	void buildLockedEdgeCommandBuffer() {
+	void buildLockedEdgeCommandBuffer(int offset) {
 		if (lockedEdgeCmdBuffer == VK_NULL_HANDLE) {
 			lockedEdgeCmdBuffer = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
 		}
@@ -2818,7 +2927,7 @@ public:
 		//这行没有，但是vertex shader 里访问了一个 layout(location=...) in ... 的顶点输入
 		//所以必须要绑定一个vertex buffer
 		mesh.bindLineBuffers(lockedEdgeCmdBuffer);
-		vkCmdDraw(lockedEdgeCmdBuffer, 0, 1, 0, 0);
+		vkCmdDrawIndexed(lockedEdgeCmdBuffer, mesh.edgeIdx.size(), 1, offset, 0, 0);
 
 		vkCmdEndRenderPass(lockedEdgeCmdBuffer);
 
@@ -2849,7 +2958,6 @@ public:
 				storageBuffers.edgeCnt.buffer,
 				storageBuffers.edgeList.buffer,
 				storageBuffers.edgeAABB.buffer,
-				storageBuffers.edgeSuccessCnt.buffer
 			};
 			std::vector<VkBufferMemoryBarrier2> acBarriers(acBuffers.size());
 			vks::Buffer::acquireBuffers(
@@ -2861,9 +2969,28 @@ public:
 				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
 				sameFamily
 			);
+			//将edgeSuccessCnt清零
+			std::vector<VkBuffer> buffers = { storageBuffers.edgeSuccessCnt.buffer };
+			vkCmdFillBuffer(edgeCmdBuffer, storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+			vks::Buffer::bufferBarrier(
+				edgeCmdBuffer,
+				buffers,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
+			);
 		}
 
 		vkCmdBindPipeline(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute1);
+		vkCmdPushConstants(
+			computeCmdBuffer,
+			pipelineLayoutCompute1,
+			VK_SHADER_STAGE_COMPUTE_BIT,  // 要匹配 shader 使用阶段
+			0,
+			sizeof(Compute2PushValue),
+			&pushValComp2                // 实际数据
+		);
 		vkCmdBindDescriptorSets(computeCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute1, 0, 1, &descriptorSets.compute1, 0, 0);
 		//vkCmdDispatch(computeCmdBuffer, (3840 * 2160) * 16 / 64, 1, 1);
 		vkCmdDispatch(computeCmdBuffer, ((mesh.occCompound.mesh.bEdgesSE.size() / 2) / 64) + 1, 1, 1);
@@ -2873,7 +3000,6 @@ public:
 				storageBuffers.edgeCnt.buffer,
 				storageBuffers.edgeList.buffer,
 				storageBuffers.edgeAABB.buffer,
-				storageBuffers.edgeSuccessCnt.buffer
 			};
 			vks::Buffer::releaseBuffers(
 				computeCmdBuffer,
@@ -2885,7 +3011,6 @@ public:
 				sameFamily
 			);
 		}
-
 		vkEndCommandBuffer(computeCmdBuffer);
 
 
@@ -2902,7 +3027,6 @@ public:
 				storageBuffers.edgeCnt.buffer,
 				storageBuffers.edgeList.buffer,
 				storageBuffers.edgeAABB.buffer,
-				storageBuffers.edgeSuccessCnt.buffer
 			};
 			std::vector<VkBufferMemoryBarrier2> acBarriers(acBuffers.size());
 			vks::Buffer::acquireBuffers(
@@ -2916,6 +3040,14 @@ public:
 			);
 		}
 		vkCmdBindPipeline(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute2);
+		vkCmdPushConstants(
+			computeCmdBuffer2,
+			pipelineLayoutCompute2,
+			VK_SHADER_STAGE_COMPUTE_BIT,  // 要匹配 shader 使用阶段
+			0,
+			sizeof(Compute2PushValue),
+			&pushValComp2                // 实际数据
+		);
 		vkCmdBindDescriptorSets(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute2, 0, 1, &descriptorSets.compute2, 0, 0);
 		vkCmdDispatch(computeCmdBuffer2, ((mesh.edgeVert.size() / 2) / 64) + 1, 1, 1);
 		{
@@ -2924,7 +3056,6 @@ public:
 				storageBuffers.edgeCnt.buffer,
 				storageBuffers.edgeList.buffer,
 				storageBuffers.edgeAABB.buffer,
-				storageBuffers.edgeSuccessCnt.buffer
 			};
 			vks::Buffer::releaseBuffers(
 				computeCmdBuffer2,
@@ -2934,6 +3065,21 @@ public:
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 				VK_ACCESS_SHADER_WRITE_BIT,
 				sameFamily
+			);
+			//现在的compute shader往bBuffers写完数据后，
+			//下一个compute shader才可以读取bBuffer数据
+			std::vector<VkBuffer> bBuffers = {
+				storageBuffers.sLinkIntervals.buffer,
+				storageBuffers.sEdgeIds.buffer,
+				storageBuffers.sEdgeOris.buffer,
+			};
+			vks::Buffer::bufferBarrier(
+				computeCmdBuffer2,
+				bBuffers,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				VK_ACCESS_SHADER_WRITE_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				VK_ACCESS_SHADER_READ_BIT
 			);
 		}
 		vkEndCommandBuffer(computeCmdBuffer2);
@@ -2989,7 +3135,8 @@ public:
 
 		
 		mesh.create(indexBuffers, vertexBuffers, vulkanDevice, queue);
-		
+		pushValComp2.objNum = mesh.occCompound.faces.size();
+
 		mesh.aabbSceneMin = glm::vec3(std::numeric_limits<float>::max());
 		mesh.aabbSceneMax = glm::vec3(-std::numeric_limits<float>::max());
 		for (auto& v : mesh.occCompound.mesh.vertices1) {
@@ -3371,12 +3518,18 @@ public:
 
 
 		pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayoutCompute1, 1);
+		pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_COMPUTE_BIT, sizeof(Compute2PushValue), 0);
+		pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+		pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayoutCompute1));
 		VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayoutCompute1, 0);
 		computePipelineCreateInfo.stage = loadShader(getShadersPath() + "appelhiddenline/edgespacing.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
 		VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.compute1));
 
 		pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayoutCompute2, 1);
+		pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_COMPUTE_BIT, sizeof(Compute2PushValue), 0);
+		pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+		pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayoutCompute2));
 		computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayoutCompute2, 0);
 		computePipelineCreateInfo.stage = loadShader(getShadersPath() + "appelhiddenline/edgecleaning.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
@@ -3782,7 +3935,7 @@ public:
 		buildDeferredCommandBuffer();
 		buildEdgeCommandBuffer();
 		buildEdgeCommandBuffer2();
-		buildLockedEdgeCommandBuffer();
+		buildLockedEdgeCommandBuffer(mesh.origEdgeVertSize);
 		buildComputeCommandBuffer();
 		//debug时打印出image的handle
 		printf("Create image handle = %p\n", (void*)offScreenFrameBuf.position.image);
@@ -3846,17 +3999,28 @@ public:
 			vkDeviceWaitIdle(device);*/
 		}
 
+		//locked Edge rendering
+		waitStageMask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+		submitInfo.pWaitSemaphores = (vectorize ? &compute1Semaphore : &offscreenSemaphore);
+		submitInfo.pWaitDstStageMask = &waitStageMask;
+		// Signal ready with render complete semaphore
+		submitInfo.pSignalSemaphores = &lockedEdgeSemaphore;
+		// Submit work
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &lockedEdgeCmdBuffer;
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+
 		// Edge rendering
 		// Wait for offscreen semaphore
 			//“每个等待信号量（wait semaphore）解除等待后，可以开始执行的最早的管线阶段（pipeline stage）。”
 		waitStageMask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
 		VkPipelineStageFlags waitStageMask2 = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
 			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-		submitInfo.pWaitSemaphores = (vectorize ? &compute1Semaphore : &offscreenSemaphore);
+		submitInfo.pWaitSemaphores = &lockedEdgeSemaphore;
 		submitInfo.pSignalSemaphores = &edgeSemaphore;
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pWaitDstStageMask = (vectorize ? &waitStageMask : &waitStageMask2);
-		if (savePicCnt >= (scaleCnt + 1)) {
+		if (savePicCnt == (scaleCnt + 1)) {
 			submitInfo.pCommandBuffers = &edgeCmdBuffer;
 		}
 		else {
@@ -3943,14 +4107,6 @@ public:
 				savePic = false;
 			}
 		}
-
-		//submitInfo.pWaitSemaphores = &edgeSemaphore;
-		//// Signal ready with render complete semaphore
-		//submitInfo.pSignalSemaphores = &semaphores.renderComplete;
-		//// Submit work
-		//submitInfo.pCommandBuffers = &lockedEdgeCmdBuffer;
-		//VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
-
 
 		// Scene rendering
 		// Wait for offscreen semaphore

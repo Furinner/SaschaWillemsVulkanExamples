@@ -1,62 +1,86 @@
 #include "mesh.h"
 
 
-Vertex::Vertex(glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor)
-    :pos(pos), nor(nor), uv(uv), objID(objID), faceID(faceID), faceNor(faceNor)
+Vertex::Vertex(glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor, int uniqueID)
+    :pos(pos), nor(nor), uv(uv), objID(objID), faceID(faceID), faceNor(faceNor), uniqueID(uniqueID)
 {}
 
 OCCEdge::OCCEdge(int id, TopoDS_Edge edge, int faceID) 
 	:id(id), edge(edge), faceID(faceID)
 {}
 
+static float cross2D(glm::vec2 a, glm::vec2 b)
+{
+    return a.x * b.y - a.y * b.x;
+}
+
+static bool segmentsIntersect(glm::vec2 p1, glm::vec2 p2,
+    glm::vec2 q1, glm::vec2 q2)
+{
+
+    glm::vec2 r = p2 - p1;
+    glm::vec2 s = q2 - q1;
+
+    const float EPS = 1e-8 * (glm::length(r) * glm::length(s) + 1.0f);
+
+    float rxs = cross2D(r, s);
+    float q_p_x_r = cross2D(q1 - p1, r);
+
+    // 默认输出先设成 0
+    glm::vec2 intersection = glm::vec2(0.0);
+
+    // 共线
+    if (abs(rxs) < EPS && abs(q_p_x_r) < EPS)
+    {
+        return false;
+        // 这里“交点”不唯一，可以根据需要返回某种代表值
+        // 例如返回 q1，或者重叠区间中点，这里简单返回 q1
+        intersection = q1;
+        // 用上面同样的重叠判定
+        float r2 = dot(r, r);
+        if (r2 < EPS) {
+            return length(q1 - p1) < EPS || length(q2 - p1) < EPS;
+        }
+        float t0 = dot(q1 - p1, r) / r2;
+        float t1 = dot(q2 - p1, r) / r2;
+        if (t0 > t1) {
+            float tmp = t0;
+            t0 = t1;
+            t1 = tmp;
+        }
+        return t0 <= 1.0 + EPS && t1 >= 0.0 - EPS;
+    }
+
+    // 平行不共线
+    if (abs(rxs) < EPS && abs(q_p_x_r) >= EPS)
+    {
+        return false;
+    }
+
+    // 一般情况
+    float t = cross2D(q1 - p1, s) / rxs;
+    float u = cross2D(q1 - p1, r) / rxs;
+
+    if (t >= 0.0 && t <= 1.0 &&
+        u >= 0.0 && u <= 1.0)
+    {
+        // 只要相交，就用 t 算出交点
+        //intersection = p1 + t * r;
+        intersection = glm::vec2(t, u);
+        return true;
+    }
+
+    return false;
+}
 
 void OCCCompound::read(const std::string& filename) {
 
-    {
-        int debug = 0;
-        debug = debug;
-        float ts[10] = { 0.3, 0.2, 0.1, 0.01, 0.5, 0.9, 0.7, 0.3, 0.9, 0.1 };
-        int visChange[10] = { 1, 1, 1, 1, -1, -1, -1, 1, 1, 1 };
-		int edgeIdx[10] = { 3, 3, 3, 8, 8, 8, 12, 13, 19, 19 };
-        int interCnt = 10;
-        int vis[11];
-        for (int i = 0; i <= interCnt; ++i) {
-            vis[i] = 0;
-        }
-        for (int i = 0; i <= interCnt; ++i) {
-            for (int j = i + 1; j < interCnt; ++j) {
-                if (edgeIdx[j] > edgeIdx[i]) {
-                    continue;
-                }
-                if (ts[j] < ts[i]) {
-                    // 交换 ts
-                    float tmp = ts[i];
-                    ts[i] = ts[j];
-                    ts[j] = tmp;
 
-                    // 交换 visChange
-                    int tmp2 = visChange[i];
-                    visChange[i] = visChange[j];
-                    visChange[j] = tmp2;
-                }
-            }
-        }
-
-        for (int i = 0; i < interCnt; ++i) {
-            vis[i + 1] = vis[i] + visChange[i];
-        }
-        //最高降低到0
-        int maxVis = -100;
-        for (int i = 0; i <= interCnt; ++i) {
-            if (vis[i] > maxVis) {
-                maxVis = vis[i];
-            }
-        }
-        for (int i = 0; i <= interCnt; ++i) {
-            vis[i] -= maxVis;
-        }
-        debug = debug;
-    }
+	glm::vec2 mainPos1 = glm::vec2(-0.539289f, 0.95730233f);
+	glm::vec2 mainPos2 = glm::vec2(-0.53834945f, 0.95579576f);
+    glm::vec2 currPos1 = glm::vec2(-0.53849548f, 0.95606822f);
+    glm::vec2 currPos2 = glm::vec2(-0.53954238f, 0.95729131f);
+    segmentsIntersect(mainPos1, mainPos2, currPos1, currPos2);
 
     const char* filenameTmp = filename.c_str();
     STEPControl_Reader reader;
@@ -113,11 +137,14 @@ void OCCCompound::read(const std::string& filename) {
         for (auto& be : baseEdges) {
             if (be.size() == 2) {
                 bEdges[be[0]].sym = be[1];
+				bEdges[be[0]].symFaceID = bEdges[be[1]].faceID;
                 bEdges[be[1]].sym = be[0];
+				bEdges[be[1]].symFaceID = bEdges[be[0]].faceID;
             }
         }
     }
 
+	//进行三角化
     BRepMesh_IncrementalMesh mesher(shape, deflection, Standard_True, angle);
 
     //helper function。用于从重复的he中选出一条he进行渲染。
@@ -189,6 +216,8 @@ void OCCCompound::read(const std::string& filename) {
             std::unordered_map<std::string, int> boundaryHEIdx;
             //按照edge顺序记录该face的mesh中的边界边，在该face三角化中的normal
             std::vector<std::vector<glm::vec3>> keyNors;
+            //按照edge顺序记录该face的mesh中的边界边，在该face三角化中的uid
+            std::vector<std::vector<int>> keyUids;
             //通过该face三角化中的key，找到对应keyNorsTemp
             //(key, <edges Id, 在该edge上的第几个>)
             //(n1+n2, <edges Id, keyNorsTemp Idx>), ....
@@ -198,6 +227,7 @@ void OCCCompound::read(const std::string& filename) {
             std::vector<std::vector<int>> bEdgesIdx;
             for (int i = faceEdgeCnt[faceID]; i < faceEdgeCnt[faceID + 1]; ++i) {
                 bool shouldLoad = true;
+                std::vector<int> keyUidsTemp;
                 std::vector<glm::vec3> keyNorsTemp;
                 std::vector<int> bEdgesIdxTemp;
                 //如果该边界edge有sym，渲染id小的那一个
@@ -228,12 +258,14 @@ void OCCCompound::read(const std::string& filename) {
                         std::string key = std::to_string(n1) + "#" + std::to_string(n2);
                         keyToKeyNorsIdx[key] = std::make_pair<int, int>(i - faceEdgeCnt[faceID], keyNorsTemp.size());
                         keyNorsTemp.push_back(glm::vec3(0));
+						keyUidsTemp.push_back(n1);
+                        keyUidsTemp.push_back(n2);
 
                         if (shouldLoad) {
                             boundaryHEIdx[key] = mesh.indices2.size();
                             bEdgesIdxTemp.push_back(mesh.indices2.size());
-                            mesh.vertices2.push_back(Vertex(positions[n1], glm::vec4(0), uvs[n1], faceID, i - 1, glm::vec4(0)));
-                            mesh.vertices2.push_back(Vertex(positions[n2], glm::vec4(0), uvs[n2], faceID, i - 1, glm::vec4(0)));
+                            mesh.vertices2.push_back(Vertex(positions[n1], glm::vec4(0), uvs[n1], faceID, i - 1, glm::vec4(0), n1));
+                            mesh.vertices2.push_back(Vertex(positions[n2], glm::vec4(0), uvs[n2], faceID, i - 1, glm::vec4(0), n2));
                             mesh.indices2.push_back(mesh.indices2.size());
                             mesh.indices2.push_back(mesh.indices2.size());
                         }
@@ -254,11 +286,14 @@ void OCCCompound::read(const std::string& filename) {
                         std::string key = std::to_string(n1) + "#" + std::to_string(n2);
                         keyToKeyNorsIdx[key] = std::make_pair<int, int>(i - faceEdgeCnt[faceID], keyNorsTemp.size());
                         keyNorsTemp.push_back(glm::vec3(0));
+                        keyUidsTemp.push_back(n1);
+                        keyUidsTemp.push_back(n2);
+
                         if (shouldLoad) {
                             boundaryHEIdx[key] = mesh.indices2.size();
                             bEdgesIdxTemp.push_back(mesh.indices2.size());
-                            mesh.vertices2.push_back(Vertex(positions[n1], glm::vec4(0), uvs[n1], faceID, i - 1, glm::vec4(0)));
-                            mesh.vertices2.push_back(Vertex(positions[n2], glm::vec4(0), uvs[n2], faceID, i - 1, glm::vec4(0)));
+                            mesh.vertices2.push_back(Vertex(positions[n1], glm::vec4(0), uvs[n1], faceID, i - 1, glm::vec4(0), n1));
+                            mesh.vertices2.push_back(Vertex(positions[n2], glm::vec4(0), uvs[n2], faceID, i - 1, glm::vec4(0), n2));
                             mesh.indices2.push_back(mesh.indices2.size());
                             mesh.indices2.push_back(mesh.indices2.size());
                         }
@@ -270,6 +305,7 @@ void OCCCompound::read(const std::string& filename) {
                 }
                 int currBEdgeSE2 = mesh.indices2.size();
                 keyNors.push_back(keyNorsTemp);
+				keyUids.push_back(keyUidsTemp);
                 bEdgesIdx.push_back(bEdgesIdxTemp);
                 if (currBEdgeSE1 == currBEdgeSE2) {
                     continue;
@@ -277,6 +313,7 @@ void OCCCompound::read(const std::string& filename) {
                 else {
                     mesh.bEdgesSE.push_back(currBEdgeSE1);
                     mesh.bEdgesSE.push_back(currBEdgeSE2);
+                    mesh.bEdgeSymObjs.push_back(bEdges[i].symFaceID);
                 }
             }
 
@@ -297,27 +334,27 @@ void OCCCompound::read(const std::string& filename) {
                     glm::vec3 v1 = positions[n2] - positions[n1];
                     glm::vec3 v2 = positions[n3] - positions[n1];
                     glm::vec4 normal = glm::vec4(glm::normalize(glm::cross(v1, v2)), 0);
-                    mesh.vertices1.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal));
-                    mesh.vertices1.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal));
-                    mesh.vertices1.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal));
+                    mesh.vertices1.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal, n1));
+                    mesh.vertices1.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal, n2));
+                    mesh.vertices1.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal, n3));
                     mesh.indices1.push_back(mesh.indices1.size());
                     mesh.indices1.push_back(mesh.indices1.size());
                     mesh.indices1.push_back(mesh.indices1.size());
                     if (chooseHe(n1, n2, boundaryHEIdx, symHE, normal, mesh.vertices2, mesh.indices2, keyNors, keyToKeyNorsIdx)) {
-                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal));
-                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal));
+                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal, n1));
+                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal, n2));
                         mesh.indices2.push_back(mesh.indices2.size());
                         mesh.indices2.push_back(mesh.indices2.size());
                     }
                     if (chooseHe(n2, n3, boundaryHEIdx, symHE, normal, mesh.vertices2, mesh.indices2, keyNors, keyToKeyNorsIdx)) {
-                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal));
-                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal));
+                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal, n2));
+                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal, n3));
                         mesh.indices2.push_back(mesh.indices2.size());
                         mesh.indices2.push_back(mesh.indices2.size());
                     }
                     if (chooseHe(n3, n1, boundaryHEIdx, symHE, normal, mesh.vertices2, mesh.indices2, keyNors, keyToKeyNorsIdx)) {
-                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal));
-                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal));
+                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal, n3));
+                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal, n1));
                         mesh.indices2.push_back(mesh.indices2.size());
                         mesh.indices2.push_back(mesh.indices2.size());
                     }
@@ -334,27 +371,27 @@ void OCCCompound::read(const std::string& filename) {
                     glm::vec3 v1 = positions[n2] - positions[n1];
                     glm::vec3 v2 = positions[n3] - positions[n1];
                     glm::vec4 normal = glm::vec4(glm::normalize(glm::cross(v1, v2)), 0);
-                    mesh.vertices1.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal));
-                    mesh.vertices1.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal));
-                    mesh.vertices1.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal));
+                    mesh.vertices1.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal, n1));
+                    mesh.vertices1.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal, n2));
+                    mesh.vertices1.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal, n3));
                     mesh.indices1.push_back(mesh.indices1.size());
                     mesh.indices1.push_back(mesh.indices1.size());
                     mesh.indices1.push_back(mesh.indices1.size());
                     if (chooseHe(n1, n2, boundaryHEIdx, symHE, normal, mesh.vertices2, mesh.indices2, keyNors, keyToKeyNorsIdx)) {
-                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal));
-                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal));
+                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal, n1));
+                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal, n2));
                         mesh.indices2.push_back(mesh.indices2.size());
                         mesh.indices2.push_back(mesh.indices2.size());
                     }
                     if (chooseHe(n2, n3, boundaryHEIdx, symHE, normal, mesh.vertices2, mesh.indices2, keyNors, keyToKeyNorsIdx)) {
-                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal));
-                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal));
+                        mesh.vertices2.push_back(Vertex(positions[n2], normal, uvs[n2], faceID, i - 1, normal, n2));
+                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal, n3));
                         mesh.indices2.push_back(mesh.indices2.size());
                         mesh.indices2.push_back(mesh.indices2.size());
                     }
                     if (chooseHe(n3, n1, boundaryHEIdx, symHE, normal, mesh.vertices2, mesh.indices2, keyNors, keyToKeyNorsIdx)) {
-                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal));
-                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal));
+                        mesh.vertices2.push_back(Vertex(positions[n3], normal, uvs[n3], faceID, i - 1, normal, n3));
+                        mesh.vertices2.push_back(Vertex(positions[n1], normal, uvs[n1], faceID, i - 1, normal, n1));
                         mesh.indices2.push_back(mesh.indices2.size());
                         mesh.indices2.push_back(mesh.indices2.size());
                     }
@@ -363,6 +400,7 @@ void OCCCompound::read(const std::string& filename) {
             }
             
             bEdgesNor.insert(bEdgesNor.end(), keyNors.begin(), keyNors.end());
+			bEdgeUids.insert(bEdgeUids.end(), keyUids.begin(), keyUids.end());
             this->bEdgesIdx.insert(this->bEdgesIdx.end(), bEdgesIdx.begin(), bEdgesIdx.end());
         }
 
@@ -374,10 +412,14 @@ void OCCCompound::read(const std::string& filename) {
                     //这个存储着vertices2里的id，如果不为-1，说明是要渲染的bEdge
                     if (bEdgesIdx[edgeId][i] != -1) {
                         glm::vec3 symNor = bEdgesNor[sym][bEdgesNor[sym].size() - 1 - i];
+                        int symn1 = bEdgeUids[sym][bEdgeUids[sym].size() - 1 - i * 2];
+                        int symn2 = bEdgeUids[sym][bEdgeUids[sym].size() - 1 - i * 2 - 1];
                         mesh.vertices2[bEdgesIdx[edgeId][i]].symFaceNor = symNor;
                         mesh.vertices2[bEdgesIdx[edgeId][i] + 1].symFaceNor = symNor;
                         mesh.vertices2[bEdgesIdx[edgeId][i]].border = 1;
                         mesh.vertices2[bEdgesIdx[edgeId][i] + 1].border = 1;
+                        mesh.vertices2[bEdgesIdx[edgeId][i]].symUid = symn1;
+                        mesh.vertices2[bEdgesIdx[edgeId][i] + 1].symUid = symn2;
                     }
                 }
             }

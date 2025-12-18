@@ -3,10 +3,16 @@
 #define SCALECNT 16
 //compute1
 
-const int MAX_INTER = 50;
-const int MAX_BEDGES = 500; //一个bSeg最多由多少bEdges组成
+const int MAX_INTER = 45;
+const int MAX_BEDGES = 400; //一个bSeg最多由多少bEdges组成
+
+
 const int IMG_WIDTH = 3840;
 const int IMG_HEIGHT = 2160;
+
+const int MAX_VER_CNT = 200;
+const int MAX_SIL_LINK_CNT = 4;
+
 
 struct Vertex{
     vec3 position;
@@ -21,6 +27,11 @@ struct Vertex{
     int uniqueID;
     int debug;
     int globalHeID;  //v1和v2一样，乘以2就变成了vertices2中的idx
+    int symUid;  //只有有sym的bEdge有值，其他都是-1
+};
+
+layout(push_constant) uniform PushConsts {
+	int objNum; 
 };
 
 layout (set = 0, binding = 0) uniform isampler2D scaleSamples[SCALECNT]; // 定长数组
@@ -69,6 +80,26 @@ layout (set = 0, binding = 7) buffer SBO5
    //he1 startIdx, he1 endIdx, he2 startIdx, he2 endIdx,...
    //有可能startIdx == endIdx，即没有edge，这个要自己判断
    int bEdgesSE[];
+};
+
+layout (set = 0, binding = 8) buffer SBO6
+{
+    int sLinkIntervals[];
+};
+
+layout (set = 0, binding = 9) buffer SBO7
+{
+    int sEdgeIdxs[];
+};
+
+layout (set = 0, binding = 10) buffer SBO8
+{
+	int bEdgeSymObjs[];
+};
+
+layout (set = 0, binding = 11) buffer SBO9
+{
+	int sEdgeOris[];
 };
 
 const float FLOAT_MAX = 3.402823466e+38;
@@ -359,10 +390,12 @@ bool segmentsIntersect(vec2 p1, vec2 p2,
                        vec2 q1, vec2 q2,
                        out vec2 intersection)
 {
-    const float EPS = 1e-6;
+
 
     vec2 r = p2 - p1;
     vec2 s = q2 - q1;
+    //相对阈值
+    const float EPS = 1e-8 * (length(r) * length(s) + 1.0f);
 
     float rxs     = cross2D(r, s);
     float q_p_x_r = cross2D(q1 - p1, r);
@@ -414,11 +447,225 @@ bool segmentsIntersect(vec2 p1, vec2 p2,
     return false;
 }
 
-void findIntersection(int i, int k, out int visChange[MAX_INTER], inout int interCnt, 
-    out float ts[MAX_INTER], out int edgeIdx[MAX_INTER], int edgeCnt,
-    out int debugFB[MAX_INTER]){
+bool sFindIntersectionB(int idx1, int idx2, int k, out int visChange, out float t){
+    float u;
+    vec2 intersection;
+    int visChangeVal = 1; //根据edge不同，vis变化也不同
 
-    float t;
+    vec4 mainPos1View = ubo.view * vec4(vertices[idx1].position,1);
+    vec4 mainPos2View = ubo.view * vec4(vertices[idx2].position,1);
+    vec4 mainPos1 = ubo.proj * mainPos1View;
+    vec4 mainPos2 = ubo.proj * mainPos2View;
+
+    vec4 currPos1View = ubo.view * vec4(vertices[k].position, 1);
+    vec4 currPos2View = ubo.view * vec4(vertices[k+1].position, 1);
+    vec4 currPos1 = ubo.proj * currPos1View;
+    vec4 currPos2 = ubo.proj * currPos2View;
+    
+    vec3 fn = mat3(ubo.view) * vertices[k].faceNor;
+    vec3 sfn = mat3(ubo.view) * vertices[k].symFaceNor;
+    //true为正面，false为反面
+    bool currFaceOri = fn.z > 0.0;
+    //true表示用了symFace，false表示还是该face
+    bool currFaceSym = false;
+
+    //有sym的bEdge
+    if(vertices[k].border == 1){
+        //如果两个朝向一致，则对于visibility变化无影响
+        if(fn.z * sfn.z > 0){
+            return false;
+        }
+        //如果皆为平面，不考虑
+        if(fn.z == 0 && sfn.z == 0){
+            return false;
+        }
+        //如果该面为平面，另一个面不是平面，则切换为另一个面
+        if(fn.z == 0){
+            currFaceOri = sfn.z > 0.0;
+            currFaceSym = true;
+        }
+        visChangeVal = 2;
+    }else if(vertices[k].border == 2){
+        visChangeVal = 1;
+    }
+
+    if(segmentsIntersect(mainPos1.xy, mainPos2.xy, currPos1.xy, currPos2.xy, intersection)){
+        t = intersection.x;
+        u = intersection.y;
+        if(((t > 1e-5) && (t < (1 - 1e-5))) && ((u > 1e-5) && (u < (1 - 1e-5)))){
+            float z1 = mainPos1.z * (1-t) + mainPos2.z * t;
+            float z2 = currPos1.z * (1-u) + currPos2.z * u;
+            if(z1 > z2){
+                float ee;
+                //enter or exit
+                if(currFaceSym){
+                    ee = cross2D(normalize(mainPos2.xy - mainPos1.xy), normalize(currPos1.xy - currPos2.xy));
+                }else{
+                    ee = cross2D(normalize(mainPos2.xy - mainPos1.xy), normalize(currPos2.xy - currPos1.xy));
+                }
+                if(currFaceOri){
+                    //curr面为正面
+                    if(ee < 0){
+                        //进入，可见性-1。
+                        visChange = -visChangeVal;
+                    }else{
+                        //退出，可见性+1。
+                        visChange = visChangeVal;
+                    }
+                }else{
+                    //curr面为反面
+                    if(ee > 0){
+                        visChange = -visChangeVal;
+                    }else{
+                        visChange = visChangeVal;
+                    }
+                }
+                return true;
+            }else{
+                return false;
+            }
+        }else{
+            return false;
+        }
+    }else{
+        return false;
+    }
+}
+
+bool findIntersectionSilObj(int i, int k1, int k2, bool sameObj, int silOri, out int visChange){
+    int b1;
+    int b2;
+    int s1;
+    int s2;
+    int idx1;
+    int idx2;
+    int idx3;
+    int idx4;
+
+    if(sameObj){
+        b1 = vertices[i].uniqueID;
+        b2 = vertices[i + 1].uniqueID;
+        idx1 = i;
+        idx2 = i + 1;
+        idx3 = i + 2;
+        idx4 = i + 3;
+    }else{
+        idx1 = i + 3;
+        idx2 = i + 2;
+        idx3 = i + 1;
+        idx4 = i;
+        b1 = vertices[idx1].symUid;
+        b2 = vertices[idx2].symUid;
+    }
+    s1 = vertices[k1].uniqueID;
+    s2 = vertices[k2].uniqueID;
+
+
+    vec3 negEdge;
+    vec3 posEdge;
+    if(b2 == s1){
+        //交于s1，说明从正到反
+        negEdge = normalize(mat3(ubo.view) * (vertices[idx4].position - vertices[idx3].position));
+        posEdge = normalize(mat3(ubo.view) * (vertices[idx2].position - vertices[idx1].position));
+        if(silOri == 1){
+            //正sil
+            if(cross2D(vec2(posEdge.x, posEdge.y), vec2(negEdge.x, negEdge.y)) > 0){
+                //反edge-1
+                if(sameObj){
+                    visChange = -1;
+                }else{
+                    visChange = 1;
+                }
+                return true;
+            }
+        }else if(silOri == 2){
+            //负sil
+            if(cross2D(vec2(posEdge.x, posEdge.y), vec2(negEdge.x, negEdge.y)) < 0){
+                //反edge+1
+                if(sameObj){
+                    visChange = 1;
+                }else{
+                    visChange = -1;
+                }
+                return true;
+            }
+        }
+    }else if(b2 == s2){
+        //交于s2，说明从反到正
+        posEdge = normalize(mat3(ubo.view) * (vertices[idx4].position - vertices[idx3].position));
+        negEdge = normalize(mat3(ubo.view) * (vertices[idx2].position - vertices[idx1].position));
+        if(silOri == 1){
+            //正sil
+            if(cross2D(vec2(posEdge.x, posEdge.y), vec2(negEdge.x, negEdge.y)) < 0){
+                if(sameObj){
+                    visChange = 1;
+                }else{
+                    visChange = -1;
+                }
+                return true;
+            }
+        }else if(silOri == 2){
+            //负sil
+            if(cross2D(vec2(posEdge.x, posEdge.y), vec2(negEdge.x, negEdge.y)) > 0){
+                if(sameObj){
+                    visChange = -1;
+                }else{
+                    visChange = 1;
+                }
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool findIntersectionSil(int i, int k1, int k2, out int visChange, out float t){
+    float u;
+    vec2 intersection;
+    int visChangeVal = 2; //根据edge不同，vis变化也不同
+
+    vec4 mainPos1View = ubo.view * vec4(vertices[i].position,1);
+    vec4 mainPos2View = ubo.view * vec4(vertices[i+1].position,1);
+    vec4 mainPos1 = ubo.proj * mainPos1View;
+    vec4 mainPos2 = ubo.proj * mainPos2View;
+
+    vec4 currPos1View = ubo.view * vec4(vertices[k1].position, 1);
+    vec4 currPos2View = ubo.view * vec4(vertices[k2].position, 1);
+    vec4 currPos1 = ubo.proj * currPos1View;
+    vec4 currPos2 = ubo.proj * currPos2View;
+
+    if(segmentsIntersect(mainPos1.xy, mainPos2.xy, currPos1.xy, currPos2.xy, intersection)){
+        t = intersection.x;
+        u = intersection.y;
+        if(((t > 1e-5) && (t < (1-1e-5))) && ((u > 1e-5) && (u < (1-1e-5)))){
+            float z1 = mainPos1.z * (1-t) + mainPos2.z * t;
+            float z2 = currPos1.z * (1-u) + currPos2.z * u;
+            
+            if(z1 > z2){
+                //enter or exit
+                float ee = cross2D(normalize(mainPos2.xy - mainPos1.xy), normalize(currPos2.xy - currPos1.xy));
+                if(ee < 0){
+                    //进入，可见性-1。
+                    visChange = -visChangeVal;
+                }else{
+                    //退出，可见性+1。
+                    visChange = visChangeVal;
+                }
+                return true;
+            }else{
+                return false;
+            }
+        }else{
+            return false;
+        }
+    }else{
+        return false;
+    }
+}
+
+bool findIntersection(int i, int k, out int visChange, out float t, out int debugFB, in bool debugInter){
+
     float u;
     vec2 intersection;
     int visChangeVal = 1; //根据edge不同，vis变化也不同
@@ -432,22 +679,23 @@ void findIntersection(int i, int k, out int visChange[MAX_INTER], inout int inte
     vec4 currPos2View = ubo.view * vec4(vertices[k+1].position, 1);
     vec4 currPos1 = ubo.proj * currPos1View;
     vec4 currPos2 = ubo.proj * currPos2View;
-
+    
     vec3 fn = mat3(ubo.view) * vertices[k].faceNor;
     vec3 sfn = mat3(ubo.view) * vertices[k].symFaceNor;
     //true为正面，false为反面
     bool currFaceOri = fn.z > 0.0;
     //true表示用了symFace，false表示还是该face
     bool currFaceSym = false;
+
     //有sym的bEdge
     if(vertices[k].border == 1){
         //如果两个朝向一致，则对于visibility变化无影响
         if(fn.z * sfn.z > 0){
-            return;
+            return false;
         }
         //如果皆为平面，不考虑
         if(fn.z == 0 && sfn.z == 0){
-            return;
+            return false;
         }
         //如果该面为平面，另一个面不是平面，则切换为另一个面
         if(fn.z == 0){
@@ -459,14 +707,12 @@ void findIntersection(int i, int k, out int visChange[MAX_INTER], inout int inte
         visChangeVal = 1;
     }
 
-
     if(segmentsIntersect(mainPos1.xy, mainPos2.xy, currPos1.xy, currPos2.xy, intersection)){
         t = intersection.x;
         u = intersection.y;
-        if(((t > 1e-3) && (t < (1-1e-3))) && ((u > 1e-3) && (u < (1-1e-3)))){
+        if(((t > 1e-5) && (t < (1 - 1e-5))) && ((u > 1e-5) && (u < (1 - 1e-5)))){
             float z1 = mainPos1.z * (1-t) + mainPos2.z * t;
             float z2 = currPos1.z * (1-u) + currPos2.z * u;
-            
             if(z1 > z2){
                 float ee;
                 //enter or exit
@@ -479,175 +725,39 @@ void findIntersection(int i, int k, out int visChange[MAX_INTER], inout int inte
                     //curr面为正面
                     if(ee < 0){
                         //进入，可见性-1。
-                        visChange[interCnt] = -visChangeVal;
+                        visChange = -visChangeVal;
                     }else{
                         //退出，可见性+1。
-                        visChange[interCnt] = visChangeVal;
+                        visChange = visChangeVal;
                     }
-                    debugFB[interCnt] = 1;
+                    debugFB = 1;
                 }else{
                     //curr面为反面
                     if(ee > 0){
-                        visChange[interCnt] = -visChangeVal;
+                        visChange = -visChangeVal;
                     }else{
-                        visChange[interCnt] = visChangeVal;
+                        visChange = visChangeVal;
                     }
-                    debugFB[interCnt] = -1;
+                    debugFB = -1;
                 }
-                debugPrintfEXT("wtf: %f, %f, %d", t, 1e-3, interCnt);
-                ts[interCnt] = t;
-                edgeIdx[interCnt] = edgeCnt;
-                ++interCnt;
+                return true;
+            }else{
+                return false;
             }
+        }else{
+            return false;
         }
-    }
-}
-
-void visChangeSort(inout int visChange[MAX_INTER], 
-    inout float ts[MAX_INTER], out int vis[MAX_INTER + 1], 
-    in int edgeIdx[MAX_INTER], in int interCnt){
-
-    vis[0] = 0;
-
-    //根据ts交换visChange
-    for (int i = 0; i < interCnt; ++i) {
-        for (int j = i + 1; j < interCnt; ++j) {
-            if(edgeIdx[j] > edgeIdx[i]){
-                continue;
-            }
-            if (ts[j] < ts[i]) {
-                // 交换 ts
-                float tmp = ts[i];
-                ts[i] = ts[j];
-                ts[j] = tmp;
-
-                // 交换 visChange
-                int tmp2 = visChange[i];
-                visChange[i] = visChange[j];
-                visChange[j] = tmp2;
-            }
-        }
-    }
-
-    //计算vis
-    for (int i = 0; i < interCnt; ++i) {
-        vis[i + 1] = vis[i] + visChange[i];
-    }
-    //vis最高降低到0
-    int maxVis = -10000;
-    for (int i = 0; i <= interCnt; ++i) {
-        if (vis[i] > maxVis) {
-            maxVis = vis[i];
-        }
-    }
-    for (int i = 0; i <= interCnt; ++i) {
-        vis[i] -= maxVis;
+    }else{
+        return false;
     }
 }
 
 void main() 
 {
-//    debugPrintfEXT("nh");
-//    debugPrintfEXT("index=%d pos=(%.2f, %.2f, %.2f)\n", index1, vertices[0].position.x, vertices[0].position.y, vertices[0].position.z);
-//    uint index = gl_GlobalInvocationID.x * 100;
-//    for(uint i = 0; i < 100; ++i){
-//        uint imgIdx = index / (3840u * 3840u);
-//        index = index - (imgIdx * (3840u * 2160u));
-//        //pixel coord
-//        uint py = index / 3840u;
-//        uint px = index - (py * 3840u);
-//        int globalHeID = texelFetch(scaleSamples[imgIdx], ivec2(int(px), int(py)), 0).y;
-//        if(globalHeID > -1){
-//            vertices[globalHeID * 2].debug = 1;
-//            vertices[globalHeID * 2 + 1].debug = 1;
-//        };
-//        index += 1;
-//    };
-
-
-//    uint index = gl_GlobalInvocationID.x;
-//    uint imgIdx = index / (3840 * 2160);
-//    index = index - (imgIdx * (3840 * 2160));
-//    //pixel coord
-//    uint py = index / 3840;
-//    uint px = index - (py * 3840);
-//    float x = py;
-//    float y = px;
-//    int globalHeID = texelFetch(scaleSamples[imgIdx], ivec2(int(px), int(py)), 0).y;
-//    if(globalHeID > -1){
-//        vertices[globalHeID * 2].debug = 1;
-//        vertices[globalHeID * 2 + 1].debug = 1;
-//    };
-
-
-//    if(gl_GlobalInvocationID.x < targetEdgeCnt){
-//        int globalEdgeIdx = targetEdgeIdxList[gl_GlobalInvocationID.x];
-//        Vertex v1 = vertices[globalEdgeIdx * 2];
-//        Vertex v2 = vertices[globalEdgeIdx * 2 + 1];
-//        //vertices[targetEdgeIdx * 2].debug = 1;
-//        //vertices[targetEdgeIdx * 2 + 1].debug = 1;
-//        vec4 v1PosTmp = ubo.proj * ubo.view * (vec4(v1.position, 1));
-//        vec4 v2PosTmp = ubo.proj * ubo.view * (vec4(v2.position, 1));
-//        vec3 v1Pos = vec3(v1PosTmp / v1PosTmp.w);
-//        vec3 v2Pos = vec3(v2PosTmp / v2PosTmp.w);
-//        //AABB的值是clip space的
-//        float maxx = targetEdgeAABB[globalEdgeIdx * 4];   //maxx
-//        float minx = targetEdgeAABB[globalEdgeIdx * 4 + 1];  //minx
-//        float maxy = targetEdgeAABB[globalEdgeIdx * 4 + 2];  //maxy
-//        float miny = targetEdgeAABB[globalEdgeIdx * 4 + 3];  //miny
-//
-//        {
-//            float dis = FLOAT_MAX;
-//            for(int i = 0; i < targetEdgeCnt; ++i){
-//                if(i == gl_GlobalInvocationID.x){
-//                    continue;
-//                }
-//                int currEdgeIdx = targetEdgeIdxList[i];
-//                float currMaxx = targetEdgeAABB[currEdgeIdx * 4];   //maxx
-//                float currMinx = targetEdgeAABB[currEdgeIdx * 4 + 1];  //minx
-//                float currMaxy = targetEdgeAABB[currEdgeIdx * 4 + 2];  //maxy
-//                float currMiny = targetEdgeAABB[currEdgeIdx * 4 + 3];  //miny
-//                Vertex currV1 = vertices[currEdgeIdx * 2];
-//                Vertex currV2 = vertices[currEdgeIdx * 2 + 1];
-//                vec4 currV1PosTmp = ubo.proj * ubo.view * (vec4(currV1.position, 1));
-//                vec4 currV2PosTmp = ubo.proj * ubo.view * (vec4(currV2.position, 1));
-//                vec3 currV1Pos = vec3(currV1PosTmp / currV1PosTmp.w);
-//                vec3 currV2Pos = vec3(currV2PosTmp / currV2PosTmp.w);
-//                float currDis1 = segmentSegmentDistance3D(v1Pos, v2Pos, currV1Pos, currV2Pos);
-//                if(currDis1 < 0.0001f){
-//                    continue;
-//                }
-//                float currDis2 = pointSegmentDistance((v1Pos.xy + v2Pos.xy) * 0.5f, currV1Pos.xy, currV2Pos.xy);
-//                if(currDis2 < dis){
-//                    dis = currDis2;
-//                }
-//            }
-//            float scale = dis * 10000.f;
-//            vertices[globalEdgeIdx * 2].debug = int(scale) + 3;
-//            vertices[globalEdgeIdx * 2 + 1].debug = int(scale) + 3;
-//        };
-//    }
 
     if(gl_GlobalInvocationID.x < ubo.bEdgeCnt){
         int idxS = bEdgesSE[gl_GlobalInvocationID.x * 2];
         int idxE = bEdgesSE[gl_GlobalInvocationID.x * 2 + 1];
-//      一个seg多edge，debug
-//        if((idxS > 227220) && (idxS < 227223)){
-//            
-//        }else{
-//            return;
-//        }
-//        if((idxS > 114100) && (idxS < 114120)){
-//
-//        }else{
-//            return;
-//        }
-//      无silInterCnt时出错情况
-//        if((idxS > 149000) && (idxS < 149200)){
-//
-//        }else{
-//            return;
-//        }
 //      22964 线隐藏问题（两面覆盖了线，所以导致查询结果是不可见）
 //        if((idxS > 22963) && (idxS < 22965)){
 //
@@ -661,86 +771,213 @@ void main()
 //        }else{
 //            return;
 //        }
-//      33094
-//      in / out / inout问题
+//      33094，21538  inout传数组问题，
+//      删除这类方法以解决
 //        if(idxS > 33093 && idxS < 33095){
 //
 //        }else{
 //            return;
 //        }
-//      85182 
-//        if(idxS > 85181 && idxS < 85183){
-//            
-//        }else{
-//            return;
-//        }
-//      21538    
-        if(idxS > 21537 && idxS < 21539){
-
-        }else{
-            return;
-        }
-//      20009 - 39999 检查中
-//        if(idxS > 0 && idxS < 20009){
+//      63330, 267618 未引入sil，导致没计算出sil交点
+//      加入sil解决
+//        if(idxS > 267617 && idxS < 267619){
 //
 //        }else{
 //            return;
 //        }
-        
+//      63316 蓝线问题（缩放不够导致在3x3像素内查到了其他edge）
+//        if(idxS > 63315 && idxS < 63317){
+//            
+//        }else{
+//            return;
+//        }
+//      195754 183304 253136 253226 obj中与sil交
+//        if(idxS > 253225 && idxS < 253227){
+////            for(int i = idxS; i < idxE; i+=2){
+////                vertices[i].debug = 2;
+////                vertices[i].normal = vec3(1,0,0);
+////                vertices[i + 1].debug = 2;
+////                vertices[i + 1].normal = vec3(0,1,0);
+////            }
+////            int objId = vertices[idxS].objectID;
+////            int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * objId;
+////            int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * objId;
+////            for(int k = 0; k < sLinkIntervals[sliStart]; ++k){
+////                for(int l = sLinkIntervals[sliStart + k * 2 + 1]; l < sLinkIntervals[sliStart + k * 2 + 2]; l+=2){
+////                    int idx1 = sEdgeIdxs[seiStart + l];
+////                    int idx2 = sEdgeIdxs[seiStart + l + 1];
+////                    vertices[idx1].debug = 2;
+////                    vertices[idx1].normal = vec3(1,0,0);
+////                    vertices[idx2].debug = 2;
+////                    vertices[idx2].normal = vec3(0,1,0);
+////                }
+////            }
+//        }else{
+//            return;
+//        }
+//      304545  z值相同，需要把边界边在必要时当作sil才可以
+//        if(idxS > 304545 && idxS < 304547){
+//            for(int i = idxS; i < idxE; i+=2){
+//                vertices[i].debug = 2;
+//                vertices[i].normal = vec3(1,0,0);
+//                vertices[i + 1].debug = 2;
+//                vertices[i + 1].normal = vec3(0,1,0);
+//            }
+//        }else{
+//            return;
+//        }
+//      0 - 359999 检查中
 
         int debugFB[MAX_INTER];
         float ts[MAX_INTER];
         int edgeIdx[MAX_INTER];  //记录该inter的edge是seg中的第几个
         int visChange[MAX_INTER];
         int vis[MAX_INTER + 1];
+        vis[0] = 0;
+
         int interCnt = 0;
         int edgeCnt = 0;  //记录该edge是seg中的第几个
-        int silInterCnt = 0;
         for(int i = idxS; i < idxE; i+=2){
-            //debug
-            if(silInterCnt > 0){
-                break;
-            }
             for(int j = 0; j < ubo.bEdgeCnt; ++j){
                 int currIdxS = bEdgesSE[j * 2];
                 int currIdxE = bEdgesSE[j * 2 + 1];
                 for(int k = currIdxS; k < currIdxE; k+=2){
                     if(k == i)
                         continue;
-                    findIntersection(i, k, visChange, interCnt, ts, edgeIdx, edgeCnt, debugFB);
+                    float currt;
+                    int currDebugFB;
+                    int currVisChange;
+                    bool debugInter = false;
+                    if(findIntersection(i, k, currVisChange, currt, currDebugFB, debugInter)){
+//                        vertices[k].debug = 2;
+//                        vertices[k + 1].debug = 2;
+//                        vertices[k].normal = vec3(1,0,0);
+//                        vertices[k + 1].normal = vec3(0,1,0);
+                        visChange[interCnt] = currVisChange;
+                        ts[interCnt] = currt;
+                        debugFB[interCnt] = currDebugFB;
+                        edgeIdx[interCnt] = edgeCnt;
+                        ++interCnt;
+                    }
                 }
             }
-            for(int j = 0; j < targetEdgeCnt; ++j){
-                int gHeID = targetEdgeIdxList[j];
-                vertices[gHeID * 2].border = 1;
-                vertices[gHeID * 2 + 1].border = 1;
-                //debug
-                int lastInterCnt = interCnt;
-                findIntersection(i, gHeID * 2, visChange, interCnt, ts, edgeIdx, edgeCnt, debugFB);
-                if(interCnt > lastInterCnt){
-                    ++silInterCnt;
+            for(int j = 0; j < objNum; ++j){
+                int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * j;
+                int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * j;
+                for(int k = 0; k < sLinkIntervals[sliStart]; ++k){
+                    for(int l = sLinkIntervals[sliStart + k * 2 + 1]; l < sLinkIntervals[sliStart + k * 2 + 2]; l+=2){
+                        int idx1 = sEdgeIdxs[seiStart + l];
+                        int idx2 = sEdgeIdxs[seiStart + l + 1];
+                        float currt;
+                        int currVisChange;
+                        if(findIntersectionSil(i, idx1, idx2, currVisChange, currt)){
+//                            vertices[idx1].debug = 2;
+//                            vertices[idx2].debug = 2;
+//                            vertices[idx1].normal = vec3(1,0,0);
+//                            vertices[idx2].normal = vec3(0,1,0);
+                            visChange[interCnt] = currVisChange;
+                            ts[interCnt] = currt;
+                            edgeIdx[interCnt] = edgeCnt;
+                            ++interCnt;
+                        }
+                    }
                 }
             }
             ++edgeCnt;
         }
-
-        //debug
-        if(silInterCnt > 0){
-            return;
+        
+        //与sil在obj上交
+        int objId = vertices[idxS].objectID;
+        int symObjId = bEdgeSymObjs[gl_GlobalInvocationID.x];
+        {
+            int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * objId;
+            if(sLinkIntervals[sliStart] > 0){
+                int edgeCnt = 0;
+                for(int i = idxS; i < idxE; i+=2){
+                    int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * objId;
+                    int seoStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT) * objId;
+                    for(int k = 0; k < sLinkIntervals[sliStart]; ++k){
+                        for(int l = sLinkIntervals[sliStart + k * 2 + 1]; l < sLinkIntervals[sliStart + k * 2 + 2]; l+=2){
+                            int idx1 = sEdgeIdxs[seiStart + l];
+                            int idx2 = sEdgeIdxs[seiStart + l + 1];
+                            int visC;
+                            if(findIntersectionSilObj(i, idx1, idx2, true, sEdgeOris[seoStart + l / 2], visC)){
+                                visChange[interCnt] = visC;
+                                ts[interCnt] = 1.0;
+                                edgeIdx[interCnt] = edgeCnt;
+                                ++interCnt;
+                            };
+                        }
+                    }
+                    ++edgeCnt;
+                }
+            }
         }
-        debugPrintfEXT("%d", interCnt);
-        debugPrintfEXT("edgeIdx: %d, %d, %d, %d", edgeIdx[0], edgeIdx[1], edgeIdx[2], edgeIdx[3]);
-        debugPrintfEXT("ts: %.5f, %.5f, %.5f, %.5f", ts[0], ts[1], ts[2], ts[3]);
-        debugPrintfEXT("visChange: %d, %d, %d, %d", visChange[0], visChange[1], visChange[2], visChange[3]);
+        {
+            if(symObjId != -1){
+                int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * symObjId;
+                if(sLinkIntervals[sliStart] > 0){
+                    int edgeCnt = 0;
+                    for(int i = idxS; i < idxE; i+=2){
+                        int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * symObjId;
+                        int seoStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT) * symObjId;
+                        for(int k = 0; k < sLinkIntervals[sliStart]; ++k){
+                            for(int l = sLinkIntervals[sliStart + k * 2 + 1]; l < sLinkIntervals[sliStart + k * 2 + 2]; l+=2){
+                                int idx1 = sEdgeIdxs[seiStart + l];
+                                int idx2 = sEdgeIdxs[seiStart + l + 1];
+                                int visC;
+                                if(findIntersectionSilObj(i, idx1, idx2, false, sEdgeOris[seoStart + l / 2], visC)){
+                                    visChange[interCnt] = visC;
+                                    ts[interCnt] = 1.0;
+                                    edgeIdx[interCnt] = edgeCnt;
+                                    ++interCnt;
+                                };
+                            }
+                        }
+                        ++edgeCnt;
+                    }
+                }
+            }
+        }
+        
+        //visChangeSort
+        for (int i = 0; i < interCnt; ++i) {
+            for (int j = i + 1; j < interCnt; ++j) {
+                if(edgeIdx[j] > edgeIdx[i]){
+                    continue;
+                }
+                if (ts[j] < ts[i]) {
+                    // 交换 ts
+                    float tmp = ts[i];
+                    ts[i] = ts[j];
+                    ts[j] = tmp;
+                    // 交换 visChange
+                    int tmp2 = visChange[i];
+                    visChange[i] = visChange[j];
+                    visChange[j] = tmp2;
+                }
+            }
+        }
+        for (int i = 0; i < interCnt; ++i) {
+            vis[i + 1] = vis[i] + visChange[i];
+        }
+        int maxVis = -10000;
+        for (int i = 0; i <= interCnt; ++i) {
+            if (vis[i] > maxVis) {
+                maxVis = vis[i];
+            }
+        }
+        for (int i = 0; i <= interCnt; ++i) {
+            vis[i] -= maxVis;
+        }
+
         //现存edge先全部消除
         for(int i = idxS; i < idxE; i+=2){
             vertices[i].debug = 4;
             vertices[i + 1].debug = 4;
-        };
-
-        visChangeSort(visChange, ts, vis, edgeIdx, interCnt);
-        debugPrintfEXT("vis: %d, %d, %d, %d", vis[0], vis[1], vis[2], vis[3]);
-
+        }
+        
+        //render
         vec3 renderVers[MAX_BEDGES * 2];
         int renderEdgeIdx = 0;
         int res = -1;
@@ -818,46 +1055,188 @@ void main()
                 }
             }
         }
-        
-        if(renderEdgeIdx == 0){
-            debugPrintfEXT("renderEdgeIdx == 0");
-        }
-
         if(res == 0){
             for(int i = 0; i < renderEdgeIdx; ++i){
                 uint idxOffset = atomicAdd(edgeSuccessCnt, 2);
-                vertices[idxOffset + ubo.origEdgeCnt].position = renderVers[i * 2];
-                vertices[idxOffset + ubo.origEdgeCnt + 1].position = renderVers[i * 2 + 1];
-                vertices[idxOffset + ubo.origEdgeCnt].normal = vec3(1,0,0);
-                vertices[idxOffset + ubo.origEdgeCnt + 1].normal = vec3(1,0,0);
-                vertices[idxOffset + ubo.origEdgeCnt].debug = 2;
-                vertices[idxOffset + ubo.origEdgeCnt + 1].debug = 2;
-            }
-        }
-
-        if(res == 1){
-            for(int i = 0; i < renderEdgeIdx; ++i){
-                uint idxOffset = atomicAdd(edgeSuccessCnt, 2);
-                vertices[idxOffset + ubo.origEdgeCnt].position = renderVers[i * 2];
-                vertices[idxOffset + ubo.origEdgeCnt + 1].position = renderVers[i * 2 + 1];
-                vertices[idxOffset + ubo.origEdgeCnt].normal = vec3(0,1,0);
-                vertices[idxOffset + ubo.origEdgeCnt + 1].normal = vec3(0,1,0);
-                vertices[idxOffset + ubo.origEdgeCnt].debug = 2;
-                vertices[idxOffset + ubo.origEdgeCnt + 1].debug = 2;
-            }
-        }
-
-        if(res == 2){
-            for(int i = 0; i < renderEdgeIdx; ++i){
-                uint idxOffset = atomicAdd(edgeSuccessCnt, 2);
-                vertices[idxOffset + ubo.origEdgeCnt].position = renderVers[i * 2];
-                vertices[idxOffset + ubo.origEdgeCnt + 1].position = renderVers[i * 2 + 1];
-                vertices[idxOffset + ubo.origEdgeCnt].normal = vec3(0,0,1);
-                vertices[idxOffset + ubo.origEdgeCnt + 1].normal = vec3(0,0,1);
-                vertices[idxOffset + ubo.origEdgeCnt].debug = 2;
-                vertices[idxOffset + ubo.origEdgeCnt + 1].debug = 2;
+                vertices[idxOffset + ubo.origEdgeCnt * 2].position = renderVers[i * 2];
+                vertices[idxOffset + ubo.origEdgeCnt * 2 + 1].position = renderVers[i * 2 + 1];
+                vertices[idxOffset + ubo.origEdgeCnt * 2].normal = vec3(1,0,0);
+                vertices[idxOffset + ubo.origEdgeCnt * 2 + 1].normal = vec3(1,0,0);
+                vertices[idxOffset + ubo.origEdgeCnt * 2].debug = 2;
+                vertices[idxOffset + ubo.origEdgeCnt * 2 + 1].debug = 2;
             }
         }
     }
 
+    if(gl_GlobalInvocationID.x < objNum){
+        int objId = int(gl_GlobalInvocationID.x);
+    
+        int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * objId;
+        int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * objId;
+        if(sLinkIntervals[sliStart] > 0){
+            for(int sLinkCnt = 0; sLinkCnt < sLinkIntervals[sliStart]; ++sLinkCnt){
+                int edgeCnt = 0;
+                int interCnt = 0;
+                float ts[MAX_INTER];
+                int edgeIdx[MAX_INTER];  //记录该inter的edge是seg中的第几个
+                int visChange[MAX_INTER];
+                int vis[MAX_INTER + 1];
+                vis[0] = 0;
+
+                int idxS = seiStart + sLinkIntervals[sliStart + sLinkCnt * 2 + 1];
+                int idxE = seiStart + sLinkIntervals[sliStart + sLinkCnt * 2 + 2];
+                for(int l = idxS; l < idxE; l+=2){
+                    int idx1 = sEdgeIdxs[l];
+                    int idx2 = sEdgeIdxs[l + 1];
+                    vertices[idx1].debug = 2;
+                    vertices[idx2].debug = 2;
+                    vertices[idx1].normal = vec3(1,0,0);
+                    vertices[idx2].normal = vec3(0,1,0);
+                    int visC;
+                    float t;
+                    for(int j = 0; j < ubo.bEdgeCnt; ++j){
+                        int currIdxS = bEdgesSE[j * 2];
+                        int currIdxE = bEdgesSE[j * 2 + 1];
+                        for(int k = currIdxS; k < currIdxE; k+=2){
+                            if(sFindIntersectionB(idx1, idx2, k, visC, t)){
+                                visChange[interCnt] = visC;
+                                ts[interCnt] = t;
+                                edgeIdx[interCnt] = edgeCnt;
+                                ++interCnt;
+                            }
+                        }
+                    }
+                    ++edgeCnt;
+                }
+                //visChangeSort
+                for (int i = 0; i < interCnt; ++i) {
+                    for (int j = i + 1; j < interCnt; ++j) {
+                        if(edgeIdx[j] > edgeIdx[i]){
+                            continue;
+                        }
+                        if (ts[j] < ts[i]) {
+                            // 交换 ts
+                            float tmp = ts[i];
+                            ts[i] = ts[j];
+                            ts[j] = tmp;
+                            // 交换 visChange
+                            int tmp2 = visChange[i];
+                            visChange[i] = visChange[j];
+                            visChange[j] = tmp2;
+                        }
+                    }
+                }
+                for (int i = 0; i < interCnt; ++i) {
+                    vis[i + 1] = vis[i] + visChange[i];
+                }
+                int maxVis = -10000;
+                for (int i = 0; i <= interCnt; ++i) {
+                    if (vis[i] > maxVis) {
+                        maxVis = vis[i];
+                    }
+                }
+                for (int i = 0; i <= interCnt; ++i) {
+                    vis[i] -= maxVis;
+                }
+
+                //现存edge先全部消除
+                for(int l = idxS; l < idxE; l+=2){
+                    int idx1 = sEdgeIdxs[l];
+                    int idx2 = sEdgeIdxs[l + 1];
+                    vertices[idx1].debug = 4;
+                    vertices[idx2].debug = 4;
+                }
+
+                //render
+                vec3 renderVers[MAX_BEDGES * 2];
+                int renderEdgeIdx = 0;
+                int res = -1;
+
+                for(int i = 0; i <= interCnt; ++i){
+                    if(vis[i] == 0){
+                        int edgeIdxS;
+                        int edgeIdxE;
+                        if(i == 0){
+                            edgeIdxS = 0;
+                            if(interCnt == 0){
+                                edgeIdxE = edgeCnt - 1;
+                            }else{
+                                edgeIdxE = edgeIdx[0];
+                            }
+                        }else if(i == interCnt){
+                            edgeIdxS = edgeIdx[i-1];
+                            edgeIdxE = edgeCnt - 1;
+                        }else{
+                            edgeIdxS = edgeIdx[i-1];
+                            edgeIdxE = edgeIdx[i];
+                        }
+                        for(int j = edgeIdxS; j <= edgeIdxE; ++j){
+                            int gHeID = vertices[sEdgeIdxs[idxS + 2 * j]].globalHeID;
+                            vec3 pos1;
+                            vec3 pos2;
+
+                            if(j == edgeIdxS){
+                                if(i == 0){
+                                    pos1 = vertices[sEdgeIdxs[idxS]].position;
+                                }else{
+                                    float t1 = ts[i-1];
+                                    pos1 = (1-t1) * vertices[sEdgeIdxs[idxS + 2 * j]].position + t1 * vertices[sEdgeIdxs[idxS + 2 * j + 1]].position;
+                                }
+                            }else{
+                                pos1 = vertices[sEdgeIdxs[idxS + 2 * j]].position;
+                            }
+
+                            if(j == edgeIdxE){
+                                if(i == interCnt){
+                                    pos2 = vertices[sEdgeIdxs[idxE - 1]].position;
+                                }else{
+                                    float t2 = ts[i];
+                                    pos2 = (1-t2) * vertices[sEdgeIdxs[idxS + 2 * j]].position + t2 * vertices[sEdgeIdxs[idxS + 2 * j + 1]].position;
+                                }
+                            }else{
+                                pos2 = vertices[sEdgeIdxs[idxS + 2 * j + 1]].position;
+                            }
+                            renderVers[renderEdgeIdx * 2] = pos1;
+                            renderVers[renderEdgeIdx * 2 + 1] = pos2;
+                            ++renderEdgeIdx;
+                            vec4 pos1Proj = ubo.proj * ubo.view * vec4(pos1,1);
+                            vec4 pos2Proj = ubo.proj * ubo.view * vec4(pos2,1);
+                            vec2 checkProj = (pos1Proj.xy + pos2Proj.xy) * 0.5;
+                            int currRes = -1;
+                            //如果是0，跳过checkPic
+                            //如果是-1，不能跳过，因为侧影线还没实现，有时候受到侧影线影响会挡住东西
+                            if(res == 0){
+                                continue;
+                            }
+                            currRes = checkPic(checkProj, gHeID);
+                    
+                            if(currRes == 0){
+                                res = 0;
+                            }
+                            if(currRes == 1){
+                                res = 1;
+                            }
+                            if(currRes == 2){
+                                if(res == -1){
+                                    res = 2;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if(res == 0){
+                    for(int i = 0; i < renderEdgeIdx; ++i){
+                        uint idxOffset = atomicAdd(edgeSuccessCnt, 2);
+                        vertices[idxOffset + ubo.origEdgeCnt * 2].position = renderVers[i * 2];
+                        vertices[idxOffset + ubo.origEdgeCnt * 2 + 1].position = renderVers[i * 2 + 1];
+                        vertices[idxOffset + ubo.origEdgeCnt * 2].normal = vec3(1,0,0);
+                        vertices[idxOffset + ubo.origEdgeCnt * 2 + 1].normal = vec3(1,0,0);
+                        vertices[idxOffset + ubo.origEdgeCnt * 2].debug = 2;
+                        vertices[idxOffset + ubo.origEdgeCnt * 2 + 1].debug = 2;
+                    }
+                }
+            }
+        }
+    }
 }

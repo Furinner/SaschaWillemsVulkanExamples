@@ -89,8 +89,9 @@ public:
 	alignas(4) int uniqueID; //unique id in obj
 	alignas(4) int debug = 0;
 	alignas(4) int globalHeID = -1;
+	alignas(4) int symUid = -1;
 
-	Vertex(glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
+	Vertex(glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor, int uniqueID);
 };
 
 class Mesh {
@@ -104,6 +105,8 @@ public:
 	//start point and end point of every boundary edges in vertices2
 	//2个值一组，如果该bEdge没有被加载，则2个值一样
 	std::vector<int> bEdgesSE;
+	//记录每个bEdge对应的symmetry object id，没有则为-1
+	std::vector<int> bEdgeSymObjs;
 };
 
 
@@ -113,6 +116,7 @@ public:
 	TopoDS_Edge edge;
 	int sym = -1;
 	int faceID;
+	int symFaceID = -1;
 
 public:
 	OCCEdge(int id, TopoDS_Edge edge, int faceID);
@@ -125,6 +129,7 @@ public:
 	//三角化后，每一个小bEdge在vertices2中的idx，严格按照edges顺序，每个顶点记一次
 	std::vector<std::vector<int>> bEdgesIdx; 
 	std::vector<std::vector<glm::vec3>> bEdgesNor; //小bEdge的nor，严格按照edges顺序，两个顶点记一次
+	std::vector<std::vector<int>> bEdgeUids;  //小bEdge的顶点的unique id(在各自face上)，严格按照edges顺序，每个顶点记一次
 	// baseEdgeID : {edgeID1, edgeID2}
 	std::vector<std::vector<int>> baseEdges;  //不带orientation的
 	

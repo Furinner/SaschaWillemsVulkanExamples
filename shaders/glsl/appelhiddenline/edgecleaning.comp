@@ -4,6 +4,8 @@
 //compute2
 
 //const float FLT_MAX = 3.402823466e+38;
+const int MAX_VER_CNT = 200;
+const int MAX_SIL_LINK_CNT = 4;
 
 struct Vertex{
     vec3 position;
@@ -18,6 +20,7 @@ struct Vertex{
     int uniqueID;
     int debug;
     int globalHeID;
+    int symUid;
 };
 
 layout (set = 0, binding = 0) buffer Vers
@@ -38,18 +41,42 @@ layout (set = 0, binding = 1) uniform UBO
 //符合的edge数
 layout (set = 0, binding = 2) buffer SBO1
 {
-   uint targetEdgeCnt;
+   uint sEdgeCntEdge[];  //objID下有几个sEdge
 };
 
 //每个edge的GlobalHeID
 layout (set = 0, binding = 3) buffer SBO2
 {
-   int targetEdgeIdxList[];
+   uint sEdgeIdsEdge[]; //每个obj的sEdge的id，每个obj有MAX_VER_CNT * MAX_SIL_LINK_CNT个栏位
 };
 
 layout (set = 0, binding = 4) buffer SBO3
 {
    float targetEdgeAABB[];
+};
+
+layout (set = 0, binding = 5) buffer SBO4{
+    //记录每一个obj的sLink数，该obj内起点(obj内从0开始)，该obj内终点
+	//2(2个sLink), 0, 2(第一个sLink的interval), 2, 10(第二个sLink的interval),..., 0(下一个obj),...
+	//每一个obj占(MAX_SIL_LINK_CNT * 2 + 1)个位置。
+    int sLinkIntervals[];
+};
+
+layout (set = 0, binding = 6) buffer SBO5{
+    //sLinkIntervals对应到sEdgeIdxs上
+	//每一个obj占(MAX_SIL_LINK_CNT * MAX_VER_CNT * 2)个位置。
+    //1个edge写两个idx
+    int sEdgeIdxs[];
+};
+
+layout (set = 0, binding = 7) buffer SBO6{
+    //sEdgeIdxs对应的ori
+    //1个edge写1个
+    int sEdgeOris[];
+};
+
+layout(push_constant) uniform PushConsts {
+	int objNum; 
 };
 
 layout (local_size_x = 64) in;
@@ -79,6 +106,17 @@ void main()
         vertices[index2].debug = 0;
         //vertices[index1].normal = vec3(1,0,0);
         //vertices[index2].normal = vec3(0,1,0);
+        //debug
+//        if(vertices[index1].objectID == 1182){
+//            vertices[index1].debug = 2;
+//            vec3 p1 = vertices[index1].position;
+//            vertices[index1].normal = vec3(1,0,0);
+//            vertices[index2].debug = 2;
+//            vec3 p2 = vertices[index2].position;
+//            vertices[index2].normal = vec3(1,0,0);
+//            debugPrintfEXT("%.3f, %.3f, %.3f", p1.x, p1.y, p1.z);
+//            debugPrintfEXT("%.3f, %.3f, %.3f", p2.x, p2.y, p2.z);
+//        }
         if(gl_GlobalInvocationID.x >= ubo.origEdgeCnt){
             //debugPrintfEXT("pos=(%u, %u)", ubo.edgeVertSize, ubo.origEdgeCnt);
             vertices[index1].position = vec3(0);
@@ -125,5 +163,166 @@ void main()
 //        targetEdgeAABB[globalEdgeId * 4 + 3] = miny;
 //        //debugPrintfEXT("pos=(%u, %.5f, %.5f, %.5f, %.5f, %.5f,%.5f,%.5f,%.5f)\n",targetEdgeIdx, v1.position.x, v1.position.y, v2.position.x, v2.position.y, v1Pos.x, v1Pos.y, v2Pos.x, v2Pos.y);
 //    }
+    
+    if(gl_GlobalInvocationID.x < objNum){
+        //uid, arrid(arrCnt), gid
+        //记录的是uniqueID
+        int v1uids[MAX_VER_CNT];
+        int v2uids[MAX_VER_CNT];
+        bool used[MAX_VER_CNT];
+        bool sym[MAX_VER_CNT];
+        int silOris[MAX_VER_CNT];
+        int arrids[MAX_SIL_LINK_CNT][MAX_VER_CNT]; //每条sLink在arr中的idx
+        int arridsValidInterval[MAX_SIL_LINK_CNT][2];  //记录sLink在vOut中从哪到哪的值是valid的，for(int i = vSilIdx[sLinkCnt][0]; i < vSilIdx[sLinkCnt][1]; ++i)
+        uint arridToGid[MAX_VER_CNT];  //arr的idx到gHeID
+        int arrCnt = 0;
+        int sLinkCnt = 0;
+
+        for(int i = 0; i < sEdgeCntEdge[gl_GlobalInvocationID.x]; ++i){
+            uint gHeID = sEdgeIdsEdge[gl_GlobalInvocationID.x * MAX_VER_CNT * MAX_SIL_LINK_CNT + i];
+            vec3 p1 = vertices[gHeID * 2].position;
+            vec3 p2 = vertices[gHeID * 2 + 1].position;
+            int v1Id = vertices[gHeID * 2].uniqueID;
+            int v2Id = vertices[gHeID * 2 + 1].uniqueID;
+            vec3 fn = mat3(ubo.view) * vertices[gHeID * 2].faceNor;
+            vec3 sfn = mat3(ubo.view) * vertices[gHeID * 2].symFaceNor;
+            bool fnPositive = fn.z > 0.0;
+            bool fnZero = fn.z == 0.0;
+            bool sfnPositive = sfn.z > 0.0;
+            vec3 posCrossNeg;
+            vec3 posEdge;
+            if(fnPositive){
+                // 原edge即正edge
+                v1uids[arrCnt] = v1Id;
+                v2uids[arrCnt] = v2Id;
+                sym[arrCnt] = false;
+                posCrossNeg = normalize(cross(fn, sfn));
+                posEdge = normalize(p2 - p1);
+            }else if(sfnPositive){
+                // sym edge为正edge
+                v1uids[arrCnt] = v2Id;
+                v2uids[arrCnt] = v1Id;
+                sym[arrCnt] = true;
+                posCrossNeg = normalize(cross(sfn, fn));
+                posEdge = normalize(p1 - p2);
+            }else if(fnZero){
+                // 原edge即正edge
+                v1uids[arrCnt] = v1Id;
+                v2uids[arrCnt] = v2Id;
+                sym[arrCnt] = false;
+                posCrossNeg = normalize(cross(fn, sfn));
+                posEdge = normalize(p2 - p1);
+            }else{
+                // sym edge为正edge
+                v1uids[arrCnt] = v2Id;
+                v2uids[arrCnt] = v1Id;
+                sym[arrCnt] = true;
+                posCrossNeg = normalize(cross(sfn, fn));
+                posEdge = normalize(p1 - p2);
+            }
+            if(dot(posCrossNeg, posEdge) > 0){
+                //正sil
+                silOris[arrCnt] = 1;
+            }else if(dot(posCrossNeg, posEdge) < 0){
+                //反sil
+                silOris[arrCnt] = 2;
+            }else{
+                //?
+                silOris[arrCnt] = 3;
+            }
+            arridToGid[arrCnt] = gHeID;
+            used[arrCnt] = false;
+            ++arrCnt;
+        }
+
+        arrids[0][MAX_VER_CNT / 2] = 0;
+        used[0] = true;
+        int currHead = v1uids[0];
+        int currEnd = v2uids[0];
+        while(true){
+            //往后找
+            int afterCnt = MAX_VER_CNT / 2 + 1;
+            bool findAfter = true;
+            while(findAfter){
+                findAfter = false;
+                for(int i = 0; i < arrCnt; ++i){
+                    if(!used[i]){
+                        if(v1uids[i] == currEnd){
+                            currEnd = v2uids[i];
+                            used[i] = true;
+                            arrids[sLinkCnt][afterCnt] = i;
+                            ++afterCnt;
+                            findAfter = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            arridsValidInterval[sLinkCnt][1] = afterCnt;
+            //往前找
+            int beforeCnt = MAX_VER_CNT / 2 - 1;
+            bool findBefore = true;
+            while(findBefore){
+                findBefore = false;
+                for(int i = 0; i < arrCnt; ++i){
+                    if(!used[i]){
+                        if(v2uids[i] == currHead){
+                            currHead = v1uids[i];
+                            used[i] = true;
+                            arrids[sLinkCnt][beforeCnt] = i;
+                            --beforeCnt;
+                            findBefore = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            arridsValidInterval[sLinkCnt][0] = beforeCnt + 1;
+            //检查是否还有head
+            ++sLinkCnt;
+            bool otherHead = false;
+            for(int i = 0; i < arrCnt; ++i){
+                if(!used[i]){
+                    otherHead = true;
+                    //新开一个sil链
+                    arrids[sLinkCnt][MAX_VER_CNT / 2] = i;
+                    currHead = v1uids[i];
+                    currEnd = v2uids[i];
+                    used[i] = true;
+                    break;
+                }
+            }
+            if(!otherHead){
+                break;
+            }
+        }
+        if(arrCnt == 0){
+            sLinkCnt = 0;
+        }
+
+        if(sLinkCnt > 0){
+            int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * int(gl_GlobalInvocationID.x);
+            sLinkIntervals[sliStart] = sLinkCnt;
+            int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * int(gl_GlobalInvocationID.x);
+            int seoStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT) * int(gl_GlobalInvocationID.x);
+            int sEdgeCnt = 0;
+            for(int i = 0; i < sLinkCnt; ++i){
+                sLinkIntervals[sliStart + i * 2 + 1] = sEdgeCnt;
+                for(int j = arridsValidInterval[i][0]; j < arridsValidInterval[i][1]; ++j){
+                    int gHeID = int(arridToGid[arrids[i][j]]);
+                    if(sym[arrids[i][j]]){
+                        sEdgeIdxs[seiStart + sEdgeCnt] = gHeID * 2 + 1;
+                        sEdgeIdxs[seiStart + sEdgeCnt + 1] = gHeID * 2;
+                    }else{
+                        sEdgeIdxs[seiStart + sEdgeCnt] = gHeID * 2;
+                        sEdgeIdxs[seiStart + sEdgeCnt + 1] = gHeID * 2 + 1;
+                    }
+                    sEdgeOris[seoStart + sEdgeCnt / 2] = silOris[arrids[i][j]];
+                    sEdgeCnt += 2;
+                }
+                sLinkIntervals[sliStart + i * 2 + 2] = sEdgeCnt;
+            }
+        }
+    }
 }
 

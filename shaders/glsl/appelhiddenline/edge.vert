@@ -2,6 +2,8 @@
 #extension GL_EXT_debug_printf : enable
 #extension GL_KHR_vulkan_glsl : enable
 
+const int MAX_VER_CNT = 200;
+const int MAX_SIL_LINK_CNT = 4;
 
 layout (binding = 0) uniform UBO 
 {
@@ -14,12 +16,12 @@ layout (binding = 0) uniform UBO
 
 layout (binding = 10) buffer SBO1
 {
-	uint edgeCnt;
+	uint edgeCnt[]; //每个object有多少sEdge
 } sbo1;
 
 layout (binding = 11) buffer SBO2
 {
-	int edgeList[];
+	uint edgeList[];  //每个object的sEdge的gHeID，每个object留出MAX_VER_CNT * MAX_SIL_LINK_CNT个位置
 } sbo2;
 
 
@@ -91,7 +93,7 @@ void main()
 
 	vec3 pixelNor;
 	if(bool(ubo.orthographic)){
-		pixelNor = vec3(0.f, 0.f, -1.f);
+		pixelNor = vec3(0.f, 0.f, 1.f);
 		//pixelNor = normalize(closerViewPos);
 	}else{
 		pixelNor = normalize(closerViewPos);
@@ -105,18 +107,20 @@ void main()
 			//sbo2.edgeList[idx] = inGlobalHeID;
 		}
 	}else{
-		return;
-		float checkVal1 = dot(mat3(ubo.view) * inFaceNor, pixelNor);
-		float checkVal2 = dot(mat3(ubo.view) * inSymFaceNor, pixelNor);
-		if(checkVal1 == 0.f && checkVal2 == 0.f){
+		vec3 fn = mat3(ubo.view) * inFaceNor;
+		vec3 sfn = mat3(ubo.view) * inSymFaceNor;
+		float fnz = dot(fn, pixelNor);
+		float sfnz = dot(sfn, pixelNor);
+		if(fnz == 0.f && sfnz == 0.f){
 			return;
 		}
-		if((checkVal1 * checkVal2) <= 0.f){
+		if((fnz * sfnz) <= 0.f){
 			outBorder = 1;
 			if(startPoint){
-				uint idx = atomicAdd(sbo1.edgeCnt, 1);
-				sbo2.edgeList[idx] = inGlobalHeID;
+				uint idx = atomicAdd(sbo1.edgeCnt[inObjectID], 1);
+				sbo2.edgeList[MAX_VER_CNT * MAX_SIL_LINK_CNT * inObjectID + idx] = inGlobalHeID;
 			}
+			
 		}else{
 			outBorder = inBorder;
 		}

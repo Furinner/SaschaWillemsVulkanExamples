@@ -50,8 +50,8 @@ namespace vks
 			uint32_t srcFamily, uint32_t dstFamily, VkPipelineStageFlags dstStage,
 			VkPipelineStageFlags dstAccess, bool sameFamily);
 
-		static void bufferBarrier(VkCommandBuffer cb, const std::vector<VkBuffer>& buffer,
-			VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage,
-			VkAccessFlags srcAccess, VkAccessFlags dstAccess);
+		static void bufferBarrier(VkCommandBuffer cb, const std::vector<VkBuffer>& buffers,
+			VkPipelineStageFlags srcStage, VkAccessFlags srcAccess, 
+			VkPipelineStageFlags dstStage, VkAccessFlags dstAccess);
 	};
 }

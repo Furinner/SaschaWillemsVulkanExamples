@@ -125,7 +125,7 @@ public:
 class OCCCompound {
 public:
 	TopoDS_Shape shape;
-	std::vector<OCCEdge> bEdges;  //带orientation的
+	std::vector<OCCEdge> bOccEdges;  //带orientation的bLinks
 	//三角化后，每一个小bEdge在vertices2中的idx，严格按照edges顺序，每个顶点记一次
 	std::vector<std::vector<int>> bEdgesIdx; 
 	std::vector<std::vector<glm::vec3>> bEdgesNor; //小bEdge的nor，严格按照edges顺序，两个顶点记一次
@@ -149,7 +149,7 @@ public:
 	
 	void read(const std::string& filename);
 
-	void toObjFile(const std::string& filename);
+	void meshToObjFile(BRepMesh_IncrementalMesh& mesher);
 	//helper Function
 	//void pushback1(int n1, int n2, int n3, glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
 	//void pushback2();

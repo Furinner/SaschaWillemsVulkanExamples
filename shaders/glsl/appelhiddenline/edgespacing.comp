@@ -461,16 +461,7 @@ bool sFindIntersectionB(int idx1, int idx2, int k, out int visChange, out float 
     vec4 currPos2View = ubo.view * vec4(vertices[k+1].position, 1);
     vec4 currPos1 = ubo.proj * currPos1View;
     vec4 currPos2 = ubo.proj * currPos2View;
-    if(k == 274388){
-        debugPrintfEXT("%.8f, %.8f", mainPos1.x, mainPos1.y);
-        debugPrintfEXT("%.8f, %.8f", mainPos2.x, mainPos2.y);
-        debugPrintfEXT("%.8f, %.8f", currPos1.x, currPos1.y);
-        debugPrintfEXT("%.8f, %.8f", currPos2.x, currPos2.y);
-        vertices[k].debug = 2;
-        vertices[k + 1].debug = 2;
-        vertices[k].normal = vec3(1,0,0);
-        vertices[k + 1].normal = vec3(0,1,0);
-    }
+
     vec3 fn = mat3(ubo.view) * vertices[k].faceNor;
     vec3 sfn = mat3(ubo.view) * vertices[k].symFaceNor;
     //true为正面，false为反面
@@ -714,7 +705,7 @@ bool findIntersection(int i, int k, out int visChange, out float t, out int debu
     }else if(vertices[k].border == 2){
         visChangeVal = 1;
     }
-
+    
     if(segmentsIntersect(mainPos1.xy, mainPos2.xy, currPos1.xy, currPos2.xy, intersection)){
         t = intersection.x;
         u = intersection.y;
@@ -822,6 +813,12 @@ void main()
 //        }else{
 //            return;
 //        }
+//      291634 objId:1553  有两个面贴在一起了
+//        if(idxS > 291633 && idxS < 291635){
+//            
+//        }else{
+//            return;
+//        }
 //      304545  z值相同，需要把边界边在必要时当作sil才可以
 //        if(idxS > 304545 && idxS < 304547){
 //            for(int i = idxS; i < idxE; i+=2){
@@ -856,10 +853,10 @@ void main()
                     int currVisChange;
                     bool debugInter = false;
                     if(findIntersection(i, k, currVisChange, currt, currDebugFB, debugInter)){
-                        vertices[k].debug = 2;
-                        vertices[k + 1].debug = 2;
-                        vertices[k].normal = vec3(1,0,0);
-                        vertices[k + 1].normal = vec3(0,1,0);
+//                        vertices[k].debug = 2;
+//                        vertices[k + 1].debug = 2;
+//                        vertices[k].normal = vec3(1,0,0);
+//                        vertices[k + 1].normal = vec3(0,1,0);
                         visChange[interCnt] = currVisChange;
                         ts[interCnt] = currt;
                         debugFB[interCnt] = currDebugFB;
@@ -878,10 +875,10 @@ void main()
                         float currt;
                         int currVisChange;
                         if(findIntersectionSil(i, idx1, idx2, currVisChange, currt)){
-                            vertices[idx1].debug = 2;
-                            vertices[idx2].debug = 2;
-                            vertices[idx1].normal = vec3(1,0,0);
-                            vertices[idx2].normal = vec3(0,1,0);
+//                            vertices[idx1].debug = 2;
+//                            vertices[idx2].debug = 2;
+//                            vertices[idx1].normal = vec3(1,0,0);
+//                            vertices[idx2].normal = vec3(0,1,0);
                             visChange[interCnt] = currVisChange;
                             ts[interCnt] = currt;
                             edgeIdx[interCnt] = edgeCnt;
@@ -1101,7 +1098,6 @@ void main()
         }
     }
 
-
     if(gl_GlobalInvocationID.x < objNum){
         int objId = int(gl_GlobalInvocationID.x);
 //      1481(未与idxS为274388的bEdge相交)
@@ -1128,10 +1124,10 @@ void main()
                 for(int l = idxS; l < idxE; l+=2){
                     int idx1 = sEdgeIdxs[l];
                     int idx2 = sEdgeIdxs[l + 1];
-                    vertices[idx1].debug = 2;
-                    vertices[idx2].debug = 2;
-                    vertices[idx1].normal = vec3(1,0,0);
-                    vertices[idx2].normal = vec3(0,1,0);
+//                    vertices[idx1].debug = 2;
+//                    vertices[idx2].debug = 2;
+//                    vertices[idx1].normal = vec3(1,0,0);
+//                    vertices[idx2].normal = vec3(0,1,0);
                     int visC;
                     float t;
                     for(int j = 0; j < ubo.bEdgeCnt; ++j){

@@ -9,6 +9,10 @@ OCCEdge::OCCEdge(int id, TopoDS_Edge edge, int faceID)
 	:id(id), edge(edge), faceID(faceID)
 {}
 
+void OCCCompound::meshToObjFile(BRepMesh_IncrementalMesh& mesher) {
+
+}
+
 static float cross2D(glm::vec2 a, glm::vec2 b)
 {
     return a.x * b.y - a.y * b.x;
@@ -129,7 +133,7 @@ void OCCCompound::read(const std::string& filename) {
             for (TopExp_Explorer eExp(face, TopAbs_EDGE); eExp.More(); eExp.Next())
             {
                 TopoDS_Edge edge = TopoDS::Edge(eExp.Current());
-                bEdges.push_back(OCCEdge(edgeID, edge, faceID));
+                bOccEdges.push_back(OCCEdge(edgeID, edge, faceID));
                 int baseIndex = baseEdgeMap.FindIndex(edge);
                 //OCC中baseIndex是从1开始的，所以这里我们减1
                 --baseIndex;
@@ -142,10 +146,10 @@ void OCCCompound::read(const std::string& filename) {
         }
         for (auto& be : baseEdges) {
             if (be.size() == 2) {
-                bEdges[be[0]].sym = be[1];
-				bEdges[be[0]].symFaceID = bEdges[be[1]].faceID;
-                bEdges[be[1]].sym = be[0];
-				bEdges[be[1]].symFaceID = bEdges[be[0]].faceID;
+                bOccEdges[be[0]].sym = be[1];
+                bOccEdges[be[0]].symFaceID = bOccEdges[be[1]].faceID;
+                bOccEdges[be[1]].sym = be[0];
+                bOccEdges[be[1]].symFaceID = bOccEdges[be[0]].faceID;
             }
         }
     }
@@ -237,13 +241,13 @@ void OCCCompound::read(const std::string& filename) {
                 std::vector<glm::vec3> keyNorsTemp;
                 std::vector<int> bEdgesIdxTemp;
                 //如果该边界edge有sym，渲染id小的那一个
-                if (bEdges[i].sym != -1) {
-                    if (bEdges[i].sym < i) {
+                if (bOccEdges[i].sym != -1) {
+                    if (bOccEdges[i].sym < i) {
                         shouldLoad = false;
                     }
                 }
                 Handle(Poly_PolygonOnTriangulation) poly =
-                    BRep_Tool::PolygonOnTriangulation(bEdges[i].edge, tri, loc);
+                    BRep_Tool::PolygonOnTriangulation(bOccEdges[i].edge, tri, loc);
                 if (poly.IsNull()) {
                     mesh.bEdgesSE.push_back(-1);
                     mesh.bEdgesSE.push_back(-1);
@@ -253,7 +257,7 @@ void OCCCompound::read(const std::string& filename) {
                 const TColStd_Array1OfInteger& polyNodes = poly->Nodes();
                 
                 //bool needReverse = (face.Orientation() != edges[i].edge.Orientation());
-                bool needReverse = (bEdges[i].edge.Orientation() == TopAbs_REVERSED);
+                bool needReverse = (bOccEdges[i].edge.Orientation() == TopAbs_REVERSED);
                 if (needReverse) {
                     for (int j = polyNodes.Upper(); j > polyNodes.Lower(); --j) {
                         int n1 = polyNodes(j);
@@ -262,13 +266,18 @@ void OCCCompound::read(const std::string& filename) {
                         --n2;
 
                         std::string key = std::to_string(n1) + "#" + std::to_string(n2);
+						//n1#n2: (bLink Id, bLink中第几个bEdge)
                         keyToKeyNorsIdx[key] = std::make_pair<int, int>(i - faceEdgeCnt[faceID], keyNorsTemp.size());
+                        //bLink中第几个bEdge: faceNor
                         keyNorsTemp.push_back(glm::vec3(0));
+                        //bLink中第几个bEdge: n1,n2
 						keyUidsTemp.push_back(n1);
                         keyUidsTemp.push_back(n2);
 
                         if (shouldLoad) {
+                            //n1#n2: 在vertices2中的id
                             boundaryHEIdx[key] = mesh.indices2.size();
+							//bLink中第几个bEdge: 在vertices2中的id
                             bEdgesIdxTemp.push_back(mesh.indices2.size());
                             mesh.vertices2.push_back(Vertex(positions[n1], glm::vec4(0), uvs[n1], faceID, i - 1, glm::vec4(0), n1));
                             mesh.vertices2.push_back(Vertex(positions[n2], glm::vec4(0), uvs[n2], faceID, i - 1, glm::vec4(0), n2));
@@ -319,7 +328,7 @@ void OCCCompound::read(const std::string& filename) {
                 else {
                     mesh.bEdgesSE.push_back(currBEdgeSE1);
                     mesh.bEdgesSE.push_back(currBEdgeSE2);
-                    mesh.bEdgeSymObjs.push_back(bEdges[i].symFaceID);
+                    mesh.bEdgeSymObjs.push_back(bOccEdges[i].symFaceID);
                 }
             }
 
@@ -412,7 +421,7 @@ void OCCCompound::read(const std::string& filename) {
 
 		//给bEdge赋予symFaceNor
         for (int edgeId = 0; edgeId < bEdgesIdx.size(); ++edgeId) {
-            int sym = bEdges[edgeId].sym;
+            int sym = bOccEdges[edgeId].sym;
             if (sym != -1) {
                 for (int i = 0; i < bEdgesIdx[edgeId].size(); ++i) {
                     //这个存储着vertices2里的id，如果不为-1，说明是要渲染的bEdge

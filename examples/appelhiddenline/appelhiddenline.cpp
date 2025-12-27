@@ -1415,6 +1415,7 @@ public:
 	bool lockedView = false;
 	bool savePic = false;
 	bool vectorize = false;
+	bool vectorize2 = false;
 	int savePicCnt = 0;
 	int scaleCnt = scale * scale;
 	static const int MAX_VER_CNT = 200;
@@ -1603,6 +1604,7 @@ public:
 	VkCommandBuffer offScreenCmdBuffer{ VK_NULL_HANDLE };
 	VkCommandBuffer edgeCmdBuffer{ VK_NULL_HANDLE };
 	VkCommandBuffer edgeCmdBuffer2{ VK_NULL_HANDLE }; //解决ac/rl的vulkan对应问题
+	VkCommandBuffer edgeCmdBuffer3{ VK_NULL_HANDLE }; //解决ac/rl的vulkan对应问题
 	VkCommandBuffer lockedEdgeCmdBuffer{ VK_NULL_HANDLE };
 	VkCommandBuffer computeCmdBuffer;  //edgespacing
 	VkCommandBuffer computeCmdBuffer2; //edgecleaning
@@ -2386,7 +2388,9 @@ public:
 			else
 			{
 				attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+				//undefined代表不关心之前的内容（允许丢弃）和layout，最快
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				//finalLayout相当于一个内部的barrier了，保证该pass结束时image的layout已经处于finalLayout
 				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			}
 		}
@@ -2685,67 +2689,10 @@ public:
 		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 		renderPassBeginInfo.pClearValues = clearValues.data();
 
-		// Add memory barrier between render passes
-		//VkImageMemoryBarrier colorBarrier = {};
-		//colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		//colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		//colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		//colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//colorBarrier.image = offScreenFrameBuf.albedo.image;
-		//colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		//colorBarrier.subresourceRange.baseMipLevel = 0;
-		//colorBarrier.subresourceRange.levelCount = 1;
-		//colorBarrier.subresourceRange.baseArrayLayer = 0;
-		//colorBarrier.subresourceRange.layerCount = 1;
-
-		//VkImageMemoryBarrier positionBarrier = {};
-		//positionBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		//positionBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		//positionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		//positionBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//positionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//positionBarrier.image = offScreenFrameBuf.position.image;
-		//positionBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		//positionBarrier.subresourceRange.baseMipLevel = 0;
-		//positionBarrier.subresourceRange.levelCount = 1;
-		//positionBarrier.subresourceRange.baseArrayLayer = 0;
-		//positionBarrier.subresourceRange.layerCount = 1;
 		bool sameFamily = (compute.queueFamilyIndex == graphics.queueFamilyIndex);
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer, &cmdBufInfo));
 
-		{
-			std::vector<VkBuffer> acBuffers = {
-				mesh.edgeVertBuffer.buffer,
-				storageBuffers.edgeList.buffer,
-				storageBuffers.edgeAABB.buffer,
-			};
-			vks::Buffer::acquireBuffers(
-				edgeCmdBuffer,
-				acBuffers,
-				compute.queueFamilyIndex,
-				graphics.queueFamilyIndex,
-				VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-				VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
-				sameFamily
-			);
-			//edgeCnt需要被vkCmdFillBuffer，所以需要不同的dstStage和dstAccess
-			//由于vkCmdFillBuffer是在该command buffer提交的queue上执行的，
-			//所以执行vkCmdFillBuffer前，必须转移好。
-			std::vector<VkBuffer> acBuffers2 = {
-				storageBuffers.edgeCnt.buffer
-			};
-			vks::Buffer::acquireBuffers(
-				edgeCmdBuffer,
-				acBuffers2,
-				compute.queueFamilyIndex,
-				graphics.queueFamilyIndex,
-				VK_PIPELINE_STAGE_TRANSFER_BIT,
-				VK_ACCESS_TRANSFER_WRITE_BIT,
-				sameFamily
-			);
-		}
 		{
 			std::vector<VkBuffer> buffers = { storageBuffers.edgeCnt.buffer };
 			vkCmdFillBuffer(edgeCmdBuffer, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
@@ -2823,34 +2770,6 @@ public:
 		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 		renderPassBeginInfo.pClearValues = clearValues.data();
 
-		// Add memory barrier between render passes
-		//VkImageMemoryBarrier colorBarrier = {};
-		//colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		//colorBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		//colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		//colorBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//colorBarrier.image = offScreenFrameBuf.albedo.image;
-		//colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		//colorBarrier.subresourceRange.baseMipLevel = 0;
-		//colorBarrier.subresourceRange.levelCount = 1;
-		//colorBarrier.subresourceRange.baseArrayLayer = 0;
-		//colorBarrier.subresourceRange.layerCount = 1;
-
-		//VkImageMemoryBarrier positionBarrier = {};
-		//positionBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		//positionBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		//positionBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-		//positionBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//positionBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		//positionBarrier.image = offScreenFrameBuf.position.image;
-		//positionBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		//positionBarrier.subresourceRange.baseMipLevel = 0;
-		//positionBarrier.subresourceRange.levelCount = 1;
-		//positionBarrier.subresourceRange.baseArrayLayer = 0;
-		//positionBarrier.subresourceRange.layerCount = 1;
-		//bool sameFamily = (compute.queueFamilyIndex == graphics.queueFamilyIndex);
-
 		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer2, &cmdBufInfo));
 
 		std::vector<VkBuffer> buffers = { storageBuffers.edgeCnt.buffer };
@@ -2884,6 +2803,98 @@ public:
 
 
 		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer2));
+	}
+
+	void buildEdgeCommandBuffer3()
+	{
+		if (edgeCmdBuffer3 == VK_NULL_HANDLE) {
+			edgeCmdBuffer3 = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
+		}
+
+		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+
+		std::array<VkClearValue, 2> clearValues;
+		clearValues[0].color.int32[0] = -1;
+		clearValues[0].color.int32[1] = -1;
+		clearValues[0].color.int32[2] = 0;
+		clearValues[0].color.int32[3] = 0;
+		clearValues[1].color = { {0.0f, 0.0f, 0.0f, 0.0f} };
+
+		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+		renderPassBeginInfo.renderPass = edgeFrameBuf.renderPass;
+		renderPassBeginInfo.framebuffer = edgeFrameBuf.frameBuffer;
+		renderPassBeginInfo.renderArea.extent.width = edgeFrameBuf.width;
+		renderPassBeginInfo.renderArea.extent.height = edgeFrameBuf.height;
+		//diff: render pass don't have any clear values
+		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassBeginInfo.pClearValues = clearValues.data();
+
+		bool sameFamily = (compute.queueFamilyIndex == graphics.queueFamilyIndex);
+
+		VK_CHECK_RESULT(vkBeginCommandBuffer(edgeCmdBuffer3, &cmdBufInfo));
+
+		{
+			std::vector<VkBuffer> acBuffers = {
+				mesh.edgeVertBuffer.buffer,
+				storageBuffers.edgeList.buffer,
+				storageBuffers.edgeAABB.buffer,
+			};
+			vks::Buffer::acquireBuffers(
+				edgeCmdBuffer3,
+				acBuffers,
+				compute.queueFamilyIndex,
+				graphics.queueFamilyIndex,
+				VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+				VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+				sameFamily
+			);
+			//edgeCnt需要被vkCmdFillBuffer，所以需要不同的dstStage和dstAccess
+			//由于vkCmdFillBuffer是在该command buffer提交的queue上执行的，
+			//所以执行vkCmdFillBuffer前，必须转移好。
+			std::vector<VkBuffer> acBuffers2 = {
+				storageBuffers.edgeCnt.buffer
+			};
+			vks::Buffer::acquireBuffers(
+				edgeCmdBuffer3,
+				acBuffers2,
+				compute.queueFamilyIndex,
+				graphics.queueFamilyIndex,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
+				sameFamily
+			);
+		}
+		{
+			std::vector<VkBuffer> buffers = { storageBuffers.edgeCnt.buffer };
+			vkCmdFillBuffer(edgeCmdBuffer3, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+			vks::Buffer::bufferBarrier(
+				edgeCmdBuffer3,
+				buffers,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
+			);
+		}
+		vkCmdBeginRenderPass(edgeCmdBuffer3, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkViewport viewport = vks::initializers::viewport((float)edgeFrameBuf.width, -(float)edgeFrameBuf.height, 0.0f, 1.0f);
+		viewport.x = 0;
+		viewport.y = (float)edgeFrameBuf.height;
+		vkCmdSetViewport(edgeCmdBuffer3, 0, 1, &viewport);
+
+		VkRect2D scissor = vks::initializers::rect2D(edgeFrameBuf.width, edgeFrameBuf.height, 0, 0);
+		vkCmdSetScissor(edgeCmdBuffer3, 0, 1, &scissor);
+
+		vkCmdBindPipeline(edgeCmdBuffer3, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.edge);
+
+		vkCmdBindDescriptorSets(edgeCmdBuffer3, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout2, 0, 1, &descriptorSets.edge, 0, nullptr);
+		mesh.bindLineBuffers(edgeCmdBuffer3);
+		vkCmdDrawIndexed(edgeCmdBuffer3, mesh.edgeIdx.size(), 1, 0, 0, 0);
+
+		vkCmdEndRenderPass(edgeCmdBuffer3);
+
+		VK_CHECK_RESULT(vkEndCommandBuffer(edgeCmdBuffer3));
 	}
 
 	void buildLockedEdgeCommandBuffer(int offset) {
@@ -2927,7 +2938,7 @@ public:
 		//这行没有，但是vertex shader 里访问了一个 layout(location=...) in ... 的顶点输入
 		//所以必须要绑定一个vertex buffer
 		mesh.bindLineBuffers(lockedEdgeCmdBuffer);
-		vkCmdDrawIndexed(lockedEdgeCmdBuffer, mesh.edgeIdx.size(), 1, offset, 0, 0);
+		vkCmdDrawIndexed(lockedEdgeCmdBuffer, mesh.edgeIdx.size() - offset, 1, offset, 0, 0);
 
 		vkCmdEndRenderPass(lockedEdgeCmdBuffer);
 
@@ -2952,7 +2963,6 @@ public:
 		VK_CHECK_RESULT(vkBeginCommandBuffer(computeCmdBuffer, &cmdBufInfo));
 		bool sameFamily = (graphics.queueFamilyIndex == compute.queueFamilyIndex);
 		{
-			vkCmdFillBuffer(computeCmdBuffer, storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
 			std::vector<VkBuffer> acBuffers = { 
 				mesh.edgeVertBuffer.buffer,
 				storageBuffers.edgeCnt.buffer,
@@ -2971,9 +2981,9 @@ public:
 			);
 			//将edgeSuccessCnt清零
 			std::vector<VkBuffer> buffers = { storageBuffers.edgeSuccessCnt.buffer };
-			vkCmdFillBuffer(edgeCmdBuffer, storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+			vkCmdFillBuffer(computeCmdBuffer, storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
 			vks::Buffer::bufferBarrier(
-				edgeCmdBuffer,
+				computeCmdBuffer,
 				buffers,
 				VK_PIPELINE_STAGE_TRANSFER_BIT,
 				VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -3935,6 +3945,7 @@ public:
 		buildDeferredCommandBuffer();
 		buildEdgeCommandBuffer();
 		buildEdgeCommandBuffer2();
+		buildEdgeCommandBuffer3();
 		buildLockedEdgeCommandBuffer(mesh.origEdgeVertSize);
 		buildComputeCommandBuffer();
 		//debug时打印出image的handle
@@ -3978,30 +3989,9 @@ public:
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
 
-		if (vectorize) {
-			waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-
-			// Submit compute commands
-			VkSubmitInfo computeSubmitInfo = vks::initializers::submitInfo();
-			computeSubmitInfo.commandBufferCount = 1;
-			computeSubmitInfo.waitSemaphoreCount = 1;
-			computeSubmitInfo.signalSemaphoreCount = 1;
-			//compute1
-			computeSubmitInfo.pCommandBuffers = &computeCmdBuffer;
-			computeSubmitInfo.pWaitSemaphores = &offscreenSemaphore;
-			computeSubmitInfo.pWaitDstStageMask = &waitStageMask;
-			computeSubmitInfo.pSignalSemaphores = &compute1Semaphore;
-			VK_CHECK_RESULT(vkQueueSubmit(compute.queue, 1, &computeSubmitInfo, VK_NULL_HANDLE));
-			//vkDeviceWaitIdle(device);
-			/*void* mapped = nullptr;
-			vkMapMemory(device, stagingBuffers.edgeSuccessCnt.memory, 0, sizeof(uint32_t), 0, &mapped);
-			tmpUsage.edgeSuccessCnt = static_cast<uint32_t*>(mapped)[0];
-			vkDeviceWaitIdle(device);*/
-		}
-
 		//locked Edge rendering
 		waitStageMask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
-		submitInfo.pWaitSemaphores = (vectorize ? &compute1Semaphore : &offscreenSemaphore);
+		submitInfo.pWaitSemaphores = &offscreenSemaphore;
 		submitInfo.pWaitDstStageMask = &waitStageMask;
 		// Signal ready with render complete semaphore
 		submitInfo.pSignalSemaphores = &lockedEdgeSemaphore;
@@ -4012,37 +4002,61 @@ public:
 
 		// Edge rendering
 		// Wait for offscreen semaphore
-			//“每个等待信号量（wait semaphore）解除等待后，可以开始执行的最早的管线阶段（pipeline stage）。”
-		waitStageMask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
-		VkPipelineStageFlags waitStageMask2 = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		//“每个等待信号量（wait semaphore）解除等待后，可以开始执行的最早的管线阶段（pipeline stage）。”
+		// VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT相当于不阻塞
+		waitStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 		submitInfo.pWaitSemaphores = &lockedEdgeSemaphore;
 		submitInfo.pSignalSemaphores = &edgeSemaphore;
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pWaitDstStageMask = (vectorize ? &waitStageMask : &waitStageMask2);
-		if (savePicCnt == (scaleCnt + 1)) {
+		submitInfo.pWaitDstStageMask = &waitStageMask;
+		if (savePicCnt == (scaleCnt + 1) || vectorize) {
 			submitInfo.pCommandBuffers = &edgeCmdBuffer;
+		}
+		else if (savePicCnt == (scaleCnt + 2) || vectorize2) {
+			submitInfo.pCommandBuffers = &edgeCmdBuffer3;
+			vectorize2 = false;
 		}
 		else {
 			submitInfo.pCommandBuffers = &edgeCmdBuffer2;
 		}
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
-		vectorize = false;
+
+
+		if (vectorize) {
+			waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+			// Submit compute commands
+			VkSubmitInfo computeSubmitInfo = vks::initializers::submitInfo();
+			computeSubmitInfo.commandBufferCount = 1;
+			computeSubmitInfo.waitSemaphoreCount = 1;
+			computeSubmitInfo.signalSemaphoreCount = 1;
+			//compute1
+			computeSubmitInfo.pCommandBuffers = &computeCmdBuffer;
+			computeSubmitInfo.pWaitSemaphores = &edgeSemaphore;
+			computeSubmitInfo.pWaitDstStageMask = &waitStageMask;
+			computeSubmitInfo.pSignalSemaphores = &compute1Semaphore;
+			VK_CHECK_RESULT(vkQueueSubmit(compute.queue, 1, &computeSubmitInfo, VK_NULL_HANDLE));
+			//vkDeviceWaitIdle(device);
+			/*void* mapped = nullptr;
+			vkMapMemory(device, stagingBuffers.edgeSuccessCnt.memory, 0, sizeof(uint32_t), 0, &mapped);
+			tmpUsage.edgeSuccessCnt = static_cast<uint32_t*>(mapped)[0];
+			vkDeviceWaitIdle(device);*/
+		}
 
 		
-		if (lockedView) {
-			vkDeviceWaitIdle(device);
-			//changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
-			copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
-			vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
-			mesh.analyzeEdgePixels2(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue, camera);
-			vkUnmapMemory(device, mesh.cpuImageBuffer.memory);
-			//rebuildLockedEdgeCommandBuffer();
-			lockedView = false;
-		}
-		else {
-			vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, lockedEdgeFrameBuf.position.image, vulkanDevice, queue);
-		}
+		//if (lockedView) {
+		//	vkDeviceWaitIdle(device);
+		//	//changeImageLayoutOneTime(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, edgeFrameBuf.position.image);
+		//	copyGPUtoCPU(edgeFrameBuf.width, edgeFrameBuf.height, edgeFrameBuf.position.image, mesh.cpuImageBuffer.buffer);
+		//	vkMapMemory(device, mesh.cpuImageBuffer.memory, 0, edgeFrameBuf.width * edgeFrameBuf.height * sizeof(glm::vec4), 0, &mesh.edgePixelsRawData);
+		//	mesh.analyzeEdgePixels2(vulkanDevice, edgeFrameBuf.height, edgeFrameBuf.width, queue, camera);
+		//	vkUnmapMemory(device, mesh.cpuImageBuffer.memory);
+		//	//rebuildLockedEdgeCommandBuffer();
+		//	lockedView = false;
+		//}
+		//else {
+		//	//vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, lockedEdgeFrameBuf.position.image, vulkanDevice, queue);
+		//}
 
 		if (savePic) {
 			if (savePicCnt == 0) {
@@ -4055,13 +4069,13 @@ public:
 				++savePicCnt;
 			}
 			else if (savePicCnt == 1) {
-				vks::Texture::copyImgToImg(edgeFrameBuf.position.image, 
+				/*vks::Texture::copyImgToImg(edgeFrameBuf.position.image, 
 					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 					scaleSamples[0].image,
 					VK_IMAGE_LAYOUT_UNDEFINED,
-					edgeFrameBuf.width, edgeFrameBuf.height, vulkanDevice, queue);
+					edgeFrameBuf.width, edgeFrameBuf.height, vulkanDevice, queue);*/
 				//savePicOnCPU(getAssetPath() + "models/test/combined/excavator_yellow_smooth/pic/0.png", scaleSamples[0].image, edgeFrameBuf.width, edgeFrameBuf.height);
-				vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[0].image, vulkanDevice, queue);
+				/*vks::Texture::layoutTransitionOnce(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, scaleSamples[0].image, vulkanDevice, queue);*/
 				camera.setViewToAABB(mesh.aabbCameraMin, mesh.aabbCameraMax, scale);
 				++savePicCnt;
 			}
@@ -4120,6 +4134,11 @@ public:
 			//两个 vkQueueSubmit() 不能同时去 wait 同一个 binary semaphore
 			//所以这里不能是edgeSemaphore
 			submitInfo.pWaitSemaphores = &compute2Semaphore;
+		}
+		else if (vectorize) {
+			submitInfo.pWaitSemaphores = &compute1Semaphore;
+			vectorize = false;
+			vectorize2 = true;
 		}
 		else {
 			submitInfo.pWaitSemaphores = &edgeSemaphore;

@@ -1,6 +1,5 @@
 #version 450
 #extension GL_EXT_debug_printf : enable
-#extension GL_KHR_vulkan_glsl : enable
 
 const int MAX_VER_CNT = 200;
 const int MAX_SIL_LINK_CNT = 4;

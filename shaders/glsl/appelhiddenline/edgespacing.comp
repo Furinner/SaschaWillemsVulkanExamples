@@ -4,13 +4,13 @@
 //compute1
 
 const int MAX_INTER = 45;
-const int MAX_BEDGES = 300; //一个bSeg最多由多少bEdges组成
-
+const int MAX_BEDGES = 300; //renderVers的大小
+const int MAX_BEDGE_NEIGHBOR = 10;
 
 const int IMG_WIDTH = 3840;
 const int IMG_HEIGHT = 2160;
 
-const int MAX_VER_CNT = 200;
+const int MAX_SIL_VER_CNT = 200;
 const int MAX_SIL_LINK_CNT = 4;
 
 
@@ -78,7 +78,6 @@ layout (set = 0, binding = 6) buffer SBO4
 layout (set = 0, binding = 7) buffer SBO5
 {
    //he1 startIdx, he1 endIdx, he2 startIdx, he2 endIdx,...
-   //有可能startIdx == endIdx，即没有edge，这个要自己判断
    int bEdgesSE[];
 };
 
@@ -831,6 +830,22 @@ void main()
 //            return;
 //        }
 //      0 - 359999 检查中
+        if(vertices[idxS].objectID == 901){
+            for(int i = idxS; i < idxE; i+=2){
+                vertices[i].debug = 2;
+                vertices[i].normal = vec3(1,0,0);
+                vertices[i + 1].debug = 2;
+                vertices[i + 1].normal = vec3(0,1,0);
+            }
+        }else if(bEdgeSymObjs[gl_GlobalInvocationID.x] == 901){
+            for(int i = idxS; i < idxE; i+=2){
+                vertices[i].debug = 2;
+                vertices[i].normal = vec3(1,0,0);
+                vertices[i + 1].debug = 2;
+                vertices[i + 1].normal = vec3(0,1,0);
+            }
+        }
+        return;
 
         int debugFB[MAX_INTER];
         float ts[MAX_INTER];
@@ -867,7 +882,7 @@ void main()
             }
             for(int j = 0; j < objNum; ++j){
                 int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * j;
-                int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * j;
+                int seiStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT * 2) * j;
                 for(int k = 0; k < sLinkIntervals[sliStart]; ++k){
                     for(int l = sLinkIntervals[sliStart + k * 2 + 1]; l < sLinkIntervals[sliStart + k * 2 + 2]; l+=2){
                         int idx1 = sEdgeIdxs[seiStart + l];
@@ -898,8 +913,8 @@ void main()
             if(sLinkIntervals[sliStart] > 0){
                 int edgeCnt = 0;
                 for(int i = idxS; i < idxE; i+=2){
-                    int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * objId;
-                    int seoStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT) * objId;
+                    int seiStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT * 2) * objId;
+                    int seoStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT) * objId;
                     for(int k = 0; k < sLinkIntervals[sliStart]; ++k){
                         for(int l = sLinkIntervals[sliStart + k * 2 + 1]; l < sLinkIntervals[sliStart + k * 2 + 2]; l+=2){
                             int idx1 = sEdgeIdxs[seiStart + l];
@@ -923,8 +938,8 @@ void main()
                 if(sLinkIntervals[sliStart] > 0){
                     int edgeCnt = 0;
                     for(int i = idxS; i < idxE; i+=2){
-                        int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * symObjId;
-                        int seoStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT) * symObjId;
+                        int seiStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT * 2) * symObjId;
+                        int seoStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT) * symObjId;
                         for(int k = 0; k < sLinkIntervals[sliStart]; ++k){
                             for(int l = sLinkIntervals[sliStart + k * 2 + 1]; l < sLinkIntervals[sliStart + k * 2 + 2]; l+=2){
                                 int idx1 = sEdgeIdxs[seiStart + l];
@@ -1107,7 +1122,7 @@ void main()
 //            return;
 //        }
         int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * objId;
-        int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * objId;
+        int seiStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT * 2) * objId;
         if(sLinkIntervals[sliStart] > 0){
             for(int sLinkCnt = 0; sLinkCnt < sLinkIntervals[sliStart]; ++sLinkCnt){
                 int edgeCnt = 0;

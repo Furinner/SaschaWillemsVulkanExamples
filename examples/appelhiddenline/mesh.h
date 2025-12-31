@@ -68,6 +68,8 @@
 
 #include "VulkanglTFModel.h"
 
+static const int MAX_BEDGE_NEIGHBORS = 10;
+
 class Vertex {
 public:
 	/*alignas(16) glm::vec4 pos;
@@ -91,6 +93,7 @@ public:
 	alignas(4) int globalHeID = -1;
 	alignas(4) int symUid = -1;
 
+
 	Vertex(glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor, int uniqueID);
 };
 
@@ -103,10 +106,15 @@ public:
 
 	//boundary
 	//start point and end point of every boundary edges in vertices2
-	//2个值一组，如果该bEdge没有被加载，则2个值一样
+	//2个值一组，如果该bEdge没有被加载，则无值
 	std::vector<int> bEdgesSE;
 	//记录每个bEdge对应的symmetry object id，没有则为-1
 	std::vector<int> bEdgeSymObjs;
+	//以render的edge为单位，每个edge对应MAX_BEDGE_NEIGHBORS * 2个(*2是因为start和end)
+	std::vector<int> bEdgeConnects;
+	std::vector<bool> bEdgeConnectsAway;
+	std::vector<int> bEdgeConnectsNum;
+
 };
 
 
@@ -114,9 +122,12 @@ class OCCEdge {
 public:
 	int id;
 	TopoDS_Edge edge;
+	bool render = true;
 	int sym = -1;
 	int faceID;
 	int symFaceID = -1;
+	int prev = -1;
+	int next = -1;
 
 public:
 	OCCEdge(int id, TopoDS_Edge edge, int faceID);
@@ -130,8 +141,16 @@ public:
 	std::vector<std::vector<int>> bEdgesIdx; 
 	std::vector<std::vector<glm::vec3>> bEdgesNor; //小bEdge的nor，严格按照edges顺序，两个顶点记一次
 	std::vector<std::vector<int>> bEdgeUids;  //小bEdge的顶点的unique id(在各自face上)，严格按照edges顺序，每个顶点记一次
+	//{start bEdgeConnected idx}, {end bEdgeConnected idx},..
+	// 全是load的bEdge
+	std::vector<std::vector<int>> bEdgeConnects;
+	//connected中记录的edge的idx是远离的还是近的
+	std::vector<std::vector<bool>> bEdgeConnectsAway;
+	std::vector<int> bEdgeConnectsNum;
 	// baseEdgeID : {edgeID1, edgeID2}
 	std::vector<std::vector<int>> baseEdges;  //不带orientation的
+
+
 	
 	// faceID : TopoDS_Face
 	std::vector<TopoDS_Face> faces;
@@ -154,4 +173,9 @@ public:
 	//void pushback1(int n1, int n2, int n3, glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
 	//void pushback2();
 	//void pushback2(glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
+
+private:
+	void findAllConnectedEdges(int edgeId, std::vector<std::vector<int>>& bEdgesIdx, std::vector<OCCEdge>& bOccEdges,
+		std::vector<int>& startConnected, std::vector<bool>& startConnectedAway,
+		std::vector<int>& endConnected, std::vector<bool>& endConnectedAway);
 };

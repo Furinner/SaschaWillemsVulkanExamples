@@ -13,6 +13,47 @@ void OCCCompound::meshToObjFile(BRepMesh_IncrementalMesh& mesher) {
 
 }
 
+void OCCCompound::findAllConnectedEdges(int edgeId, std::vector<std::vector<int>>& bEdgesIdx, std::vector<OCCEdge>& bOccEdges, 
+    std::vector<int>& startConnected, std::vector<bool>& startConnectedAway, 
+    std::vector<int>& endConnected, std::vector<bool>& endConnectedAway) {
+    //start
+    int prev = bOccEdges[edgeId].prev;
+    int prevSym = bOccEdges[prev].sym;
+    while (prevSym != edgeId) {
+        if (bOccEdges[prev].render) {
+            startConnected.push_back(bEdgesIdx[prev][bEdgesIdx[prev].size() - 1]);
+            startConnectedAway.push_back(true);
+        }
+        else {
+            startConnected.push_back(bEdgesIdx[prevSym][0]);
+            startConnectedAway.push_back(false);
+        }
+        if (prevSym == -1) {
+            break;
+        }
+		prev = bOccEdges[prevSym].prev;
+		prevSym = bOccEdges[prev].sym;
+    }
+	//end
+	int next = bOccEdges[edgeId].next;
+	int nextSym = bOccEdges[next].sym;
+    while (nextSym != edgeId) {
+        if (bOccEdges[next].render) {
+            endConnected.push_back(bEdgesIdx[next][0]);
+            endConnectedAway.push_back(false);
+        }
+        else {
+            endConnected.push_back(bEdgesIdx[nextSym][bEdgesIdx[nextSym].size() - 1]);
+            endConnectedAway.push_back(true);
+        }
+        if (nextSym == -1) {
+            break;
+        }
+        next = bOccEdges[nextSym].next;
+        nextSym = bOccEdges[next].sym;
+    }
+}
+
 static float cross2D(glm::vec2 a, glm::vec2 b)
 {
     return a.x * b.y - a.y * b.x;
@@ -121,6 +162,40 @@ void OCCCompound::read(const std::string& filename) {
     baseEdges.assign(baseEdgeMap.Extent(), {});
 
     // 这样才能拿到所有区分orientation的所有TopoDS_Edge
+    //{
+    //    int edgeID = 0;
+    //    int faceID = 0;
+    //    faceEdgeCnt.push_back(0);
+    //    for (TopExp_Explorer fExp(shape, TopAbs_FACE); fExp.More(); fExp.Next())
+    //    {
+    //        const TopoDS_Face& face = TopoDS::Face(fExp.Current());
+
+    //        // 在当前 face 上遍历所有 edge
+    //        for (TopExp_Explorer eExp(face, TopAbs_EDGE); eExp.More(); eExp.Next())
+    //        {
+    //            TopoDS_Edge edge = TopoDS::Edge(eExp.Current());
+    //            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID));
+    //            int baseIndex = baseEdgeMap.FindIndex(edge);
+    //            //OCC中baseIndex是从1开始的，所以这里我们减1
+    //            --baseIndex;
+    //            baseEdges[baseIndex].push_back(edgeID);
+    //            ++edgeID;
+    //        }
+    //        faceEdgeCnt.push_back(edgeID);
+    //        faces.push_back(face);
+    //        ++faceID;
+    //    }
+    //    for (auto& be : baseEdges) {
+    //        if (be.size() == 2) {
+    //            bOccEdges[be[0]].sym = be[1];
+    //            bOccEdges[be[0]].symFaceID = bOccEdges[be[1]].faceID;
+    //            bOccEdges[be[1]].sym = be[0];
+    //            bOccEdges[be[1]].symFaceID = bOccEdges[be[0]].faceID;
+    //        }
+    //    }
+    //}
+
+    // 这样才能拿到所有区分orientation的所有TopoDS_Edge
     {
         int edgeID = 0;
         int faceID = 0;
@@ -128,17 +203,36 @@ void OCCCompound::read(const std::string& filename) {
         for (TopExp_Explorer fExp(shape, TopAbs_FACE); fExp.More(); fExp.Next())
         {
             const TopoDS_Face& face = TopoDS::Face(fExp.Current());
-
-            // 在当前 face 上遍历所有 edge
-            for (TopExp_Explorer eExp(face, TopAbs_EDGE); eExp.More(); eExp.Next())
+            //遍历当前face的所有wire
+            for (TopExp_Explorer wExp(face, TopAbs_WIRE); wExp.More(); wExp.Next())
             {
-                TopoDS_Edge edge = TopoDS::Edge(eExp.Current());
-                bOccEdges.push_back(OCCEdge(edgeID, edge, faceID));
-                int baseIndex = baseEdgeMap.FindIndex(edge);
-                //OCC中baseIndex是从1开始的，所以这里我们减1
-                --baseIndex;
-                baseEdges[baseIndex].push_back(edgeID);
-                ++edgeID;
+                TopoDS_Wire wire = TopoDS::Wire(wExp.Current());
+				int wireStartEdgeID = edgeID;
+                for (BRepTools_WireExplorer we(wire); we.More(); we.Next()) {
+
+                    TopoDS_Edge edge = TopoDS::Edge(we.Current());
+                    bOccEdges.push_back(OCCEdge(edgeID, edge, faceID));
+                    int baseIndex = baseEdgeMap.FindIndex(edge);
+                    //OCC中baseIndex是从1开始的，所以这里我们减1
+                    --baseIndex;
+                    baseEdges[baseIndex].push_back(edgeID);
+                    ++edgeID;
+                }
+                int wireEndEdgeID = edgeID;
+                for (int i = wireStartEdgeID; i < wireEndEdgeID; ++i) {
+                    if(i == wireStartEdgeID) {
+                        bOccEdges[i].prev = wireEndEdgeID - 1;
+                        bOccEdges[i].next = i + 1;
+                    }
+                    else if(i == wireEndEdgeID - 1){
+                        bOccEdges[i].prev = i - 1;
+                        bOccEdges[i].next = wireStartEdgeID;
+                    }
+                    else {
+						bOccEdges[i].prev = i - 1;
+                        bOccEdges[i].next = i + 1;
+                    }
+                }
             }
             faceEdgeCnt.push_back(edgeID);
             faces.push_back(face);
@@ -175,6 +269,7 @@ void OCCCompound::read(const std::string& filename) {
                 mesh.vertices2[it->second].faceNor = normal;
                 mesh.vertices2[it->second + 1].faceNor = normal;
             }
+            //在keyNors中记录faceNor
             auto it2 = keyToKeyNorsIdx.find(std::to_string(n1) + "#" + std::to_string(n2));
             keyNors[it2->second.first][it2->second.second] = normal;
             //边界边提前加载过了，直接跳过
@@ -235,6 +330,7 @@ void OCCCompound::read(const std::string& filename) {
             //也是记录bEdge在vertices2中的id，只不过这个严格按照edges的顺序
             //不在vertices2中，则记录-1
             std::vector<std::vector<int>> bEdgesIdx;
+
             for (int i = faceEdgeCnt[faceID]; i < faceEdgeCnt[faceID + 1]; ++i) {
                 bool shouldLoad = true;
                 std::vector<int> keyUidsTemp;
@@ -244,6 +340,7 @@ void OCCCompound::read(const std::string& filename) {
                 if (bOccEdges[i].sym != -1) {
                     if (bOccEdges[i].sym < i) {
                         shouldLoad = false;
+                        bOccEdges[i].render = false;
                     }
                 }
                 Handle(Poly_PolygonOnTriangulation) poly =
@@ -447,5 +544,25 @@ void OCCCompound::read(const std::string& filename) {
                 }
             }
         }
+
+
+        for (int edgeId = 0; edgeId < bEdgesIdx.size(); ++edgeId) {
+            if (bOccEdges[edgeId].render) {
+                std::vector<int> startConnected, endConnected;
+                std::vector<bool> startConnectedAway, endConnectedAway;
+                findAllConnectedEdges(edgeId, bEdgesIdx, bOccEdges, startConnected, startConnectedAway, endConnected, endConnectedAway);
+                bEdgeConnectsNum.push_back(startConnected.size());
+                bEdgeConnectsNum.push_back(endConnected.size());
+                bEdgeConnects.push_back(startConnected);
+                bEdgeConnects.push_back(endConnected);
+                bEdgeConnectsAway.push_back(startConnectedAway);
+                bEdgeConnectsAway.push_back(endConnectedAway);
+
+                if (startConnected.size() < MAX_BEDGE_NEIGHBORS) {
+
+                }
+            }
+        }
+
     }
 };

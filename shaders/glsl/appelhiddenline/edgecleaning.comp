@@ -4,7 +4,7 @@
 //compute2
 
 //const float FLT_MAX = 3.402823466e+38;
-const int MAX_VER_CNT = 200;
+const int MAX_SIL_VER_CNT = 200;
 const int MAX_SIL_LINK_CNT = 4;
 
 struct Vertex{
@@ -167,19 +167,19 @@ void main()
     if(gl_GlobalInvocationID.x < objNum){
         //uid, arrid(arrCnt), gid
         //记录的是uniqueID
-        int v1uids[MAX_VER_CNT];
-        int v2uids[MAX_VER_CNT];
-        bool used[MAX_VER_CNT];
-        bool sym[MAX_VER_CNT];
-        int silOris[MAX_VER_CNT];
-        int arrids[MAX_SIL_LINK_CNT][MAX_VER_CNT]; //每条sLink在arr中的idx
+        int v1uids[MAX_SIL_VER_CNT];
+        int v2uids[MAX_SIL_VER_CNT];
+        bool used[MAX_SIL_VER_CNT];
+        bool sym[MAX_SIL_VER_CNT];
+        int silOris[MAX_SIL_VER_CNT];
+        int arrids[MAX_SIL_LINK_CNT][MAX_SIL_VER_CNT]; //每条sLink在arr中的idx
         int arridsValidInterval[MAX_SIL_LINK_CNT][2];  //记录sLink在vOut中从哪到哪的值是valid的，for(int i = vSilIdx[sLinkCnt][0]; i < vSilIdx[sLinkCnt][1]; ++i)
-        uint arridToGid[MAX_VER_CNT];  //arr的idx到gHeID
+        uint arridToGid[MAX_SIL_VER_CNT];  //arr的idx到gHeID
         int arrCnt = 0;
         int sLinkCnt = 0;
 
         for(int i = 0; i < sEdgeCntEdge[gl_GlobalInvocationID.x]; ++i){
-            uint gHeID = sEdgeIdsEdge[gl_GlobalInvocationID.x * MAX_VER_CNT * MAX_SIL_LINK_CNT + i];
+            uint gHeID = sEdgeIdsEdge[gl_GlobalInvocationID.x * MAX_SIL_VER_CNT * MAX_SIL_LINK_CNT + i];
             vec3 p1 = vertices[gHeID * 2].position;
             vec3 p2 = vertices[gHeID * 2 + 1].position;
             int v1Id = vertices[gHeID * 2].uniqueID;
@@ -235,13 +235,13 @@ void main()
             ++arrCnt;
         }
 
-        arrids[0][MAX_VER_CNT / 2] = 0;
+        arrids[0][MAX_SIL_VER_CNT / 2] = 0;
         used[0] = true;
         int currHead = v1uids[0];
         int currEnd = v2uids[0];
         while(true){
             //往后找
-            int afterCnt = MAX_VER_CNT / 2 + 1;
+            int afterCnt = MAX_SIL_VER_CNT / 2 + 1;
             bool findAfter = true;
             while(findAfter){
                 findAfter = false;
@@ -260,7 +260,7 @@ void main()
             }
             arridsValidInterval[sLinkCnt][1] = afterCnt;
             //往前找
-            int beforeCnt = MAX_VER_CNT / 2 - 1;
+            int beforeCnt = MAX_SIL_VER_CNT / 2 - 1;
             bool findBefore = true;
             while(findBefore){
                 findBefore = false;
@@ -285,7 +285,7 @@ void main()
                 if(!used[i]){
                     otherHead = true;
                     //新开一个sil链
-                    arrids[sLinkCnt][MAX_VER_CNT / 2] = i;
+                    arrids[sLinkCnt][MAX_SIL_VER_CNT / 2] = i;
                     currHead = v1uids[i];
                     currEnd = v2uids[i];
                     used[i] = true;
@@ -303,8 +303,8 @@ void main()
         if(sLinkCnt > 0){
             int sliStart = (MAX_SIL_LINK_CNT * 2 + 1) * int(gl_GlobalInvocationID.x);
             sLinkIntervals[sliStart] = sLinkCnt;
-            int seiStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT * 2) * int(gl_GlobalInvocationID.x);
-            int seoStart = (MAX_SIL_LINK_CNT * MAX_VER_CNT) * int(gl_GlobalInvocationID.x);
+            int seiStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT * 2) * int(gl_GlobalInvocationID.x);
+            int seoStart = (MAX_SIL_LINK_CNT * MAX_SIL_VER_CNT) * int(gl_GlobalInvocationID.x);
             int sEdgeCnt = 0;
             for(int i = 0; i < sLinkCnt; ++i){
                 sLinkIntervals[sliStart + i * 2 + 1] = sEdgeCnt;

@@ -48,6 +48,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRep_PolygonOnTriangulation.hxx>
 #include <ShapeFix_Edge.hxx>
+#include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
@@ -112,8 +113,7 @@ public:
 	std::vector<int> bEdgeSymObjs;
 	//以render的edge为单位，每个edge对应MAX_BEDGE_NEIGHBORS * 2个(*2是因为start和end)
 	std::vector<int> bEdgeConnects;
-	std::vector<bool> bEdgeConnectsAway;
-	std::vector<int> bEdgeConnectsNum;
+	std::vector<int> bEdgeConnectsAway;
 
 };
 
@@ -141,13 +141,6 @@ public:
 	std::vector<std::vector<int>> bEdgesIdx; 
 	std::vector<std::vector<glm::vec3>> bEdgesNor; //小bEdge的nor，严格按照edges顺序，两个顶点记一次
 	std::vector<std::vector<int>> bEdgeUids;  //小bEdge的顶点的unique id(在各自face上)，严格按照edges顺序，每个顶点记一次
-	//{start bEdgeConnected idx}, {end bEdgeConnected idx},..
-	// 全是load的bEdge
-	std::vector<std::vector<int>> bEdgeConnects;
-	//connected中记录的edge的idx是远离的还是近的
-	std::vector<std::vector<bool>> bEdgeConnectsAway;
-	std::vector<int> bEdgeConnectsNum;
-	// baseEdgeID : {edgeID1, edgeID2}
 	std::vector<std::vector<int>> baseEdges;  //不带orientation的
 
 
@@ -158,9 +151,13 @@ public:
 	// 0, face0 end edge id, face1 end edge id,...
 	std::vector<int> faceEdgeCnt;
 	
-	double deflection = 0.1;
-	double angle = 0.1; //0.2 radiance
-
+	//double deflection = 0.1;
+	//double deflection = 0.001;
+	double deflection = 0.01;
+	//double angle = 0.1; //0.2 radiance
+	//double angle = 10.0 * M_PI / 180.0;
+	double angle = 0.1;
+	
 	// 得到 STEP → TopoDS 的映射
 	Handle(Transfer_TransientProcess) process;
 
@@ -168,7 +165,7 @@ public:
 	
 	void read(const std::string& filename);
 
-	void meshToObjFile(BRepMesh_IncrementalMesh& mesher);
+	void meshToObjFile(const std::string& filename);
 	//helper Function
 	//void pushback1(int n1, int n2, int n3, glm::vec4 pos, glm::vec4 nor, glm::vec2 uv, int objID, int faceID, glm::vec4 faceNor);
 	//void pushback2();
@@ -176,6 +173,6 @@ public:
 
 private:
 	void findAllConnectedEdges(int edgeId, std::vector<std::vector<int>>& bEdgesIdx, std::vector<OCCEdge>& bOccEdges,
-		std::vector<int>& startConnected, std::vector<bool>& startConnectedAway,
-		std::vector<int>& endConnected, std::vector<bool>& endConnectedAway);
+		std::vector<int>& startConnected, std::vector<int>& startConnectedAway,
+		std::vector<int>& endConnected, std::vector<int>& endConnectedAway);
 };

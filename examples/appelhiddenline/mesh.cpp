@@ -9,27 +9,76 @@ OCCEdge::OCCEdge(int id, TopoDS_Edge edge, int faceID)
 	:id(id), edge(edge), faceID(faceID)
 {}
 
-void OCCCompound::meshToObjFile(BRepMesh_IncrementalMesh& mesher) {
+void OCCCompound::meshToObjFile(const std::string& filename) {
+    std::ofstream obj(filename);
+    if (!obj.is_open())
+        return;
 
+    std::vector<int> offsets = {0};
+
+    // 遍历所有 face
+    int faceID = 0;
+    for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next())
+    {
+        TopoDS_Face face = TopoDS::Face(exp.Current());
+
+        TopLoc_Location loc;
+        Handle(Poly_Triangulation) triangulation =
+            BRep_Tool::Triangulation(face, loc);
+
+        if (triangulation.IsNull())
+            continue;
+
+        const Poly_Array1OfTriangle& triangles = triangulation->Triangles();
+
+        // ---------- 写顶点 ----------
+        for (int i = 1; i <= triangulation->NbNodes(); ++i) {
+            gp_Pnt p = triangulation->Node(i);
+            obj << "v "
+                << p.X() << " "
+                << p.Y() << " "
+                << p.Z() << "\n";
+        }
+
+        // ---------- 写三角形 ----------
+        for (int i = triangles.Lower(); i <= triangles.Upper(); ++i)
+        {
+            int n1, n2, n3;
+            triangles(i).Get(n1, n2, n3);
+
+            // 处理 face 方向
+            if (face.Orientation() == TopAbs_REVERSED)
+                std::swap(n2, n3);
+
+            obj << "f "
+                << n1 + offsets[faceID] << " "
+                << n2 + offsets[faceID] << " "
+                << n3 + offsets[faceID] << "\n";
+        }
+        ++faceID;
+        offsets.push_back(offsets[faceID - 1] + triangulation->NbNodes());
+    }
+
+    obj.close();
 }
 
 void OCCCompound::findAllConnectedEdges(int edgeId, std::vector<std::vector<int>>& bEdgesIdx, std::vector<OCCEdge>& bOccEdges, 
-    std::vector<int>& startConnected, std::vector<bool>& startConnectedAway, 
-    std::vector<int>& endConnected, std::vector<bool>& endConnectedAway) {
+    std::vector<int>& startConnected, std::vector<int>& startConnectedAway, 
+    std::vector<int>& endConnected, std::vector<int>& endConnectedAway) {
     //start
     int prev = bOccEdges[edgeId].prev;
     int prevSym = bOccEdges[prev].sym;
     while (prevSym != edgeId) {
+        if (prevSym == -1) {
+            break;
+        }
         if (bOccEdges[prev].render) {
             startConnected.push_back(bEdgesIdx[prev][bEdgesIdx[prev].size() - 1]);
-            startConnectedAway.push_back(true);
+            startConnectedAway.push_back(1);
         }
         else {
             startConnected.push_back(bEdgesIdx[prevSym][0]);
-            startConnectedAway.push_back(false);
-        }
-        if (prevSym == -1) {
-            break;
+            startConnectedAway.push_back(0);
         }
 		prev = bOccEdges[prevSym].prev;
 		prevSym = bOccEdges[prev].sym;
@@ -38,19 +87,27 @@ void OCCCompound::findAllConnectedEdges(int edgeId, std::vector<std::vector<int>
 	int next = bOccEdges[edgeId].next;
 	int nextSym = bOccEdges[next].sym;
     while (nextSym != edgeId) {
-        if (bOccEdges[next].render) {
-            endConnected.push_back(bEdgesIdx[next][0]);
-            endConnectedAway.push_back(false);
-        }
-        else {
-            endConnected.push_back(bEdgesIdx[nextSym][bEdgesIdx[nextSym].size() - 1]);
-            endConnectedAway.push_back(true);
-        }
         if (nextSym == -1) {
             break;
         }
+        if (bOccEdges[next].render) {
+            endConnected.push_back(bEdgesIdx[next][0]);
+            endConnectedAway.push_back(0);
+        }
+        else {
+            endConnected.push_back(bEdgesIdx[nextSym][bEdgesIdx[nextSym].size() - 1]);
+            endConnectedAway.push_back(1);
+        }
         next = bOccEdges[nextSym].next;
         nextSym = bOccEdges[next].sym;
+    }
+    for (int i = startConnected.size(); i < MAX_BEDGE_NEIGHBORS; ++i) {
+		startConnected.push_back(-1);
+		startConnectedAway.push_back(-1);
+	}
+    for (int i = endConnected.size(); i < MAX_BEDGE_NEIGHBORS; ++i) {
+        endConnected.push_back(-1);
+        endConnectedAway.push_back(-1);
     }
 }
 
@@ -123,14 +180,14 @@ static bool segmentsIntersect(glm::vec2 p1, glm::vec2 p2,
 void OCCCompound::read(const std::string& filename) {
 
 
-	glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
-	glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
-    glm::vec2 currPos1 = glm::vec2(-0.21734953f, 0.76640475f);
-    glm::vec2 currPos2 = glm::vec2(-0.21732196f, 0.76641756f);
-    //glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
-    //glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
-    //glm::vec2 currPos1 = glm::vec2(-0.21737374f, 0.76642179f);
-    //glm::vec2 currPos2 = glm::vec2(-0.21734953f, 0.76640475f);
+	//glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
+	//glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
+ //   glm::vec2 currPos1 = glm::vec2(-0.21734953f, 0.76640475f);
+ //   glm::vec2 currPos2 = glm::vec2(-0.21732196f, 0.76641756f);
+    glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
+    glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
+    glm::vec2 currPos1 = glm::vec2(-0.21737374f, 0.76642179f);
+    glm::vec2 currPos2 = glm::vec2(-0.21734953f, 0.76640475f);
     segmentsIntersect(mainPos1, mainPos2, currPos1, currPos2);
 
     const char* filenameTmp = filename.c_str();
@@ -250,7 +307,8 @@ void OCCCompound::read(const std::string& filename) {
 
 	//进行三角化
     BRepMesh_IncrementalMesh mesher(shape, deflection, Standard_True, angle);
-
+    //meshToObjFile("C:/Users/ASUS/Desktop/a.obj");
+    
     //helper function。用于从重复的he中选出一条he进行渲染。
     //[&]代表对于没有写在参数里的变量都是引用拿来
     //如果变量写在参数里，像这里的heToEdgeID和symHE，则都是值传递。所以heToEdgeID和symHE在参数中需要改为引用
@@ -549,18 +607,12 @@ void OCCCompound::read(const std::string& filename) {
         for (int edgeId = 0; edgeId < bEdgesIdx.size(); ++edgeId) {
             if (bOccEdges[edgeId].render) {
                 std::vector<int> startConnected, endConnected;
-                std::vector<bool> startConnectedAway, endConnectedAway;
+                std::vector<int> startConnectedAway, endConnectedAway;
                 findAllConnectedEdges(edgeId, bEdgesIdx, bOccEdges, startConnected, startConnectedAway, endConnected, endConnectedAway);
-                bEdgeConnectsNum.push_back(startConnected.size());
-                bEdgeConnectsNum.push_back(endConnected.size());
-                bEdgeConnects.push_back(startConnected);
-                bEdgeConnects.push_back(endConnected);
-                bEdgeConnectsAway.push_back(startConnectedAway);
-                bEdgeConnectsAway.push_back(endConnectedAway);
-
-                if (startConnected.size() < MAX_BEDGE_NEIGHBORS) {
-
-                }
+                mesh.bEdgeConnects.insert(mesh.bEdgeConnects.end(), startConnected.begin(), startConnected.end());
+                mesh.bEdgeConnects.insert(mesh.bEdgeConnects.end(), endConnected.begin(), endConnected.end());
+                mesh.bEdgeConnectsAway.insert(mesh.bEdgeConnectsAway.end(), startConnectedAway.begin(), startConnectedAway.end());
+				mesh.bEdgeConnectsAway.insert(mesh.bEdgeConnectsAway.end(), endConnectedAway.begin(), endConnectedAway.end());
             }
         }
 

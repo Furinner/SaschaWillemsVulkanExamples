@@ -75,6 +75,12 @@ layout (set = 0, binding = 7) buffer SBO6{
     int sEdgeOris[];
 };
 
+layout (set = 0, binding = 8) buffer SBO7
+{
+   //从0开始，记录假edge的数量
+   uint edgeSuccessCnt;
+};
+
 layout(push_constant) uniform PushConsts {
 	int objNum; 
 };
@@ -96,6 +102,11 @@ void main()
 //
 //    vertices[index1].debug = 0;
 //    vertices[index2].debug = 0;
+    if(gl_GlobalInvocationID.x < edgeSuccessCnt){
+        debugPrintfEXT("edgeSuccessCnt: %d", edgeSuccessCnt);
+        vertices[ubo.origEdgeCnt * 2 + gl_GlobalInvocationID.x].position = vec3(0);
+        vertices[ubo.origEdgeCnt * 2 + gl_GlobalInvocationID.x].debug = 4;
+    }
 
     //所有edge debug设为0
     if(gl_GlobalInvocationID.x < ubo.edgeVertSize){

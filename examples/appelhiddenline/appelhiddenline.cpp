@@ -394,6 +394,7 @@ public:
 		size_t vertexBuffersSize2 = 0;
 		size_t indexBuffersSize = 0;
 		size_t facesSize = 0;
+		int extraSize;
 		OCCCompound occCompound;
 		int origEdgeVertSize;
 
@@ -695,7 +696,7 @@ public:
 					v.uv, v.objID, v.faceID, v.border, v.heID, v.uniqueID, v.debug, v.globalHeID, v.symUid));
 			}
 			origEdgeVertSize = edgeVert.size();
-			int extraSize = edgeVert.size() + edgeVert.size() / 2;
+			extraSize = edgeVert.size() * 2;
 			for (int i = 0; i < extraSize; ++i) {
 				edgeVert.push_back(Vertex(glm::vec3(0), glm::vec3(0), glm::vec3(0), glm::vec3(0),
 					glm::vec2(0), -1, -1, -1, -1, -1, 0, origEdgeVertSize + i, -1));
@@ -1519,7 +1520,6 @@ public:
 		vks::Buffer sEdgeOris{ VK_NULL_HANDLE };
 		vks::Buffer bEdgeConnects{ VK_NULL_HANDLE };
 		vks::Buffer bEdgeConnectsAway{ VK_NULL_HANDLE };
-		vks::Buffer bEdgeConnectsNum{ VK_NULL_HANDLE };
 	}storageBuffers;
 
 	struct {
@@ -2038,7 +2038,7 @@ public:
 		// Pool
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 20),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 21),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 2);
@@ -2073,8 +2073,6 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 12),
 			// Binding 13:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 13),
-			// Binding 14:
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 14),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute1));
@@ -2095,6 +2093,8 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
 			// Binding 7 :
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
+			// Binding 8 :
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 8),
 		};
 		descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute2));
@@ -2199,12 +2199,7 @@ public:
 				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				13,
 				&storageBuffers.bEdgeConnectsAway.descriptor),
-			// Binding 14
-			vks::initializers::writeDescriptorSet(
-				descriptorSets.compute1,
-				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				14,
-				&storageBuffers.bEdgeConnectsNum.descriptor),
+			
 		};
 		
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
@@ -2257,7 +2252,12 @@ public:
 				descriptorSets.compute2,
 				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				7,
-				&storageBuffers.sEdgeOris.descriptor)
+				&storageBuffers.sEdgeOris.descriptor),
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute2,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				8,
+				&storageBuffers.edgeSuccessCnt.descriptor)
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 	}
@@ -2316,27 +2316,23 @@ public:
 			&storageBuffers.sEdgeOris,
 			sizeof(int32_t) * mesh.occCompound.faces.size() * MAX_SIL_LINK_CNT * MAX_VER_CNT));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.bEdgeConnects,
 			sizeof(int32_t) * mesh.occCompound.mesh.bEdgeConnects.size()));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.bEdgeConnectsAway,
-			sizeof(bool) * mesh.occCompound.mesh.bEdgeConnectsAway.size()));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			&storageBuffers.bEdgeConnectsNum,
-			sizeof(int32_t) * mesh.occCompound.mesh.bEdgeConnectsNum.size()));
+			sizeof(int32_t) * mesh.occCompound.mesh.bEdgeConnectsAway.size()));
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
 		struct StagingBuffer {
 			VkBuffer buffer;
 			VkDeviceMemory memory;
-		} bEdgesSEStaging, bEdgeSymObjsStaging, bEdgeConnectsStaging, bEdgeConnectsAwayStaging, bEdgeConnectsNumStaging;
+		} bEdgesSEStaging, bEdgeSymObjsStaging, bEdgeConnectsStaging, bEdgeConnectsAwayStaging;
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -2361,23 +2357,20 @@ public:
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			mesh.occCompound.mesh.bEdgeConnectsAway.size() * sizeof(bool),
+			mesh.occCompound.mesh.bEdgeConnectsAway.size() * sizeof(int),
 			&bEdgeConnectsAwayStaging.buffer,
 			&bEdgeConnectsAwayStaging.memory,
 			mesh.occCompound.mesh.bEdgeConnectsAway.data()));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			mesh.occCompound.mesh.bEdgeConnectsNum.size() * sizeof(int),
-			&bEdgeConnectsNumStaging.buffer,
-			&bEdgeConnectsNumStaging.memory,
-			mesh.occCompound.mesh.bEdgeConnectsNum.data()));
 		VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		VkBufferCopy copyRegion = {};
 		copyRegion.size = mesh.occCompound.mesh.bEdgesSE.size() * sizeof(int);
 		vkCmdCopyBuffer(copyCmd, bEdgesSEStaging.buffer, storageBuffers.bEdgesSE.buffer, 1, &copyRegion);
 		copyRegion.size = mesh.occCompound.mesh.bEdgeSymObjs.size() * sizeof(int);
 		vkCmdCopyBuffer(copyCmd, bEdgeSymObjsStaging.buffer, storageBuffers.bEdgeSymObjs.buffer, 1, &copyRegion);
+		copyRegion.size = mesh.occCompound.mesh.bEdgeConnects.size() * sizeof(int);
+		vkCmdCopyBuffer(copyCmd, bEdgeConnectsStaging.buffer, storageBuffers.bEdgeConnects.buffer, 1, &copyRegion);
+		copyRegion.size = mesh.occCompound.mesh.bEdgeConnectsAway.size() * sizeof(int);
+		vkCmdCopyBuffer(copyCmd, bEdgeConnectsAwayStaging.buffer, storageBuffers.bEdgeConnectsAway.buffer, 1, &copyRegion);
 		vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
 
 		
@@ -3084,6 +3077,15 @@ public:
 				VK_ACCESS_SHADER_WRITE_BIT,
 				sameFamily
 			);
+			std::vector<VkBuffer> buffers = { storageBuffers.edgeSuccessCnt.buffer };
+			vks::Buffer::bufferBarrier(
+				computeCmdBuffer,
+				buffers,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				0
+			);
 		}
 		vkEndCommandBuffer(computeCmdBuffer);
 
@@ -3123,7 +3125,8 @@ public:
 			&pushValComp2                // 实际数据
 		);
 		vkCmdBindDescriptorSets(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayoutCompute2, 0, 1, &descriptorSets.compute2, 0, 0);
-		vkCmdDispatch(computeCmdBuffer2, ((mesh.edgeVert.size() / 2) / 64) + 1, 1, 1);
+		//vkCmdDispatch(computeCmdBuffer2, ((mesh.edgeVert.size() / 2) / 64) + 1, 1, 1);
+		vkCmdDispatch(computeCmdBuffer2, ((mesh.extraSize / 2) / 64) + 1, 1, 1);
 		{
 			std::vector<VkBuffer> rlBuffers = {
 				mesh.edgeVertBuffer.buffer,

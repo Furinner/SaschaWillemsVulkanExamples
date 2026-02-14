@@ -1414,6 +1414,7 @@ public:
 	float depthFactor = 1.f;
 	int uFactor = 1;
 	int vFactor = 1;
+	bool hiz = false;
 	bool lockedView = false;
 	bool savePic = false;
 	bool vectorize = false;
@@ -1422,6 +1423,7 @@ public:
 	int scaleCnt = scale * scale;
 	static const int MAX_VER_CNT = 200;
 	static const int MAX_SIL_LINK_CNT = 4;
+	static const int MAX_BINTERS_TOTAL = 2 * 500000;
 
 	struct {
 		struct {
@@ -1485,6 +1487,7 @@ public:
 		alignas(4) unsigned int bEdgeCnt;
 		alignas(4) unsigned int edgeVertSize;
 		alignas(4) unsigned int origEdgeCnt;
+		alignas(4) unsigned int hiz;
 	} uniformDataCompute1;
 
 	struct UniformDataCompute2 {
@@ -1520,6 +1523,10 @@ public:
 		vks::Buffer sEdgeOris{ VK_NULL_HANDLE };
 		vks::Buffer bEdgeConnects{ VK_NULL_HANDLE };
 		vks::Buffer bEdgeConnectsAway{ VK_NULL_HANDLE };
+		vks::Buffer bInterCnt{ VK_NULL_HANDLE };
+		vks::Buffer bInterEdgeIds{ VK_NULL_HANDLE };
+		vks::Buffer bIntertus{ VK_NULL_HANDLE };
+		vks::Buffer bEdgeTypes{ VK_NULL_HANDLE };
 	}storageBuffers;
 
 	struct {
@@ -1649,6 +1656,14 @@ public:
 
 		camera.position = { -12.8998909f, 7.70880222f, 35.7017822f };
 		camera.setRotation(glm::vec3(- 3.f, -4.f, 0.f));
+
+		//set camera para here
+		//camera.position = { -57.29851532f, 22.6832962f, 27.86085701f };
+		//camera.setRotation(glm::vec3(1.f, -50.75f, 0.f));
+		camera.position = { -48.84149551f, 27.2677002f, 31.84398842f };
+		camera.setRotation(glm::vec3(5.25f, -39.f, 0.f));
+		//camera.position = { -28.32535362f, 28.41083145f, 25.77313232f };
+		//camera.setRotation(glm::vec3(-10.5f, -12.f, 0.f));
 	}
 
 	~VulkanExample()
@@ -2073,6 +2088,12 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 12),
 			// Binding 13:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 13),
+			// Binding 14:
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 14),
+			// Binding 15:
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 15),
+			// Binding 16:
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 16),
 		};
 		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutCompute1));
@@ -2199,7 +2220,30 @@ public:
 				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				13,
 				&storageBuffers.bEdgeConnectsAway.descriptor),
-			
+			// Binding 14
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				14,
+				&storageBuffers.bInterCnt.descriptor),
+			// Binding 15
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				15,
+				&storageBuffers.bInterEdgeIds.descriptor),
+			// Binding 16
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				16,
+				&storageBuffers.bIntertus.descriptor),
+			// Binding 17
+			vks::initializers::writeDescriptorSet(
+				descriptorSets.compute1,
+				VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				17,
+				&storageBuffers.bEdgeTypes.descriptor),
 		};
 		
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
@@ -2301,17 +2345,17 @@ public:
 			&storageBuffers.bEdgeSymObjs,
 			mesh.occCompound.mesh.bEdgeSymObjs.size() * sizeof(int)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.sLinkIntervals,
 			sizeof(int32_t) * mesh.occCompound.faces.size() * (MAX_SIL_LINK_CNT * 2 + 1)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.sEdgeIdxs,
 			sizeof(int32_t) * mesh.occCompound.faces.size() * MAX_SIL_LINK_CNT * MAX_VER_CNT * 2));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.sEdgeOris,
 			sizeof(int32_t) * mesh.occCompound.faces.size() * MAX_SIL_LINK_CNT * MAX_VER_CNT));
@@ -2325,14 +2369,38 @@ public:
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&storageBuffers.bEdgeConnectsAway,
 			sizeof(int32_t) * mesh.occCompound.mesh.bEdgeConnectsAway.size()));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.bInterCnt,
+			sizeof(int)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.bInterEdgeIds,
+			MAX_BINTERS_TOTAL * sizeof(int)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.bIntertus,
+			MAX_BINTERS_TOTAL * sizeof(float)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&storageBuffers.bEdgeTypes,
+			mesh.occCompound.mesh.bEdgeTypes.size() * sizeof(int)));
+
 		VkCommandBuffer tmpCmdBuf = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.edgeCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
 		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.edgeSuccessCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.bInterCnt.buffer, 0, VK_WHOLE_SIZE, 0u);
+		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.bInterEdgeIds.buffer, 0, VK_WHOLE_SIZE, 0u);
+		vkCmdFillBuffer(tmpCmdBuf, storageBuffers.bIntertus.buffer, 0, VK_WHOLE_SIZE, 0u);
 		vulkanDevice->flushCommandBuffer(tmpCmdBuf, queue, true);
 		struct StagingBuffer {
 			VkBuffer buffer;
 			VkDeviceMemory memory;
-		} bEdgesSEStaging, bEdgeSymObjsStaging, bEdgeConnectsStaging, bEdgeConnectsAwayStaging;
+		} bEdgesSEStaging, bEdgeSymObjsStaging, bEdgeConnectsStaging, bEdgeConnectsAwayStaging, bEdgeTypesStaging;
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -2361,6 +2429,13 @@ public:
 			&bEdgeConnectsAwayStaging.buffer,
 			&bEdgeConnectsAwayStaging.memory,
 			mesh.occCompound.mesh.bEdgeConnectsAway.data()));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			mesh.occCompound.mesh.bEdgeTypes.size() * sizeof(int),
+			&bEdgeTypesStaging.buffer,
+			&bEdgeTypesStaging.memory,
+			mesh.occCompound.mesh.bEdgeTypes.data()));
 		VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 		VkBufferCopy copyRegion = {};
 		copyRegion.size = mesh.occCompound.mesh.bEdgesSE.size() * sizeof(int);
@@ -3114,6 +3189,23 @@ public:
 				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
 				sameFamily
 			);
+
+			std::vector<VkBuffer> buffers = { 
+				storageBuffers.sLinkIntervals.buffer,
+				storageBuffers.sEdgeIdxs.buffer,
+				storageBuffers.sEdgeOris.buffer 
+			};
+			vkCmdFillBuffer(computeCmdBuffer2, storageBuffers.sLinkIntervals.buffer, 0, VK_WHOLE_SIZE, 0u);
+			vkCmdFillBuffer(computeCmdBuffer2, storageBuffers.sEdgeIdxs.buffer, 0, VK_WHOLE_SIZE, 0u);
+			vkCmdFillBuffer(computeCmdBuffer2, storageBuffers.sEdgeOris.buffer, 0, VK_WHOLE_SIZE, 0u);
+			vks::Buffer::bufferBarrier(
+				computeCmdBuffer2,
+				buffers,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
+			);
 		}
 		vkCmdBindPipeline(computeCmdBuffer2, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute2);
 		vkCmdPushConstants(
@@ -3703,6 +3795,12 @@ public:
 		uniformDataCompute1.proj = camera.matrices.perspective;
 		uniformDataCompute1.bEdgeCnt = mesh.occCompound.mesh.bEdgesSE.size() / 2;
 		uniformDataCompute1.origEdgeCnt = mesh.origEdgeVertSize / 2;
+		if (hiz) {
+			uniformDataCompute1.hiz = 1;
+		}
+		else {
+			uniformDataCompute1.hiz = 0;
+		}
 		memcpy(uniformBuffers.compute1.mapped, &uniformDataCompute1, sizeof(UniformDataCompute1));
 		uniformDataCompute2.edgeVertSize = mesh.edgeVert.size() / 2;
 		uniformDataCompute2.view = camera.matrices.view;
@@ -4090,6 +4188,8 @@ public:
 
 
 		if (vectorize) {
+			printf("cameraPos: %.8f, %.8f, %.8f\n", camera.position.x, camera.position.y, camera.position.z);
+			printf("cameraRot: %.8f, %.8f, %.8f\n", camera.rotation.x, camera.rotation.y, camera.rotation.z);
 			waitStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 
 			// Submit compute commands
@@ -4246,6 +4346,7 @@ public:
 			overlay->sliderFloat("top", &camera.orthoTop, 0.5f, 10.f);
 			//ImGui::InputFloat3("CamPos", &camera.position[0]);
 			overlay->checkBox("Orthographic", &camera.orthographic);
+			overlay->checkBox("hiz", &hiz);
 			lockedView = overlay->button("LockedView");
 			if (overlay->button("SavePic")) {
 				savePic = true;
@@ -4253,6 +4354,7 @@ public:
 			if (overlay->button("Vectorize")) {
 				vectorize = true;
 			}
+
 		}
 	}
 };

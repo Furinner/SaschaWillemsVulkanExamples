@@ -119,7 +119,6 @@ void main()
 				uint idx = atomicAdd(sbo1.edgeCnt[inObjectID], 1);
 				sbo2.edgeList[MAX_VER_CNT * MAX_SIL_LINK_CNT * inObjectID + idx] = inGlobalHeID;
 			}
-			
 		}else{
 			outBorder = inBorder;
 		}

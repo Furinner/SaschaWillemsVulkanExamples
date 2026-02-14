@@ -9,6 +9,10 @@ OCCEdge::OCCEdge(int id, TopoDS_Edge edge, int faceID)
 	:id(id), edge(edge), faceID(faceID)
 {}
 
+OCCEdge::OCCEdge(int id, TopoDS_Edge edge, int faceID, int type)
+    :id(id), edge(edge), faceID(faceID), type(type)
+{}
+
 void OCCCompound::meshToObjFile(const std::string& filename) {
     std::ofstream obj(filename);
     if (!obj.is_open())
@@ -184,10 +188,18 @@ void OCCCompound::read(const std::string& filename) {
 	//glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
  //   glm::vec2 currPos1 = glm::vec2(-0.21734953f, 0.76640475f);
  //   glm::vec2 currPos2 = glm::vec2(-0.21732196f, 0.76641756f);
-    glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
+    //glm::vec2 mainPos1 = glm::vec2(-0.55444831f, 0.90622330f);
+    //glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
+    //glm::vec2 currPos1 = glm::vec2(-0.21737374f, 0.76642179f);
+    //glm::vec2 currPos2 = glm::vec2(-0.21734953f, 0.76640475f);
+    //glm::vec2 mainPos1 = glm::vec2(-0.55455357f, 0.90626580f);
+    //glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
+    //glm::vec2 currPos1 = glm::vec2(-0.21737374f, 0.76642179f);
+    //glm::vec2 currPos2 = glm::vec2(-0.21734953f, 0.76640475f);
+    glm::vec2 mainPos1 = glm::vec2(-0.55455357f, 0.90626580f);
     glm::vec2 mainPos2 = glm::vec2(-0.11338938f, 0.72328508f);
-    glm::vec2 currPos1 = glm::vec2(-0.21737374f, 0.76642179f);
-    glm::vec2 currPos2 = glm::vec2(-0.21734953f, 0.76640475f);
+    glm::vec2 currPos1 = glm::vec2(-0.21734953f, 0.76640475f);
+    glm::vec2 currPos2 = glm::vec2(-0.21732196f, 0.76641756f);
     segmentsIntersect(mainPos1, mainPos2, currPos1, currPos2);
 
     const char* filenameTmp = filename.c_str();
@@ -268,7 +280,51 @@ void OCCCompound::read(const std::string& filename) {
                 for (BRepTools_WireExplorer we(wire); we.More(); we.Next()) {
 
                     TopoDS_Edge edge = TopoDS::Edge(we.Current());
-                    bOccEdges.push_back(OCCEdge(edgeID, edge, faceID));
+                    //判断edge类型
+                    Standard_Real f = 0, l = 0;
+                    Handle(Geom_Curve) C3d = BRep_Tool::Curve(edge, f, l);
+                    if (!C3d.IsNull())
+                    {
+                        Handle(Standard_Type) t = C3d->DynamicType();
+                        if (std::strcmp(t->Name(), "Geom_Line") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 0));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_Circle") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 1));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_Ellipse") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 2));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_Hyperbola") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 3));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_Parabola") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 4));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_BezierCurve") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 5));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_BSplineCurve") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 6));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_TrimmedCurve") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 7));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_OffsetCurve") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 8));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_TransformedCurve") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 9));
+                        }
+                        else if (std::strcmp(t->Name(), "Geom_CompositeCurve") == 0) {
+                            bOccEdges.push_back(OCCEdge(edgeID, edge, faceID, 10));
+                        }
+                    }
+                    else {
+                        bOccEdges.push_back(OCCEdge(edgeID, edge, faceID));
+                        std::cout << "null!" << std::endl;
+                    }
+
                     int baseIndex = baseEdgeMap.FindIndex(edge);
                     //OCC中baseIndex是从1开始的，所以这里我们减1
                     --baseIndex;
@@ -370,6 +426,27 @@ void OCCCompound::read(const std::string& filename) {
             }
             for (auto& p : positions) {
                 p = p * 0.01f;
+            }
+            //针对自相交问题，手动作弊一下
+            if (faceID == 1474 || faceID == 1481 || faceID == 1653 || faceID == 1660) {
+                glm::vec3 center = glm::vec3(0);
+                for (auto& p : positions) {
+                    center += glm::vec3(p);
+                }
+				center /= positions.size();
+                for (auto& p : positions) {
+					p = glm::vec4(glm::mix(glm::vec3(p), center, 0.05f), 1);
+                }
+            }
+            if (faceID >= 1585 && faceID <= 1596) {
+                for (auto& p : positions) {
+                    p.z += 0.05;
+                }
+            }
+            if (faceID >= 1597 && faceID <= 1608) {
+                for (auto& p : positions) {
+                    p.z -= 0.05;
+                }
             }
 
             //先把所有边界边塞进vertices2
@@ -483,6 +560,7 @@ void OCCCompound::read(const std::string& filename) {
                 else {
                     mesh.bEdgesSE.push_back(currBEdgeSE1);
                     mesh.bEdgesSE.push_back(currBEdgeSE2);
+                    mesh.bEdgeTypes.push_back(bOccEdges[i].type);
                     mesh.bEdgeSymObjs.push_back(bOccEdges[i].symFaceID);
                 }
             }

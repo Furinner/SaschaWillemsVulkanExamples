@@ -87,7 +87,7 @@ public:
 	alignas(8) glm::vec2 uv;
 	alignas(4) int objID;
 	alignas(4) int faceID;
-	alignas(4) int border = 0;
+	alignas(4) int border = 0; //1为有sym的bEdge，2为没sym的bEdge
 	alignas(4) int heID = -1;
 	alignas(4) int uniqueID; //unique id in obj
 	alignas(4) int debug = 0;
@@ -109,6 +109,7 @@ public:
 	//start point and end point of every boundary edges in vertices2
 	//2个值一组，如果该bEdge没有被加载，则无值
 	std::vector<int> bEdgesSE;
+	std::vector<int> bEdgeTypes;
 	//记录每个bEdge对应的symmetry object id，没有则为-1
 	std::vector<int> bEdgeSymObjs;
 	//以render的edge为单位，每个edge对应MAX_BEDGE_NEIGHBORS * 2个(*2是因为start和end)
@@ -128,9 +129,22 @@ public:
 	int symFaceID = -1;
 	int prev = -1;
 	int next = -1;
+	//0: Geom_Line
+	//1: Geom_Circle
+	//2: Geom_Ellipse
+	//3: Geom_Hyperbola
+	//4: Geom_Parabola
+	//5: Geom_BezierCurve
+	//6: Geom_BSplineCurve
+	//7: Geom_TrimmedCurve
+	//8: Geom_OffsetCurve
+	//9: Geom_TransformedCurve
+	//10: Geom_CompositeCurve
+	int type = -1;
 
 public:
 	OCCEdge(int id, TopoDS_Edge edge, int faceID);
+	OCCEdge(int id, TopoDS_Edge edge, int faceID, int type);
 };
 
 class OCCCompound {
